@@ -4,7 +4,7 @@ Research that informs rBuilder — what we **implement today**, what we **read f
 
 If a paper sparks an idea (new relation type, better slice precision, agent retrieval pattern), open a [GitHub issue](https://github.com/sshaaf/rBuilder/issues) or PR and point at the row below. We treat this doc as a living map, not marketing copy.
 
-**See also:** [Introduction](Introduction.md) (features) · [Performance engineering](performance-engineering.md) (latency tiers)
+**See also:** [Introduction](Introduction.md) (features) · [Graph storage architecture](graph-storage-architecture.md) (caches)
 
 ---
 
@@ -39,7 +39,7 @@ Legend: **Implemented** = algorithm or structure in the codebase with tests; **I
 
 | Idea | Status | rBuilder | CLI |
 |------|--------|----------|-----|
-| Sparse pre-computed call reachability | **Implemented** (rBuilder engineering) | Blast engine + compressed snapshots — see [performance-engineering.md](performance-engineering.md) | `rbuilder blast-radius`, `rbuilder check` |
+| Sparse pre-computed call reachability | **Implemented** (rBuilder engineering) | Blast engine + compressed snapshots — see [graph-storage-architecture.md](graph-storage-architecture.md) | `rbuilder blast-radius`, `rbuilder check` |
 | Rich relation matrix (30+ edge types) | **Implemented** | [`schema.rs`](../crates/rbuilder-graph/src/schema.rs), extraction pipeline | `rbuilder gql`, `rbuilder export` |
 
 This is the core differentiator for **LLM agents**: deterministic reachability answers in compact JSON instead of dumping whole files into context.

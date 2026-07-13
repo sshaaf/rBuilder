@@ -1,0 +1,4 @@
+{
+  "max_impact_nodes": 1000000,
+  "centrality_alert_threshold": 1e12
+}

@@ -1,4 +1,5 @@
-//! Soft regression gates vs `docs/performance-baselines.md` (+10% tolerance).
+//! Soft regression gates for golden-repo `discover --all` (+10% tolerance).
+//! Baseline seconds are defined in this file (`METASFRESH_*`, `GBUILDER_*` constants).
 //!
 //! Run manually after golden-repo discover:
 //!   cargo test --release --test discover_perf_baselines -- --ignored --nocapture
@@ -8,9 +9,9 @@ mod dashboard_harness;
 use dashboard_harness::{golden_repo_path, metasfresh_repo_path, run_discover_all_timed};
 use std::time::Duration;
 
-/// metasfresh reference: ~8.9 min discover --all (see performance-baselines.md, 2026-07-10).
+/// metasfresh reference: ~8.9 min discover --all (531 s, measured 2026-07-10).
 const METASFRESH_DISCOVER_ALL_BASELINE_SECS: f64 = 531.0;
-/// gbuilder reference when env not set (see performance-baselines.md).
+/// gbuilder reference when env not set (5.5 s, measured 2026-07-10).
 const GBUILDER_DISCOVER_ALL_BASELINE_SECS: f64 = 5.5;
 const METASFRESH_TOLERANCE: f64 = 1.10;
 

@@ -22,7 +22,7 @@ For JSON field reference see [cli-output-schemas.md](cli-output-schemas.md) and 
 10. [Graph metrics](#10-graph-metrics)
 11. [Export graph projections](#11-export-graph-projections)
 12. [CI policy check](#12-ci-policy-check)
-13. [Query daemon (`serve`)](#13-query-daemon-serve)
+13. [HTTP server (`serve`)](#13-http-server-serve)
 14. [Recommended workflow](#14-recommended-workflow)
 15. [Command reference](#15-command-reference)
 16. [Troubleshooting](#16-troubleshooting)
@@ -224,8 +224,8 @@ After a successful run:
 coolstore/.rbuilder/
 ├── graph.snapshot.bin          # Columnar mmap graph (primary cache for queries)
 ├── blast_engine.snapshot.bin   # Pre-built blast-radius engine
-├── macro_call_index.db         # Fast symbol lookup (SQLite)
-├── macro_call_index.bin        # Bin lookup companion
+├── macro_call_index.db         # Blast-radius lookup cache (SQLite; not the graph)
+├── macro_call_index.bin        # Same index in bincode (companion to .db)
 ├── analysis_results.bin        # Columnar analysis properties
 ├── file_hashes.json            # Incremental file tracker
 ├── analysis/                   # Per-function CFG/PDG/taint (with --cfg or --all)
@@ -236,7 +236,7 @@ coolstore/.rbuilder/
     └── graph_payload.bin
 ```
 
-Query commands read `graph.snapshot.bin` when present. You do **not** need `graph.db` for normal CLI use.
+Query commands read `graph.snapshot.bin` when present. You do **not** need `graph.db` for normal CLI use. The SQLite file is **only** a precomputed blast-radius shortcut — GQL and export use the columnar graph, not SQL.
 
 Point every subsequent command at this repo:
 
@@ -435,7 +435,7 @@ rbuilder -r "$REPO" slice \
   src/main/java/com/redhat/coolstore/service/ShoppingCartService.java \
   --line 45 \
   --variable cart \
-  --function ShoppingCartService
+  --function checkOutShoppingCart
 ```
 
 ### Forward slice
@@ -445,7 +445,7 @@ rbuilder -r "$REPO" slice \
   src/main/java/com/redhat/coolstore/rest/CartEndpoint.java \
   --line 37 \
   --variable cartId \
-  --function CartEndpoint \
+  --function getCart \
   --direction forward
 ```
 
@@ -456,7 +456,7 @@ rbuilder -r "$REPO" slice \
   src/main/java/com/redhat/coolstore/service/ShoppingCartService.java \
   --line 48 \
   --variable cart \
-  --function ShoppingCartService \
+  --function addToCart \
   --taint
 ```
 
@@ -472,15 +472,21 @@ rbuilder -r "$REPO" slice \
 rbuilder -r "$REPO" -f mermaid slice ... --view cfg
 ```
 
-### Explicit language
+### `--function` names
 
-If parsing fails, pass `--language java` and an exact `--function` class name.
+`--function` must be the **method/function name** in the source file (as parsed by tree-sitter), not the enclosing class name. Find names with GQL:
+
+```bash
+rbuilder -r "$REPO" gql "MATCH (n:Function) WHERE n.file_path LIKE '*ShoppingCartService*' RETURN n LIMIT 20"
+```
+
+### Explicit language
 
 ---
 
 ## 9. Inspect CFG / PDG / dominance
 
-`inspect` dumps semantic layers for an **indexed function symbol**. Run `discover --cfg` first for full CFG/PDG data.
+`inspect` dumps semantic layers for an **indexed function symbol** (no `--class` flag — use a unique symbol or GQL to pick the right function). Run `discover --cfg` first for full CFG/PDG data.
 
 ```bash
 # Control-flow graph summary
@@ -525,7 +531,14 @@ rbuilder -r "$REPO" -f json metrics --pagerank --iterations 50 | jq .
 
 ## 11. Export graph projections
 
-`export` writes the graph or a GQL-selected subgraph to a file.
+`export` writes the graph or a **filter-selected** subgraph to a file. The `--query` flag uses **filter syntax**, not GQL `MATCH`:
+
+| Query | Meaning |
+|-------|---------|
+| `all` | Entire graph |
+| `name:ShoppingCartService` | Nodes with exact name |
+| `type:Function` | All functions |
+| `functions` | Shortcut for function nodes |
 
 ```bash
 # Full graph as JSON
@@ -533,24 +546,26 @@ rbuilder -r "$REPO" export \
   --export-format json \
   --export-output coolstore-graph.json
 
-# GraphML subgraph
+# GraphML subgraph (filter query)
 rbuilder -r "$REPO" export \
   --export-format graphml \
   --export-output cart-subgraph.graphml \
-  --query "MATCH (n:Function) WHERE n.name LIKE '*Cart*' RETURN n"
+  --query "name:ShoppingCartService"
 
 # DOT / Mermaid for external tools
 rbuilder -r "$REPO" export --export-format graphviz --export-output calls.dot --query all
 rbuilder -r "$REPO" export --export-format mermaid --export-output calls.mmd --query all
 ```
 
-`--query all` exports the full graph; otherwise pass a GQL query string.
+For GQL pattern matching, use `rbuilder gql` and pipe results — or `rbuilder serve` + [HTTP API](http-api.md).
 
 ---
 
 ## 12. CI policy check
 
 `check` evaluates blast-radius policy rules against functions changed in the current git working tree (or all functions if git is unavailable).
+
+Example policy files: [docs/examples/policy-strict.json](examples/policy-strict.json). Format: [policy-format.md](policy-format.md).
 
 ```bash
 rbuilder -r "$REPO" check --policy-file policy.json
@@ -560,25 +575,46 @@ Exit code **1** when violations are found — suitable for CI pipelines.
 
 ---
 
-## 13. Query daemon (`serve`)
+## 13. HTTP server (`serve`)
 
-For many blast-radius or GQL calls in one session, keep the graph and blast engine warm:
+`serve` starts a local HTTP server with the **dashboard** and **GQL query API** (default `http://127.0.0.1:8080/`).
 
 ```bash
-# Terminal 1
-rbuilder -r "$REPO" serve
+rbuilder -r "$REPO" discover .
+rbuilder -r "$REPO" serve --open
+```
 
+| Endpoint | Purpose |
+|----------|---------|
+| `/` | Dashboard UI |
+| `POST /api/query` | GQL / macros (JSON body) |
+| `/api/health` | Health check |
+
+Query from another terminal or an agent:
+
+```bash
+curl -sS -X POST http://127.0.0.1:8080/api/query \
+  -H 'Content-Type: application/json' \
+  -d '{"macro":"all_functions"}' | jq '.count'
+```
+
+Full reference: [http-api.md](http-api.md).
+
+### Legacy socket daemon
+
+For blast-radius auto-connect only (no HTTP):
+
+```bash
+rbuilder -r "$REPO" serve --daemon
 # Terminal 2 — auto-uses .rbuilder/query.sock when present
 rbuilder -r "$REPO" -f json blast-radius ShoppingCartService
 ```
 
-Options:
+Disable auto-connect: `RBUILDER_NO_QUERY_DAEMON=1`.
 
 ```bash
-rbuilder -r "$REPO" serve --socket /tmp/rbuilder.sock --idle-secs 600
+rbuilder -r "$REPO" serve --daemon --socket /tmp/rbuilder.sock --idle-secs 600
 ```
-
-Disable auto-connect: `RBUILDER_NO_QUERY_DAEMON=1`.
 
 ---
 
@@ -610,7 +646,7 @@ rbuilder -r "$REPO" -f json metrics --pagerank | jq .
 rbuilder discover . --cfg
 rbuilder -r "$REPO" inspect ShoppingCartService pdg --edge-layer data
 rbuilder -r "$REPO" slice src/main/java/com/redhat/coolstore/service/ShoppingCartService.java \
-  --line 45 --variable cart --function ShoppingCartService
+  --line 45 --variable cart --function checkOutShoppingCart
 
 # 7. Export for external graph tools
 rbuilder -r "$REPO" export --export-format graphml \
@@ -631,7 +667,7 @@ rbuilder -r "$REPO" export --export-format graphml \
 | `metrics` | PageRank, betweenness, communities |
 | `export` | Serialize graph (json, graphml, dot, mermaid) |
 | `check` | CI policy gateway |
-| `serve` | Unix-socket query daemon |
+| `serve` | HTTP dashboard + `/api/query` (default); `serve --daemon` for blast socket |
 
 ### `discover` flags
 
@@ -701,5 +737,6 @@ Confirm PATH (see [§2](#2-add-rbuilder-to-your-path)) or invoke the binary by f
 - [json-api.md](json-api.md) — programmatic JSON parsing (TypeScript shapes, jq, exit codes)
 - [cli-getting-started.md](cli-getting-started.md) — extended coolstore examples
 - [cli-output-schemas.md](cli-output-schemas.md) — JSON shapes for automation
-- [performance-engineering.md](performance-engineering.md) — latency tiers and benchmarks
+- [cli-io-sanity-qe.md](cli-io-sanity-qe.md) — subprocess test contract and release perf gates
+- [graph-storage-architecture.md](graph-storage-architecture.md) — snapshot layout and blast lookup cache
 - [dashboard-design.md](dashboard-design.md) — optional HTML dashboard (not required for CLI)

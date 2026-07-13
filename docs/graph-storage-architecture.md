@@ -32,10 +32,14 @@ Zero-clone APIs for analysis: `edge_topology_typed()`, `for_each_node`, `find_no
 
 v2 uses fixed-width rows (64 B node, 40 B edge) + string pool. BLAKE3 `content_digest` enables cache invalidation.
 
+## SQLite (blast-radius only)
+
+rBuilder does **not** store the knowledge graph in SQLite. The only SQLite usage is `macro_call_index.db` in `rbuilder-analysis` — a precomputed **blast-radius lookup cache** written at `discover` and read by `blast-radius` T0 (`MacroCallLookupDb`). GQL, export, and metrics use the columnar mmap graph.
+
 ## Downstream
 
 ```
 MemoryBackend / ColumnarGraphMmap → rbuilder-analysis::PetGraphView → algorithms
 ```
 
-See also: [analysis-architecture.md](analysis-architecture.md), [performance-baselines.md](performance-baselines.md).
+See also: [analysis-architecture.md](analysis-architecture.md), [cli-io-sanity-qe.md](cli-io-sanity-qe.md).

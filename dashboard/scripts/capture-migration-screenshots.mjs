@@ -5,7 +5,7 @@ import path from "node:path";
 const BASE = process.env.DASHBOARD_URL ?? "http://127.0.0.1:8080/";
 const OUT_DIR =
   process.env.MIGRATION_DOCS_SCREENSHOT_DIR ??
-  path.resolve(import.meta.dirname, "../../docs/images/migration-planner");
+  path.resolve(import.meta.dirname, "../../docs/images/design/migration-planner");
 
 fs.mkdirSync(OUT_DIR, { recursive: true });
 

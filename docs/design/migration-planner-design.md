@@ -17,7 +17,7 @@ The migration planner helps teams produce a **step-by-step extraction roadmap** 
 
 Users can tune a **multi-objective score** with presets or custom α/β/γ weights, compare **dependency-aware schedule** vs **pure priority rank**, and explore results interactively in the dashboard or export JSON for CI.
 
-![Migration tab — unified roadmap (gbuilder)](images/migration-planner/migration-unified-roadmap.png)
+![Migration tab — unified roadmap (gbuilder)](../images/design/migration-planner/migration-unified-roadmap.png)
 
 *Figure 1: Unified Migration view on the gbuilder repo — metrics & tuning, package graph, and paginated packages table on one scrollable page.*
 
@@ -77,7 +77,7 @@ Early versions grouped by **label-propagation community id** (~300+ nodes on lar
 
 Exported as `migration_graph.json` with `"mode": "package_macro"`.
 
-![Packages table with Java-style package labels (gbuilder)](images/migration-planner/migration-packages-table.png)
+![Packages table with Java-style package labels (gbuilder)](../images/design/migration-planner/migration-packages-table.png)
 
 *Figure 2: Package-level roadmap rows (`dev.shaaf.gbuilder.*`) instead of anonymous community ids. Pagination shows 25 rows per page.*
 
@@ -201,11 +201,11 @@ Rust uses a `BinaryHeap` for the ready queue; TypeScript sorts the ready array e
 CLI: `--migration-order scheduled|priority`  
 Dashboard: **Roadmap sort** dropdown in Metrics & tuning.
 
-![Scheduled step sort (default) — Sched. column drives row order](images/migration-planner/migration-packages-table.png)
+![Scheduled step sort (default) — Sched. column drives row order](../images/design/migration-planner/migration-packages-table.png)
 
 *Figure 3a: **Scheduled step** mode — `#` follows dependency-aware `schedule_step` (highlighted column).*
 
-![Priority rank sort — Rank column drives row order](images/migration-planner/migration-priority-rank-table.png)
+![Priority rank sort — Rank column drives row order](../images/design/migration-planner/migration-priority-rank-table.png)
 
 *Figure 3b: **Priority rank** mode — `#` follows pure score order (`priority_rank` highlighted). Both columns remain visible for comparison.*
 
@@ -321,11 +321,11 @@ Top → bottom:
 2. **Package graph** — Sigma.js + ForceAtlas2
 3. **Packages table** — paginated (25 rows/page), column tooltips
 
-![Metrics & tuning controls](images/migration-planner/migration-metrics-tuning.png)
+![Metrics & tuning controls](../images/design/migration-planner/migration-metrics-tuning.png)
 
 *Figure 4: Roadmap sort, strategy preset, and α/β/γ weight sliders. Changes recalculate the plan and graph live in the browser.*
 
-![Column header tooltip](images/migration-planner/migration-column-tooltip.png)
+![Column header tooltip](../images/design/migration-planner/migration-column-tooltip.png)
 
 *Figure 5: Per-column help tooltips on the packages table (info icon on headers).*
 
@@ -353,11 +353,11 @@ Top → bottom:
 - **Live updates:** node sizes refresh on debounced slider changes (200 ms); full graph remount when `migration_graph.json` changes
 - **`edgeWeightInfluence: 1`** enabled in ForceAtlas2 settings
 
-![Package graph — hybrid default preset](images/migration-planner/migration-package-graph.png)
+![Package graph — hybrid default preset](../images/design/migration-planner/migration-package-graph.png)
 
 *Figure 6: Package graph — node color = Louvain cluster, node size = priority score.*
 
-![Package graph after switching to Risk Mitigation preset](images/migration-planner/migration-graph-risk-preset.png)
+![Package graph after switching to Risk Mitigation preset](../images/design/migration-planner/migration-graph-risk-preset.png)
 
 *Figure 7: Graph node sizes update when preset/weights change (Risk Mitigation de-emphasizes high-blast packages).*
 
@@ -389,7 +389,7 @@ Flags:
 | `--export-migration-plan` | off | Write plan JSON |
 | `--migration-preset` | `hybrid_default` | Strategy preset |
 | `--migration-order` | `scheduled` | `scheduled` or `priority` |
-| `-o` | `.rbuilder/migration_plan.json` | Output path |
+| `-o` | `.rbuilder/migration_plan.json` | Output path (`--export-migration-plan`) |
 
 ---
 
@@ -402,7 +402,7 @@ Flags:
 | CLI integration | `tests/migration_plan_cli.rs` | export file, stdout JSON, presets, `--migration-order` |
 | Dashboard harness | `tests/dashboard_harness.rs` | `migration_graph.json` + plan schema v2 fields on discover |
 | Playwright | `dashboard/scripts/test-migration.mjs`, `test-migration-gbuilder.mjs` | unified UI, graph canvas, preset reactivity, pagination |
-| Doc screenshots | `dashboard/scripts/capture-migration-screenshots.mjs` | PNGs under `docs/images/migration-planner/` |
+| Doc screenshots | `capture-design-screenshots.mjs` + `capture-migration-screenshots.mjs` | PNGs under `docs/images/design/migration-planner/` |
 
 Run locally:
 
@@ -413,6 +413,7 @@ cd dashboard && npm run test:unit
 DASHBOARD_URL=http://127.0.0.1:8080/ node dashboard/scripts/test-migration-gbuilder.mjs
 
 # Regenerate design-doc screenshots (serve target repo first)
+DASHBOARD_URL=http://127.0.0.1:8080/ node dashboard/scripts/capture-design-screenshots.mjs
 DASHBOARD_URL=http://127.0.0.1:8080/ node dashboard/scripts/capture-migration-screenshots.mjs
 ```
 
@@ -487,11 +488,12 @@ crates/rbuilder-analysis/src/migration.rs     # core algorithms
 crates/rbuilder-dashboard/src/migration_export.rs
 dashboard/src/MigrationView.tsx               # UI
 dashboard/src/migration/                        # TS engine
+dashboard/scripts/capture-design-screenshots.mjs
 dashboard/scripts/capture-migration-screenshots.mjs
-docs/images/migration-planner/                  # design doc screenshots
+docs/images/design/migration-planner/         # design doc screenshots
 tests/migration_plan_cli.rs
-docs/migration-algorithms.md                    # background
-docs/building-migration-plan.md                 # workflow guide
+../migration-algorithms.md                    # background
+../building-migration-plan.md                 # workflow guide
 ```
 
 ---

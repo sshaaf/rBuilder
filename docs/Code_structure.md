@@ -137,7 +137,8 @@ flowchart TB
 
 - **`src/main.rs`** — process entry, dispatches to CLI.
 - **`src/cli/`** — subcommands: `discover`, `blast-radius`, `serve`, `gql`, `slice`, `inspect`, `metrics`, `check`, `export`.
-- **`src/cli/query_daemon.rs`** — `serve` subcommand; optional blast-radius client when `.rbuilder/query.sock` exists (`RBUILDER_NO_QUERY_DAEMON=1` to disable).
+- **`src/cli/http_serve.rs`** — default `serve`: dashboard + `POST /api/query`.
+- **`src/cli/query_daemon.rs`** — `serve --daemon`; optional blast-radius client when `.rbuilder/query.sock` exists (`RBUILDER_NO_QUERY_DAEMON=1` to disable).
 - **`src/cli/*_output.rs`** — typed JSON serializers (`blast_radius_output`, `discover_output`, `gql_output`, …). Commands assemble domain results from workspace crates and serialize here; **do not** embed algorithm logic in output modules.
 - **`src/languages/`** — wires the active language **bundle** into a `LanguageRegistry` at runtime.
 - Re-exports **`rbuilder-core`** for library users (`use rbuilder::analysis`, etc.).
@@ -225,7 +226,7 @@ Single home for **graph algorithms and semantic analysis**:
 |---|---|
 | `discover` | `pipeline`, `extraction`, `registry`, `graph`, `analysis`, `incremental`, `export`, `project-config`; stdout JSON via `discover_output` when `-f json` |
 | `blast-radius` | `analysis` (engine + macro index + depth filter), `graph` (columnar snapshot mmap), `query_daemon` (optional client); CLI orchestration in `blast_radius.rs` |
-| `serve` | `query_daemon` — NDJSON RPC over Unix socket; keeps mmap graph + engine warm |
+| `serve` | `http_serve` (default) + `query_daemon` (`--daemon`); HTTP dashboard + `/api/query`; optional blast socket |
 | `gql` | `gql`, `graph` |
 | `slice` | `analysis` (CFG, PDG, slicing), reads source from disk |
 | `inspect` | `graph`, `analysis` |
@@ -242,9 +243,9 @@ Understanding files helps avoid duplicating cache layers:
 | `graph.db` / `graph.json` | `discover` (JSON) | Legacy load paths |
 | `graph.snapshot.bin` | `discover` (columnar v2 default) | `CodeGraph::open_snapshot`, `SnapshotNodeStore`, `ColumnarGraphMmap`, `serve` |
 | `blast_engine.snapshot.bin` | `discover` | `try_load_engine`, lite blast-radius path, `serve` |
-| `macro_call_index.db` / `.bin` | `discover` | `blast-radius` T0 fast path (scores, UUIDs, `language` / `signature` / `canonical_fqn`) |
+| `macro_call_index.db` / `.bin` | `discover` | `blast-radius` T0 fast path only — SQLite/bincode lookup cache, not the graph |
 | `cfg_pdg.archive.bin` | `discover --cfg` | `blast-radius --with-slices`, slice hand-offs |
-| `query.sock` | `serve` | blast-radius auto-connect (optional) |
+| `query.sock` | `serve --daemon` | blast-radius auto-connect (optional) |
 | `analysis_results.bin` | `discover` | Columnar metrics (centrality, community, blast tables) |
 | `dashboard/` (bundle) | `discover` | Browser static dashboard (`index.html`, `manifest.json`, `graph_payload.bin`) |
 
@@ -309,4 +310,4 @@ When adding or fixing language support:
 
 ---
 
-*Related docs: [`user-guide.md`](user-guide.md), [`json-api.md`](json-api.md), [`dashboard-design.md`](dashboard-design.md), [`cli-output-schemas.md`](cli-output-schemas.md), [`cli-io-sanity-qe.md`](cli-io-sanity-qe.md), [`performance-engineering.md`](performance-engineering.md), [`CLI_STRUCTURE.txt`](CLI_STRUCTURE.txt), [`cli-getting-started.md`](cli-getting-started.md).*
+*Related docs: [`user-guide.md`](user-guide.md), [`json-api.md`](json-api.md), [`dashboard-design.md`](dashboard-design.md), [`cli-output-schemas.md`](cli-output-schemas.md), [`cli-io-sanity-qe.md`](cli-io-sanity-qe.md), [`graph-storage-architecture.md`](graph-storage-architecture.md), [`CLI_STRUCTURE.txt`](CLI_STRUCTURE.txt), [`cli-getting-started.md`](cli-getting-started.md).*

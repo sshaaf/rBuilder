@@ -76,7 +76,7 @@ cargo test --test all_commands_sanity     # comprehensive subprocess audit
 |----------------|------|
 | `Sandbox::new()` | Copies fixture into temp dir; sets `db = {temp}/sandbox_graph.db` |
 | `sandbox.repo` | Root of the copied polyglot repo (Java + Rust) |
-| `sandbox.db` | Isolated SQLite graph path passed as `-d` |
+| `sandbox.db` | Isolated legacy JSON graph path (`-d`; not SQLite) |
 | `sandbox.run(args)` | Spawns `rbuilder -r {repo} -d {db} …args` and returns `Output` |
 | `parse_stdout_json(output)` | Parses stdout as JSON; panics with stdout/stderr on failure |
 
@@ -277,5 +277,5 @@ Prefer asserting in `all_commands_sanity.rs` if the flag affects JSON shape or e
 
 - [cli-output-schemas.md](cli-output-schemas.md) — field-by-field JSON reference (blast-radius §1)
 - [json-api.md](json-api.md) — programmatic parsing guide
-- [performance-engineering.md](performance-engineering.md) — blast-radius latency tiers, perf gates, discover/snapshot flags
+- [graph-storage-architecture.md](graph-storage-architecture.md) — snapshot layout, blast lookup cache
 - [Code_structure.md](Code_structure.md) — where to put CLI vs analysis changes
