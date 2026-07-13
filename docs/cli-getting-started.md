@@ -1,6 +1,7 @@
 # rBuilder CLI Getting Started
 
-> **Install from a release, PATH setup, and full command reference:** [user-guide.md](user-guide.md)
+> **Canonical reference:** [user-guide.md](user-guide.md) (install, every command, troubleshooting).  
+> This page is a shortened coolstore walkthrough — prefer the User Guide for up-to-date `serve`, export, and policy details.
 
 This guide walks through indexing [Konveyor coolstore](https://github.com/konveyor-ecosystem/coolstore) — a Java e-commerce demo (use the **`quarkus`** branch) — and querying it with the rBuilder CLI.
 
@@ -50,11 +51,12 @@ rbuilder -f json discover . | jq '.metrics'
 
 See [cli-output-schemas.md](cli-output-schemas.md) §2 for the full `discover` JSON shape.
 
-Preview the dashboard when indexing finishes (WASM requires serving the directory, not `file://`):
+Preview the dashboard when indexing finishes:
 
 ```bash
-cd .rbuilder/dashboard && python3 -m http.server 8765
-# open http://localhost:8765
+rbuilder -r . serve --open
+# or: cd .rbuilder/dashboard && python3 -m http.server 8765
+# open http://localhost:8080 or http://localhost:8765
 ```
 
 ### Optional analysis modes
@@ -90,7 +92,8 @@ After a successful run you should see:
 coolstore/.rbuilder/
 ├── graph.snapshot.bin      # Columnar mmap graph (primary cache)
 ├── blast_engine.snapshot.bin
-├── macro_call_index.db
+├── macro_call_index.db     # Blast-radius lookup cache (SQLite; not the graph)
+├── macro_call_index.bin    # Same index in bincode
 ├── analysis_results.bin
 ├── file_hashes.json
 ├── dashboard/              # Static UI bundle (index.html, manifest.json, …)
@@ -118,7 +121,7 @@ These work on every command:
 | Flag | Purpose |
 |------|---------|
 | `-r, --repo PATH` | Repository root (default: current directory) |
-| `-d, --db PATH` | Graph cache file (default: `.rbuilder/graph.db`) |
+| `-d, --db PATH` | Legacy graph JSON path (default: `.rbuilder/graph.db`; not SQLite) |
 | `-f, --format FORMAT` | Output format: `text`, `json`, `graphviz`, `mermaid` |
 | `-o, --output FILE` | Write command output to a file instead of stdout |
 
@@ -246,19 +249,18 @@ rbuilder -r "$REPO" -f json blast-radius CartService | jq '.metrics.score, .topo
 
 Breaking change from the old flat JSON shape; see [cli-output-schemas.md](cli-output-schemas.md) §1 and [json-api.md](json-api.md) §6.
 
-### Optional: query daemon (repeated queries)
+### Optional: HTTP server (`serve`)
 
-For many blast-radius calls in one session, keep the graph and blast engine warm:
+For the dashboard and repeated GQL queries:
 
 ```bash
-# Terminal 1
-rbuilder -r "$REPO" serve
-
-# Terminal 2 — auto-uses .rbuilder/query.sock when present
-rbuilder -r "$REPO" -f json blast-radius CartService
+rbuilder -r "$REPO" serve --open
+curl -sS -X POST http://127.0.0.1:8080/api/query \
+  -H 'Content-Type: application/json' \
+  -d '{"macro":"all_functions"}' | jq '.count'
 ```
 
-Disable auto-connect with `RBUILDER_NO_QUERY_DAEMON=1`. Not required for one-off or agent queries.
+Legacy blast-only socket: `rbuilder serve --daemon` (see [http-api.md](http-api.md)).
 
 ---
 
@@ -273,7 +275,7 @@ rbuilder -r "$REPO" slice \
   src/main/java/com/redhat/coolstore/service/ShoppingCartService.java \
   --line 45 \
   --variable cart \
-  --function ShoppingCartService
+  --function checkOutShoppingCart
 ```
 
 Forward slice:
@@ -294,7 +296,7 @@ rbuilder -r "$REPO" slice \
   src/main/java/com/redhat/coolstore/service/ShoppingCartService.java \
   --line 48 \
   --variable cart \
-  --function ShoppingCartService \
+  --function checkOutShoppingCart \
   --taint
 ```
 
@@ -366,15 +368,15 @@ rbuilder -r "$REPO" -f json metrics --pagerank --iterations 50 | jq .
 # Full graph as JSON
 rbuilder -r "$REPO" export --export-format json --export-output coolstore-graph.json
 
-# GraphML subgraph (GQL query selects nodes/edges)
+# GraphML subgraph (export filter selects nodes)
 rbuilder -r "$REPO" export \
   --export-format graphml \
   --export-output cart-subgraph.graphml \
-  --query "MATCH (n:Function) WHERE n.name LIKE '*Cart*' RETURN n"
+  --query "name:Cart"
 
 # DOT / Mermaid for visualization tools
 rbuilder -r "$REPO" export --export-format graphviz --export-output calls.dot --query all
-rbuilder -r "$REPO" export --export-format mermaid --export-output calls.mmd --query all
+rbuilder -r "$REPO" export --export-format mermaid --export-output calls.mmd --query "type:Function"
 ```
 
 ---
@@ -410,7 +412,7 @@ rbuilder -r . metrics --pagerank
 
 # 5. Line-level debugging on a specific change
 rbuilder -r . slice src/main/java/com/redhat/coolstore/service/ShoppingCartService.java \
-  --line 45 --variable cart --function ShoppingCartService
+  --line 45 --variable cart --function checkOutShoppingCart
 ```
 
 ---
@@ -427,6 +429,7 @@ rbuilder -r . slice src/main/java/com/redhat/coolstore/service/ShoppingCartServi
 | `metrics` | PageRank, betweenness, communities |
 | `export` | Serialize graph (json, graphml, dot, mermaid) |
 | `check` | CI policy gateway |
+| `serve` | HTTP dashboard + `/api/query` (default); `serve --daemon` for blast socket |
 
 ### Discover flags
 

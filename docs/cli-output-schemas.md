@@ -55,7 +55,7 @@ rbuilder -f json blast-radius <SYMBOL> [--depth N] [--policy-file PATH] [--with-
 | `--with-slices` | Populate `gatekeeping.handoffs` (requires full graph path) |
 | `--class` / `--file` | Disambiguate overloads |
 
-**Optional warm path:** start `rbuilder serve -r REPO` to keep graph + engine loaded; lite queries auto-connect to `.rbuilder/query.sock` unless `RBUILDER_NO_QUERY_DAEMON=1`.
+**Optional warm path:** `rbuilder serve` serves the dashboard and `POST /api/query` on port 8080. Legacy blast socket: `rbuilder serve --daemon` (auto-connect to `.rbuilder/query.sock` unless `RBUILDER_NO_QUERY_DAEMON=1`). See [http-api.md](http-api.md).
 
 **Source:** `src/cli/blast_radius_output.rs`  
 **Cache enrichment:** `crates/rbuilder-analysis/src/macro_call_index.rs`, `macro_call_lookup.rs`
@@ -101,7 +101,7 @@ rbuilder -f json blast-radius <SYMBOL> [--depth N] [--policy-file PATH] [--with-
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `scc_component_id` | integer \| null | SCC index from engine; `null` on macro-index/SQLite fast path |
+| `scc_component_id` | integer \| null | SCC index from engine; `null` on macro-index blast lookup cache hit |
 | `direct_callers` | `SymbolContext[]` | Immediate callers |
 | `impact_zone` | `SymbolContext[]` | Transitive upstream callers (filtered by `--depth` when set) |
 
@@ -118,7 +118,7 @@ rbuilder -f json blast-radius <SYMBOL> [--depth N] [--policy-file PATH] [--with-
 - `fqn` is language-native display text from graph `qualified_name` or bare `name`.
 - **Route on `target.canonical_fqn` + UUIDs**, not parsed `topology.fqn`.
 - **Nil UUID policy:** entries without a resolvable graph UUID are **omitted** from `topology` (never `00000000-…`).
-- After `discover`, SQLite/bin caches store `direct_caller_ids`, `impact_zone_ids`, and target metadata for composable chaining.
+- After `discover`, the blast lookup cache (`macro_call_index.db` / `.bin`) stores `direct_caller_ids`, `impact_zone_ids`, and target metadata for composable chaining.
 
 ### `gatekeeping` — policy and slice tracing
 
@@ -215,12 +215,20 @@ rbuilder -f json blast-radius <SYMBOL> [--depth N] [--policy-file PATH] [--with-
 
 ---
 
-## 1b. `serve` — query daemon (no JSON stdout)
+## 1b. `serve` — HTTP dashboard + optional socket daemon
 
-**Command:**
+**Default (HTTP):**
 
 ```bash
-rbuilder serve -r REPO [--socket PATH] [--idle-secs SECS]
+rbuilder serve -r REPO [--open]
+```
+
+Binds `http://127.0.0.1:8080/` — dashboard at `/`, GQL at `POST /api/query`. See [http-api.md](http-api.md).
+
+**Legacy socket daemon (`--daemon`):**
+
+```bash
+rbuilder serve -r REPO --daemon [--socket PATH] [--idle-secs SECS]
 ```
 
 **Defaults:** socket `{repo}/.rbuilder/query.sock`, idle exit 300s.
@@ -277,8 +285,8 @@ Without `-f json`, discover remains human-readable text progress (unchanged).
 |------|------|--------|
 | `.rbuilder/graph.snapshot.bin` | Always (default canonical graph) | Binary graph snapshot |
 | `.rbuilder/blast_engine.snapshot.bin` | Always | Binary blast engine snapshot |
-| `.rbuilder/macro_call_index.db` | Always | SQLite blast-radius cache (+ UUID + v2 target columns) |
-| `.rbuilder/macro_call_index.bin` | Always | Bincode macro index |
+| `.rbuilder/macro_call_index.db` | Always | SQLite **blast-radius lookup cache** only (+ UUID + v2 target columns) |
+| `.rbuilder/macro_call_index.bin` | Always | Bincode companion index (same data family as `.db`) |
 | `.rbuilder/analysis_results.bin` | Always | Columnar analysis tables |
 | `.rbuilder/dashboard/` | When export succeeds | Static dashboard bundle (`index.html`, `manifest.json`, …) |
 | `.rbuilder/graph.db` / `.rbuilder/graph.json` | `--write-json-graph` only | Legacy full graph JSON |
@@ -609,4 +617,4 @@ cargo test --test cli_output --test subprocess_golden_path --test all_commands_s
 
 - **HTML dashboard:** still uses discover-time node properties, not CLI JSON shapes
 - **Rust plugin:** does not set `properties.language` on graph nodes yet (v2 falls back to `.rs` extension)
-- **Re-run `discover`** on repos indexed before P2 to populate SQLite UUID + v2 target columns
+- **Re-run `discover`** on repos indexed before P2 to populate blast lookup cache UUID + v2 target columns

@@ -1,12 +1,12 @@
 # rBuilder static dashboard — engineering design (living document)
 
-**Status:** Phase 7 complete (PDG dataflow visualization)  
-**Last updated:** 2026-07-04  
+**Status:** Phase 8 complete (taint tab); Query Guide + HTTP `serve` integrated  
+**Last updated:** 2026-07-13  
 **Owner:** rBuilder core / export pipeline  
 
 This document is the **running source of truth** for the WASM + WebGL dashboard replacement. Update the [Implementation status](#implementation-status) section at the end of every phase PR.
 
-Related: [performance-engineering.md](performance-engineering.md), [Code_structure.md](Code_structure.md), [cli-output-schemas.md](cli-output-schemas.md).
+Related: [cli-io-sanity-qe.md](cli-io-sanity-qe.md), [Code_structure.md](Code_structure.md), [cli-output-schemas.md](cli-output-schemas.md).
 
 ---
 
@@ -86,10 +86,11 @@ cargo build --release   # rbuilder-dashboard embeds dashboard/dist
 
 ```bash
 rbuilder discover .
-# Option A — local static server (recommended for WASM fetch)
+# Option A — rbuilder HTTP server (dashboard + POST /api/query)
+rbuilder serve --open
+# Option B — local static server (WASM fetch; no query API)
 cd .rbuilder/dashboard && python3 -m http.server 8765
-# Option B — open index.html directly (manifest injected at export; WASM fetch may need server)
-open http://localhost:8765
+open http://localhost:8080   # or :8765 for Option B
 ```
 
 ### Lookup
@@ -256,13 +257,13 @@ _Update this table when a phase lands._
 | Functions virtual table | 3 | **done** | WASM paginated list |
 | `tests/dashboard_harness.rs` | 3 | **done** | phase 3 + `member_indices` |
 | Bootstrap UI restore | 3+ | **done** | Full-height tabs, worker URL fix |
-| CFG index + detail export | 4 | **done** | `cfg_index.json`, `cfg/*.json`, archive copy |
-| CFG / dominance tab | 4 | **done** | `CfgView.tsx` Sigma CFG + idom table |
+| CFG index + detail export | 4 | **done** | `cfg_index.json`, `cfg/*.json`, archive copy; `detail_mode: archive_only` on large repos |
+| CFG / dominance tab | 4 | **done** | `CfgView.tsx` Sigma CFG + idom table; on-demand record fetch when `archive_only` |
 | Remove `all_analyses.json` | 4 | **done** | Discover no longer writes consolidated JSON |
 | Slice index + PDG export | 5 | **done** | `slice_index.json`, `slice/*.json` with source + PDG |
 | CodeMirror slice tab | 5 | **done** | `SliceView.tsx`, worker `compute_slice` on exported PDG |
 | `tests/dashboard_harness.rs` | 5 | **done** | phase 5 + `slice_index.json` |
-| WASM `blastRadius` API | 6 | **done** | Reverse call-graph BFS with depth limit |
+| WASM `blastRadius` API | 6 | **done** | Reverse call-graph BFS with depth limit; score matches CLI macro impact |
 | Blast radius tab | 6 | **done** | `BlastView.tsx` + depth slider |
 | `blast_index.json` export | 6 | **done** | Optional snapshot copy |
 | `tests/dashboard_harness.rs` | 6 | **done** | phase 6 + `blast_index.json` |
@@ -273,6 +274,9 @@ _Update this table when a phase lands._
 | Taint tab (flows table) | 8 | **done** | `TaintView.tsx` — source→sink paths from archive |
 | `tests/dashboard_harness.rs` | 8 | **done** | phase 8 + `taint_index.json` |
 | `tests/dashboard_metasfresh.rs` | 8+ | **manual** | metasfresh `discover --all`; `./scripts/test-dashboard-metasfresh.sh` |
+| Query Guide tab | 9 | **done** | `GuideView.tsx` + `guideCliWorkflows.ts`; validated by `validate-guide-cli-gbuilder.sh` |
+| HTTP `serve` integration | 9 | **done** | `rbuilder serve` serves bundle + `/api/query`; see [http-api.md](http-api.md) |
+| Migration tab live weights | 9 | **done** | `MigrationView.tsx` mirrors Rust scoring; exports in `.rbuilder/dashboard/` |
 
 ### Removed (Phase 0)
 
@@ -287,6 +291,14 @@ _Update this table when a phase lands._
 ### Not yet removed (later phases)
 
 - Discover-time blast radius string properties on nodes (Phase 6, dashboard only)
+
+### Query Guide (Phase 9)
+
+The **Query Guide** tab (`GuideView.tsx`, `dashboard/src/guideCliWorkflows.ts`) documents CLI equivalents for each dashboard view. Workflows are validated against real repos via `dashboard/scripts/validate-guide-cli-gbuilder.sh`. End-user walkthrough: [dashboard-user-guide.md](dashboard-user-guide.md).
+
+### Large-repo CFG (`archive_only`)
+
+When function count exceeds the inline JSON budget, `cfg_index.json` sets `detail_mode: "archive_only"`. The CFG and Dataflow tabs show a banner and load per-function records on demand from `cfg_pdg.archive.bin` sidecars (`record_index_path`, `record_data_path`).
 
 ---
 
