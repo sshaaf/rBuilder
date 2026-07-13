@@ -7,6 +7,16 @@ AI coding agents default to reading files sequentially. That burns context, miss
 [![CI](https://github.com/sshaaf/rBuilder/actions/workflows/ci.yml/badge.svg)](https://github.com/sshaaf/rBuilder/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
+## Demo
+
+**~28s** dashboard tour — discover metrics, GQL, graph metrics, CFG/PDG, slicing, blast radius, taint, migration planner, CI policy, and export.
+
+<video src="docs/videos/rbuilder-feature-demo.mp4" controls playsinline width="100%">
+  <a href="docs/videos/rbuilder-feature-demo.mp4">Watch the rBuilder feature demo</a>
+</video>
+
+Regenerate: [docs/videos/README.md](docs/videos/README.md)
+
 ---
 
 ## What the **R** stands for
