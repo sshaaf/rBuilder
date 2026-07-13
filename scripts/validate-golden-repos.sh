@@ -16,8 +16,6 @@ GBUILDER="${RBUILDER_DASHBOARD_GOLDEN_REPO:-/Users/sshaaf/git/java/gbuilder}"
 METASFRESH="${RBUILDER_METASFRESH_REPO:-$ROOT/example/metasfresh-4.9.8b}"
 SERVE_PORT="${RBUILDER_SERVE_PORT:-8080}"
 DASHBOARD_URL="http://127.0.0.1:${SERVE_PORT}/"
-GIT_SHA="$(git rev-parse --short HEAD 2>/dev/null || echo unknown)"
-DATE="$(date -u +%Y-%m-%d)"
 
 log() { echo "[validate-golden-repos] $*"; }
 
@@ -44,11 +42,8 @@ run_discover_all() {
 }
 
 append_baseline_row() {
-  local repo="$1" nodes="$2" edges="$3" discover_s="$4" notes="$5"
-  {
-    echo ""
-    echo "| ${DATE} | ${GIT_SHA} | ${repo} | ${discover_s} | — | ${notes} |"
-  } >> "$ROOT/docs/performance-baselines.md"
+  local repo="$1" discover_s="$2" notes="$3"
+  log "discover --all timing: ${repo} ${discover_s}s (${notes})"
 }
 
 log "Building dashboard dist (if script present)..."
@@ -106,11 +101,12 @@ else
 fi
 
 if [[ -n "$GBUILDER_DISCOVER_S" ]]; then
-  append_baseline_row "gbuilder" "—" "—" "$GBUILDER_DISCOVER_S" "validate-golden-repos discover --all"
+  append_baseline_row "gbuilder" "$GBUILDER_DISCOVER_S" "validate-golden-repos discover --all"
 fi
 if [[ -n "$METASFRESH_DISCOVER_S" ]]; then
-  append_baseline_row "metasfresh" "—" "—" "$METASFRESH_DISCOVER_S" "validate-golden-repos discover --all"
+  append_baseline_row "metasfresh" "$METASFRESH_DISCOVER_S" "validate-golden-repos discover --all"
 fi
 
-log "Optional: cargo bench --bench graph_benchmarks (record in docs/performance-baselines.md)"
+log "Optional: cargo bench --bench graph_benchmarks"
+log "Optional: cargo test --release --test discover_perf_baselines -- --ignored --nocapture"
 log "Done."

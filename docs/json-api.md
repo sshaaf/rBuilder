@@ -98,7 +98,7 @@ if (doc.schema_version !== 2) {
 | `slice` | ✅ | `lines` / `nodes` / `edges` / `taint` | Line-level analysis |
 | `inspect` | ✅ | `layer`, `nodes`, `edges` | CFG/PDG/dominance dumps |
 | `export` | ❌ (file) | — | Full-graph serialization |
-| `serve` | ❌ | — | Unix socket daemon (NDJSON RPC) |
+| `serve` | ❌ | — | HTTP dashboard + `/api/query` (default); `--daemon` = Unix socket blast daemon |
 
 ---
 
@@ -745,4 +745,5 @@ See [cli-io-sanity-qe.md](cli-io-sanity-qe.md) for the full coverage matrix.
 
 - [user-guide.md](user-guide.md) — install, coolstore walkthrough, CLI examples
 - [cli-output-schemas.md](cli-output-schemas.md) — exhaustive field tables per command
-- [performance-engineering.md](performance-engineering.md) — latency tiers and `serve` daemon notes
+- [http-api.md](http-api.md) — `rbuilder serve` and `/api/query`
+- [cli-io-sanity-qe.md](cli-io-sanity-qe.md) — subprocess JSON contract and release perf gates

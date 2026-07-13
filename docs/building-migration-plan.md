@@ -6,7 +6,7 @@
 
 * **Step 1:** Run `rbuilder discover . --all` to index the entire repository. This creates the foundational map under `.rbuilder/`.
 * **Step 2:** Use **Graph Queries (GQL)** with macros like `all_functions` and `call_chain` to inventory modules, list cross-boundary dependencies, and get an accurate baseline of the current system architecture.
-* **Step 3:** Generate a visual landscape using the **Dashboard** (`cd .rbuilder/dashboard && python3 -m http.server`) to identify tight structural coupling and package boundaries interactively.
+* **Step 3:** Open the **Dashboard** with `rbuilder serve --open` (or `cd .rbuilder/dashboard && python3 -m http.server`) to explore package boundaries and coupling interactively.
 
 ### Phase 2: Hotspot & Risk Assessment
 
@@ -39,5 +39,15 @@
 
 **Goal:** Ensure that ongoing work does not violate the new migration boundaries or re-introduce legacy dependencies.
 
-* **Step 1:** Write an rBuilder **Policy File** outlining forbidden cross-domain impacts or preventing calls back to legacy modules.
+* **Step 1:** Write an rBuilder **Policy File** ([policy-format.md](policy-format.md)) outlining forbidden cross-domain impacts or preventing calls back to legacy modules.
 * **Step 2:** Integrate `rbuilder check` into your **CI policy checks** (Pull Request pipeline). If a developer introduces a change that violates the migration architecture boundaries, the CI pipeline will return exit code `1` and block the merge.
+
+### Artifacts
+
+| Path | When |
+|------|------|
+| `.rbuilder/dashboard/migration_graph.json` | Every `discover` (dashboard bundle) |
+| `.rbuilder/dashboard/migration_plan.json` | Every `discover` (default preset) |
+| `.rbuilder/migration_plan.json` | `discover --export-migration-plan` (custom preset via flags) |
+
+See [design/migration-planner-design.md](design/migration-planner-design.md) for scoring and ordering details.

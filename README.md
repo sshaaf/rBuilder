@@ -7,6 +7,15 @@ AI coding agents default to reading files sequentially. That burns context, miss
 [![CI](https://github.com/sshaaf/rBuilder/actions/workflows/ci.yml/badge.svg)](https://github.com/sshaaf/rBuilder/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
+## Demo
+
+**~28s** dashboard tour — discover metrics, GQL, graph metrics, CFG/PDG, slicing, blast radius, taint, migration planner, CI policy, and export.
+
+https://github.com/user-attachments/assets/547bf5d1-2058-4668-b990-35def9c38636
+
+
+Regenerate: [docs/videos/README.md](docs/videos/README.md)
+
 ---
 
 ## What the **R** stands for
@@ -19,28 +28,7 @@ AI coding agents default to reading files sequentially. That burns context, miss
 
 Together: **rBuilder** is the **reachability builder** — it constructs the graph and the compressed reachability engine agents need for trustworthy structural reasoning.
 
----
-
-#### RBuilder Analysis - Repository graph algorithms
-
-| Module | Graph Input | Algorithm | Complexity | Notes |
-|--------|-------------|-----------|------------|-------|
-| `graph_utils` | Backend/snapshot | Topology projection | O(V+E) | Builds DiGraph + UnGraph; `call_only_directed()` filters Calls |
-| `centrality` | `PetGraphView` → `FlatGraphIndex` | PageRank (power iteration) | O(k·E) per iter | Default 20 iters, damping 0.85; excludes structural edges |
-| `centrality` | Flat index | Brandes betweenness | O(V·E) | Exact when V ≤ 500 |
-| `centrality` | Flat index | Degree centrality | O(E) | In/out on filtered projection |
-| `centrality_approx` | Flat index | Sampled Brandes (RANDES) | O(k·(V+E)) | 512 pivots default; normalized |
-| `centrality_approx` | Flat index | HyperBall harmonic | O(r·E) | Exact set propagation ≤8192 nodes; HLL p=14 above |
-| `community` | `PetGraphView` undirected filter | Label propagation + modularity | O(iters·E) | Hub stripping (μ+kσ); importance tie-break via PageRank |
-| `dependency` | `PetGraphView` directed | Kosaraju SCC | O(V+E) | Cycles require ≥2 nodes with call edges |
-| `dependency` | Directed BFS (reverse) | Impact radius | O(V+E) capped | **Hard depth cap = 10** |
-| `blast_radius_scc` | Call-only DiGraph | Kosaraju → DAG → topo → bitset reachability | Build O(V²/64), query O(1) | Primary engine for large graphs |
-| `blast_radius` | `PetGraphView` Calls filter | Reverse BFS + optional PDG depth | O(V+E) | Depth default `usize::MAX` (inconsistent with dependency) |
-| `callgraph` | Backend | Zero-clone u32 adjacency build | O(V+E) | Column-oriented metadata; lazy legacy cache |
-| `migration` | Communities + cross-package edges | Weighted topo sort / greedy order | O(V+E) | JSON payload for dashboard |
-| `complexity` | Backend node properties | Aggregation + classification | O(F) | Reads precomputed cyclomatic/cognitive from graph nodes |
-
-
+Algorithm and complexity details: crate READMEs under `crates/rbuilder-analysis/` and [CLI I/O sanity QE](docs/cli-io-sanity-qe.md) for automated perf gates.
 
 ## Built for agents
 
@@ -63,22 +51,22 @@ rBuilder answers **reachability and relation questions deterministically** from 
 
 Most codebase tools stop at **text search**, **file trees**, or a **shallow call graph**. rBuilder goes further — compiler-grade structure and security analysis, pre-computed at index time, queryable in milliseconds. That is what makes agent answers trustworthy.
 
-| Feature | What it gives you | Typical tools |
-|---------|-------------------|---------------|
-| **[Blast radius](docs/Introduction.md#blast-radius-change-impact)** | Pre-computed **reachability** over the call graph — upstream impact, scores, policy gates, sub-second on large repos | Text grep or manual “find references”; no compressed reachability engine |
-| **[Program slicing](docs/Introduction.md#program-slicing)** | **Backward / forward slice** — only the statements that affect (or are affected by) a line and variable | Whole-file context dumps; no PDG-backed minimal slice |
-| **[Taint analysis](docs/Introduction.md#taint-analysis)** | **Source → sink** flows (HTTP params → SQL, shell, render, …) with sanitizer awareness | Regex heuristics; no intra-procedural dataflow |
-| **[CFG](docs/Introduction.md#cfg-pdg-and-dominance-deep-structure)** | **Control-flow graph** per function — branches, loops, executable paths | No control-flow layer |
-| **[PDG](docs/Introduction.md#cfg-pdg-and-dominance-deep-structure)** | **Program dependence graph** — data and control deps between statements; foundation for slice and taint | No dependence graph |
-| **[Dominance](docs/Introduction.md#cfg-pdg-and-dominance-deep-structure)** | **Dominator trees** and frontiers — the same structures compilers use for advanced analysis | Not exposed in developer tools |
-| **[GQL](docs/Introduction.md#graph-queries-gql)** | **Graph query language** over 30+ relation types — inventory, call chains, patterns | SQL-on-files or ad-hoc AST scripts |
-| **[Graph metrics](docs/Introduction.md#graph-metrics-architecture-hotspots)** | **PageRank**, **betweenness**, **communities** on the live call graph | Ad-hoc scripts; no unified hotspot pipeline |
-| **[Migration planner](docs/migration-planner-design.md)** | **Package-level roadmap** — PageRank + harmonic centrality − blast radius; dependency-aware schedule and priority rank; ForceAtlas2 graph in the dashboard | Spreadsheets and guesswork; no unified package graph + ordering pipeline |
-| **[CI policy checks](docs/Introduction.md#ci-policy-checks)** | **`check`** — fail builds when blast-radius rules are violated on touched symbols | No governance tied to impact analysis |
+| Feature | What it gives you | Design doc |
+|---------|-------------------|------------|
+| **Blast radius** | Pre-computed **reachability** over the call graph — upstream impact, scores, policy gates, sub-second on large repos | [blast-radius-design.md](docs/design/blast-radius-design.md) |
+| **Program slicing** | **Backward / forward slice** — only the statements that affect (or are affected by) a line and variable | [program-slicing-design.md](docs/design/program-slicing-design.md) |
+| **Taint analysis** | **Source → sink** flows (HTTP params → SQL, shell, render, …) with sanitizer awareness | [taint-analysis-design.md](docs/design/taint-analysis-design.md) |
+| **CFG** | **Control-flow graph** per function — branches, loops, executable paths | [cfg-design.md](docs/design/cfg-design.md) |
+| **PDG** | **Program dependence graph** — data and control deps between statements; foundation for slice and taint | [pdg-design.md](docs/design/pdg-design.md) |
+| **Dominance** | **Dominator trees** and frontiers — the same structures compilers use for advanced analysis | [dominance-design.md](docs/design/dominance-design.md) |
+| **GQL** | **Graph query language** over 30+ relation types — inventory, call chains, patterns | [gql-design.md](docs/design/gql-design.md) |
+| **Graph metrics** | **PageRank**, **betweenness**, **communities** on the live call graph | [graph-metrics-design.md](docs/design/graph-metrics-design.md) |
+| **Migration planner** | **Package-level roadmap** — PageRank + harmonic centrality − blast radius; dependency-aware schedule and priority rank; ForceAtlas2 graph in the dashboard | [migration-planner-design.md](docs/design/migration-planner-design.md) |
+| **CI policy checks** | **`check`** — fail builds when blast-radius rules are violated on touched symbols | [ci-policy-checks-design.md](docs/design/ci-policy-checks-design.md) |
 
 All of the above share one index: run [`discover`](docs/Introduction.md#indexing-the-repository-discover) once (use [`discover --cfg`](docs/Introduction.md#indexing-the-repository-discover) or `--all` for full CFG/PDG/taint archives and migration exports). Explore in the CLI, pipe **JSON** to agents, or open the **[dashboard](docs/Introduction.md#dashboard-visual-exploration)** (including the **Migration** tab).
 
-**Deep dive on every feature → [Introduction](docs/Introduction.md)**
+**Deep dive on every feature → [Introduction](docs/Introduction.md) · [Feature designs](docs/design/README.md)**
 
 ---
 
@@ -88,7 +76,7 @@ rBuilder is **async and parallel by design** — discovery walks the tree, parse
 
 - **Full discovery in seconds** on typical repos (not minutes of ad-hoc agent exploration)
 - **Reachability compressed** — enterprise-scale call graphs stored in compact on-disk snapshots, not gigabytes in RAM
-- **Query daemon (`serve`)** — keep mmap snapshots warm for hundreds of blast-radius calls in agent loops without cold-start cost
+- **HTTP `serve`** — dashboard + `/api/query` on port 8080; optional `serve --daemon` socket for blast-radius warm path
 
 Index once → query many times. That is the agent workflow.
 
@@ -128,15 +116,16 @@ After `discover --all`, open the dashboard **Migration** tab or export a machine
 
 - **Package macro graph** — aggregates functions into path-derived package labels (Java package paths, Rust/C `/src/` modules)
 - **Dual ordering** — **scheduled step** (Kahn topological sort, callee before caller) and **priority rank** (score-only)
-- **Scoring** — `Priority = α·PageRank + β·Harmonic − γ·Blast`; presets include Hybrid Default, Risk Mitigation, Hotspot First
-- **CLI export** — `discover --export-migration-plan` writes `migration_graph.json` and `migration_plan.json` under `.rbuilder/`
+- **Scoring** — `Priority = α·PageRank + β·Harmonic − γ·Blast`; presets include Hybrid Default, Foundational First, Dense Cluster Extraction, Risk Mitigation
+- **CLI export** — every `discover` writes `migration_graph.json` and a default `migration_plan.json` under `.rbuilder/dashboard/`; use `--export-migration-plan` to write a preset-tuned plan (default `.rbuilder/migration_plan.json`, override with `-o`)
 
 ```bash
 rbuilder discover . --all --export-migration-plan
 rbuilder serve   # http://127.0.0.1:8080/ → Migration tab
 ```
 
-Design → **[Migration planner design](docs/migration-planner-design.md)** · Workflow → **[Building a migration plan](docs/building-migration-plan.md)**
+Design → **[Migration planner design](docs/design/migration-planner-design.md)** · Workflow → **[Building a migration plan](docs/building-migration-plan.md)**  
+All feature designs → **[docs/design/](docs/design/README.md)**
 
 Walkthrough on a real Java repo → **[coolstore example](docs/user-guide.md#3-example-project-coolstore)** (User Guide).
 
@@ -206,11 +195,11 @@ Quick links into **[Introduction](docs/Introduction.md)** — see [Where most to
 | `metrics` | [Graph metrics](docs/Introduction.md#graph-metrics-architecture-hotspots) |
 | `export` | [Export](docs/Introduction.md#export-and-sharing) |
 | `check` | [CI policy](docs/Introduction.md#ci-policy-checks) |
-| `serve` | [Query daemon](docs/Introduction.md#query-daemon-repeated-analysis) |
+| `serve` | [HTTP server](docs/Introduction.md#http-server-serve) |
 
-**Dashboard** — visual exploration after `discover` (`.rbuilder/dashboard/`), including the **Migration** planner tab.  
+**Dashboard** — visual exploration after `discover` (`.rbuilder/dashboard/`). See **[Feature designs](docs/design/README.md)** for per-tab engineering docs.  
 **Migration export** — `discover --export-migration-plan` (optional `--migration-preset`, `--migration-order scheduled|priority`).  
-**Languages** — 35+ (Rust, Python, Java, Go, TypeScript, IaC, CI YAML, …). See [LANGUAGE_GUIDE.md](LANGUAGE_GUIDE.md).
+**Languages** — nine Tier 1 languages (Rust, Python, Java, Go, TypeScript, JavaScript, C#, C, C++) plus config/IaC plugins. See [Language guide](docs/LANGUAGE_GUIDE.md).
 
 ---
 
@@ -218,24 +207,33 @@ Quick links into **[Introduction](docs/Introduction.md)** — see [Where most to
 
 | Document | For |
 |----------|-----|
+| **[Documentation index](docs/README.md)** | Map of all docs by persona |
 | **[Introduction](docs/Introduction.md)** | Concepts — graph, reachability, each feature |
-| **[User Guide](docs/user-guide.md)** | Install, coolstore, every command |
-| **[JSON API](docs/json-api.md)** | **Agent integration** — parse `-f json` |
-| **[Further reading](docs/further-reading.md)** | **Research implemented vs inspired** — papers, code map, contribution ideas |
+| **[User Guide](docs/user-guide.md)** | Install, coolstore, every CLI command |
+| **[Dashboard user guide](docs/dashboard-user-guide.md)** | Browser UI tab-by-tab |
+| **[AGENTS.md](AGENTS.md)** | **LLM agents** — discover once, query JSON |
+| **[Agent recipes](docs/agent-recipes.md)** | Copy-paste automation workflows |
+| **[JSON API](docs/json-api.md)** | Parse `-f json` payloads |
+| **[HTTP API](docs/http-api.md)** | `rbuilder serve` → `/api/query` |
+| **[Policy format](docs/policy-format.md)** | `check` / blast policy JSON |
+| **[Language guide](docs/LANGUAGE_GUIDE.md)** | Supported languages and tiers |
+| **[Further reading](docs/further-reading.md)** | Research implemented vs inspired |
 | **[CLI output schemas](docs/cli-output-schemas.md)** | Exact field tables |
-| **[Performance engineering](docs/performance-engineering.md)** | Latency tiers, cache layout |
-| **[Dashboard design](docs/dashboard-design.md)** | Browser UI |
-| **[Migration planner design](docs/migration-planner-design.md)** | Package graph, scoring, ordering, dashboard UI |
+| **[CLI I/O sanity QE](docs/cli-io-sanity-qe.md)** | Subprocess JSON contract and release perf gates |
+| **[Feature designs](docs/design/README.md)** | Engineering design docs with dashboard screenshots |
+| **[Migration planner design](docs/design/migration-planner-design.md)** | Package graph, scoring, ordering |
 | **[Building a migration plan](docs/building-migration-plan.md)** | End-to-end migration workflow |
-| **[Releasing](docs/releasing.md)** | Tags and release workflow |
+| **[CONTRIBUTING.md](CONTRIBUTING.md)** | Dev setup and PR expectations |
+| **[Releasing](docs/releasing.md)** | Tags and GitHub Releases |
 
 ---
 
 ## Development
 
 ```bash
-./scripts/ci-local.sh              # CI parity
-./scripts/release-local.sh --native  # pre-tag release smoke test
+cargo test
+cargo build --release
+# See CONTRIBUTING.md for dashboard build and golden-repo checks
 ```
 
 ---

@@ -22,7 +22,7 @@ This document explains **what rBuilder is**, how a **code knowledge graph** work
 11. [Migration planner (package roadmap)](#migration-planner-package-roadmap)
 12. [Export and sharing](#export-and-sharing)
 13. [CI policy checks](#ci-policy-checks)
-14. [Query daemon (repeated analysis)](#query-daemon-repeated-analysis)
+14. [HTTP server (`serve`)](#http-server-serve)
 15. [Dashboard (visual exploration)](#dashboard-visual-exploration)
 16. [Where to go next](#where-to-go-next)
 
@@ -93,7 +93,9 @@ You do not need graph theory to use the CLI; it helps to know that **indexing bu
 
 1. **Once per repo (or after big changes):** run `discover` to build `.rbuilder/`.  
 2. **Many times:** run query commands (`gql`, `blast-radius`, …) against that cache.  
-3. **Optional:** open the **dashboard** for interactive exploration, or use **`-f json`** for automation ([JSON API](json-api.md)).
+3. **Optional:** open the **dashboard** for interactive exploration ([dashboard user guide](dashboard-user-guide.md)), or use **`-f json`** for automation ([JSON API](json-api.md)).
+
+Feature-level engineering designs (with dashboard screenshots): **[design/](design/README.md)**.
 
 ---
 
@@ -105,7 +107,7 @@ Turn a folder of source code into a **persistent, queryable graph** plus pre-com
 
 ### Description
 
-`discover` walks the repository, uses language-aware parsers to extract symbols and relationships, and writes artifacts to `.rbuilder/`. This includes a binary graph snapshot (`graph.snapshot.bin`), a blast-radius engine snapshot, SQLite lookup tables, and optionally per-function control-flow and taint data when you enable deeper modes (`--cfg` or `--all`).
+`discover` walks the repository, uses language-aware parsers to extract symbols and relationships, and writes artifacts to `.rbuilder/`. The **primary graph** is a columnar binary snapshot (`graph.snapshot.bin`); GQL and most commands read that via mmap — **not** a SQL database. Also written: a blast-radius engine snapshot, a **SQLite blast-radius lookup cache** (`macro_call_index.db`, `blast-radius` fast path only), and optionally per-function control-flow and taint data when you enable deeper modes (`--cfg` or `--all`).
 
 Default discover is tuned for speed. Deeper modes trade time for semantic detail (slicing, taint, inspect overlays).
 
@@ -119,7 +121,8 @@ Default discover is tuned for speed. Deeper modes trade time for semantic detail
 
 ### How to run it
 
-→ [User Guide §4 — Index with `discover`](user-guide.md#4-index-with-discover)
+→ [User Guide §4 — Index with `discover`](user-guide.md#4-index-with-discover)  
+→ Artifacts and caches: **[Graph storage architecture](graph-storage-architecture.md)**
 
 ---
 
@@ -133,7 +136,7 @@ Default discover is tuned for speed. Deeper modes trade time for semantic detail
 
 **GQL** (graph query language) matches patterns in the graph: find all functions whose name contains `Cart`, list call chains between functions, or count nodes by type. Results can be human-readable text or **JSON** for scripts.
 
-Named **macros** (`all_functions`, `direct_calls`, `call_chain`) bundle common patterns so you do not rewrite long queries.
+Named **macros** (`all_functions`, `direct_calls`, `call_chain`) bundle common patterns so you do not rewrite long queries. The dashboard **Graph** tab visualizes the same package metagraph that many inventory queries summarize.
 
 ### Key benefits
 
@@ -144,7 +147,8 @@ Named **macros** (`all_functions`, `direct_calls`, `call_chain`) bundle common p
 
 ### How to run it
 
-→ [User Guide §6 — Query the graph with GQL](user-guide.md#6-query-the-graph-with-gql)
+→ [User Guide §6 — Query the graph with GQL](user-guide.md#6-query-the-graph-with-gql)  
+→ Design: **[GQL design](design/gql-design.md)** · HTTP: **[HTTP API](http-api.md)**
 
 ---
 
@@ -160,7 +164,7 @@ Answer: **“If I change this function or method, what breaks upstream?”** —
 
 You can cap how far upstream to look (`--depth`), attach **policy files** for governance (e.g. “this change must not cross domain boundaries”), and optionally request **slice hand-offs** for line-level follow-up.
 
-Pre-computed reachability at discover time is what keeps this sub-second on large graphs.
+Pre-computed reachability at discover time is what keeps this sub-second on large graphs. A **SQLite blast lookup cache** (`macro_call_index.db`) accelerates repeat queries on uniquely named symbols; the graph itself lives in `graph.snapshot.bin`, not SQL.
 
 ### Key benefits
 
@@ -171,7 +175,8 @@ Pre-computed reachability at discover time is what keeps this sub-second on larg
 
 ### How to run it
 
-→ [User Guide §7 — Blast radius (change impact)](user-guide.md#7-blast-radius-change-impact)
+→ [User Guide §7 — Blast radius (change impact)](user-guide.md#7-blast-radius-change-impact)  
+→ Design: **[Blast radius design](design/blast-radius-design.md)**
 
 ---
 
@@ -183,9 +188,9 @@ Answer: **“Which lines of this function actually affect this variable at this 
 
 ### Description
 
-**Slicing** is a precision tool for debugging and review. You point at a **file**, **line**, and **variable**; rBuilder computes the **slice** — the minimal set of statements that influence (or are influenced by) that point. This uses control-flow and program-dependence structure inside the function.
+**Slicing** is a precision tool for debugging and review. You point at a **file**, **line**, **variable**, and enclosing **method name** (`--function`); rBuilder computes the **slice** — the minimal set of statements that influence (or are influenced by) that point. This uses control-flow and program-dependence structure inside the function.
 
-Slicing reads source from disk; richer cross-function context is available when the repo was indexed with `discover --cfg`.
+Slicing reads source from disk; richer cross-function context is available when the repo was indexed with `discover --cfg`. The dashboard **Program Slicing** tab runs the same analysis in the browser with highlighted source.
 
 ### Key benefits
 
@@ -195,7 +200,8 @@ Slicing reads source from disk; richer cross-function context is available when 
 
 ### How to run it
 
-→ [User Guide §8 — Program slicing and taint](user-guide.md#8-program-slicing-and-taint) (slice sections)
+→ [User Guide §8 — Program slicing and taint](user-guide.md#8-program-slicing-and-taint) (slice sections)  
+→ Design: **[Program slicing design](design/program-slicing-design.md)**
 
 ---
 
@@ -209,7 +215,7 @@ Find **unsafe flows** where untrusted input (sources) may reach dangerous operat
 
 **Taint analysis** tracks how data of interest propagates from **sources** (request parameters, files, environment variables, …) to **sinks** (SQL execution, shell, HTML render, …). Flows may be **sanitized** on the path; vulnerable flows are those with no effective sanitizer.
 
-At CLI level, `slice --taint` gives a quick per-function check. Full-repo taint summaries are produced when you run `discover --cfg` or `--all` and appear in the dashboard **taint** tab and exported JSON indexes.
+At CLI level, `slice --taint` gives a quick per-function check. Full-repo taint summaries are produced when you run `discover --cfg` or `--all` and appear in the dashboard **Taint Analysis** tab and exported JSON indexes.
 
 ### Key benefits
 
@@ -220,7 +226,8 @@ At CLI level, `slice --taint` gives a quick per-function check. Full-repo taint 
 ### How to run it
 
 → [User Guide §8 — Program slicing and taint](user-guide.md#8-program-slicing-and-taint) (taint sections)  
-→ Deeper index: `discover . --cfg` or `discover . --all` ([User Guide §4](user-guide.md#4-index-with-discover))
+→ Deeper index: `discover . --cfg` or `discover . --all` ([User Guide §4](user-guide.md#4-index-with-discover))  
+→ Design: **[Taint analysis design](design/taint-analysis-design.md)**
 
 ---
 
@@ -240,6 +247,8 @@ Inspect **how code executes inside a single function** — branches, loops, data
 
 The **`inspect`** command dumps these layers for a named function. **`discover --cfg`** must have run so the archive contains CFG/PDG data for indexed symbols.
 
+In the dashboard: **CFG / PDG Analysis** tab (control-flow graph + idom table), **Dataflow** tab (PDG and dominator-tree views).
+
 ### Key benefits
 
 - **Compiler-minded debugging** without leaving the repo tool chain  
@@ -248,7 +257,8 @@ The **`inspect`** command dumps these layers for a named function. **`discover -
 
 ### How to run it
 
-→ [User Guide §9 — Inspect CFG / PDG / dominance](user-guide.md#9-inspect-cfg--pdg--dominance)
+→ [User Guide §9 — Inspect CFG / PDG / dominance](user-guide.md#9-inspect-cfg--pdg--dominance)  
+→ Design: **[CFG](design/cfg-design.md)** · **[PDG](design/pdg-design.md)** · **[Dominance](design/dominance-design.md)**
 
 ---
 
@@ -264,7 +274,9 @@ Find **structural hotspots** in the architecture — functions that are central,
 
 - **PageRank** — influential nodes (many important callers/callees)  
 - **Betweenness** — bridge nodes on many paths  
-- **Communities** — densely connected clusters (often packages or subsystems)
+- **Harmonic centrality** — reachability closeness (used by the migration planner)  
+- **Communities** — densely connected clusters (often packages or subsystems)  
+- **Blast scores** — per-function impact from the blast engine (shown in the **Functions** tab)
 
 Discover already computes many analytics during indexing; `metrics` exposes them on demand as JSON or text.
 
@@ -276,7 +288,8 @@ Discover already computes many analytics during indexing; `metrics` exposes them
 
 ### How to run it
 
-→ [User Guide §10 — Graph metrics](user-guide.md#10-graph-metrics)
+→ [User Guide §10 — Graph metrics](user-guide.md#10-graph-metrics)  
+→ Design: **[Graph metrics design](design/graph-metrics-design.md)**
 
 ---
 
@@ -297,7 +310,7 @@ Two orderings are available:
 - **Scheduled step** — Kahn topological sort so callees appear before callers (dependency-aware)  
 - **Priority rank** — score-only ordering without dependency constraints  
 
-Strategy **presets** (Hybrid Default, Risk Mitigation, Hotspot First) adjust α/β/γ. The dashboard **Migration** tab lets you tune weights live and explore a ForceAtlas2 layout (cluster color from Louvain communities, node size from priority). CLI export writes `migration_graph.json` and `migration_plan.json` under `.rbuilder/` when you run `discover` with `--export-migration-plan` (typically with `--all` so harmonic and blast metrics are available).
+Strategy **presets** (Hybrid Default, Foundational First, Dense Cluster Extraction, Risk Mitigation) adjust α/β/γ. The dashboard **Migration** tab lets you tune weights live and explore a ForceAtlas2 layout (cluster color from Louvain communities, node size from priority). Every `discover` exports `migration_graph.json` and a default `migration_plan.json` under **`.rbuilder/dashboard/`** when analysis metrics are available. Use `--export-migration-plan` for a preset-tuned plan file (default **`.rbuilder/migration_plan.json`**, or `-o`).
 
 ### Key benefits
 
@@ -310,10 +323,10 @@ Strategy **presets** (Hybrid Default, Risk Mitigation, Hotspot First) adjust α/
 
 ```bash
 rbuilder discover . --all --export-migration-plan
-rbuilder serve   # optional: warm daemon; open dashboard → Migration tab
+rbuilder serve --open   # http://127.0.0.1:8080/ → Migration tab + query API
 ```
 
-→ Engineering detail: **[Migration planner design](migration-planner-design.md)**  
+→ Engineering detail: **[Migration planner design](design/migration-planner-design.md)** · **[All feature designs](design/README.md)**  
 
 ---
 
@@ -325,7 +338,7 @@ rbuilder serve   # optional: warm daemon; open dashboard → Migration tab
 
 ### Description
 
-**Export** writes files in common formats: JSON (full graph), GraphML, Graphviz DOT, or Mermaid. You can export everything or restrict to a GQL-selected subgraph (e.g. only functions matching `*Cart*`).
+**Export** writes files in common formats: JSON (full graph), GraphML, Graphviz DOT, or Mermaid. Use **`--query`** with filter syntax (`name:Symbol`, `type:Function`, `functions`, `all`) — not full GQL `MATCH` (use `gql` for that).
 
 ### Key benefits
 
@@ -359,31 +372,30 @@ This pairs with blast-radius semantics: policies can encode scale limits, forbid
 
 ### How to run it
 
-→ [User Guide §12 — CI policy check](user-guide.md#12-ci-policy-check)
+→ [User Guide §12 — CI policy check](user-guide.md#12-ci-policy-check)  
+→ Policy JSON: **[Policy format](policy-format.md)** · Design: **[CI policy checks design](design/ci-policy-checks-design.md)**
 
 ---
 
-## Query daemon (repeated analysis)
+## HTTP server (`serve`)
 
 ### Goal
 
-Keep the graph and blast engine **loaded in memory** when you run many queries in a row (scripts, IDE integrations, agents).
+Serve the **dashboard** and **GQL HTTP API** in one process, or keep a legacy socket daemon for repeated blast-radius calls.
 
 ### Description
 
-**`serve`** starts a lightweight Unix-socket daemon that holds mmap snapshots warm. Subsequent `blast-radius` (and related) commands auto-connect to `.rbuilder/query.sock` unless disabled via environment variable.
-
-Useful for interactive sessions or batch jobs that fire hundreds of impact queries; not required for occasional one-off CLI use.
+**`serve`** (default) binds `http://127.0.0.1:8080/` — dashboard at `/`, queries at `POST /api/query`. Use **`serve --daemon`** for the older Unix-socket path (`.rbuilder/query.sock`) that only accelerates blast-radius auto-connect.
 
 ### Key benefits
 
-- **Lower latency** on repeated blast-radius and graph-backed queries  
-- **Same JSON shapes** as the normal CLI  
-- **Optional** — no daemon needed for first-time exploration
+- **One command** to demo the UI and run GQL from curl or agents  
+- **Same JSON shapes** as the CLI  
+- **Optional legacy daemon** for blast-heavy scripts without HTTP
 
 ### How to run it
 
-→ [User Guide §13 — Query daemon (`serve`)](user-guide.md#13-query-daemon-serve)
+→ [User Guide §13 — HTTP server (`serve`)](user-guide.md#13-http-server-serve) · [HTTP API](http-api.md)
 
 ---
 
@@ -395,25 +407,36 @@ Useful for interactive sessions or batch jobs that fire hundreds of impact queri
 
 ### Description
 
-After `discover`, rBuilder writes a static bundle under **`.rbuilder/dashboard/`** (`index.html`, `manifest.json`, graph payload, metagraph, migration indexes when exported, and per-feature indexes). Serve that folder over HTTP (WASM graph engine requires a real server, not `file://`).
+After `discover`, rBuilder writes a static bundle under **`.rbuilder/dashboard/`** (`index.html`, `manifest.json`, graph payload, metagraph, migration indexes when analysis is available, and per-feature indexes for CFG, slice, blast, taint, etc.). Serve that folder over HTTP (WASM graph engine requires a real server, not `file://`).
 
-The dashboard complements the CLI: same underlying graph and analysis artifacts. The **Migration** tab mirrors the Rust planner in TypeScript for live preset and weight changes.
+The dashboard complements the CLI: same underlying graph and analysis artifacts. The **Migration** tab mirrors the Rust planner in TypeScript for live preset and weight changes. The **Query Guide** tab lists CLI commands for each view.
+
+| Dashboard tab | Companion design doc |
+|---------------|----------------------|
+| Graph Visualization | [GQL design](design/gql-design.md) |
+| Functions | [Graph metrics design](design/graph-metrics-design.md) |
+| CFG / PDG Analysis | [CFG design](design/cfg-design.md) |
+| Dataflow | [PDG](design/pdg-design.md) · [Dominance](design/dominance-design.md) |
+| Program Slicing | [Program slicing design](design/program-slicing-design.md) |
+| Blast Radius | [Blast radius design](design/blast-radius-design.md) |
+| Taint Analysis | [Taint analysis design](design/taint-analysis-design.md) |
+| Migration | [Migration planner design](design/migration-planner-design.md) |
 
 ### Key benefits
 
 - **Visual navigation** for large monorepos (package metagraph, zoom, inspector)  
 - **Demos and onboarding** for non-CLI users  
-- **Phase-gated features** described in [dashboard-design.md](dashboard-design.md)
+- **Query Guide** — tab-aligned CLI cookbook
 
 ### How to run it
 
 ```bash
 rbuilder discover .          # produces .rbuilder/dashboard/
-cd .rbuilder/dashboard && python3 -m http.server 8765
-# open http://localhost:8765
+rbuilder serve --open        # recommended: dashboard + /api/query
+# or: cd .rbuilder/dashboard && python3 -m http.server 8765
 ```
 
-→ Install and repo setup: [User Guide §1–3](user-guide.md#1-installation)
+→ **[Dashboard user guide](dashboard-user-guide.md)** · **[Feature designs](design/README.md)** · Install: [User Guide §1–3](user-guide.md#1-installation)
 
 ---
 
@@ -422,11 +445,23 @@ cd .rbuilder/dashboard && python3 -m http.server 8765
 | If you want to… | Read |
 |-----------------|------|
 | Install, PATH, coolstore walkthrough, every command | **[User Guide](user-guide.md)** |
+| Use the browser dashboard | **[Dashboard user guide](dashboard-user-guide.md)** |
+| Integrate an LLM agent | **[AGENTS.md](../AGENTS.md)** · **[Agent recipes](agent-recipes.md)** |
 | Parse `-f json` in scripts or CI | **[JSON API](json-api.md)** |
+| HTTP `serve` and `/api/query` | **[HTTP API](http-api.md)** |
+| Blast-radius policy files | **[Policy format](policy-format.md)** |
 | Exact JSON field tables | **[CLI output schemas](cli-output-schemas.md)** |
-| Plan a package-by-package migration roadmap | **[Migration planner design](migration-planner-design.md)** · **[Building a migration plan](building-migration-plan.md)** |
-| Dashboard architecture and phases | **[Dashboard design](dashboard-design.md)** |
-| Performance tiers and benchmarks | **[Performance engineering](performance-engineering.md)** |
+| Blast radius (change impact) | **[Blast radius design](design/blast-radius-design.md)** |
+| Program slicing / taint | **[Slicing](design/program-slicing-design.md)** · **[Taint](design/taint-analysis-design.md)** |
+| CFG / PDG / dominance | **[CFG](design/cfg-design.md)** · **[PDG](design/pdg-design.md)** · **[Dominance](design/dominance-design.md)** |
+| GQL and graph exploration | **[GQL design](design/gql-design.md)** |
+| Graph metrics | **[Graph metrics design](design/graph-metrics-design.md)** |
+| Plan a package-by-package migration roadmap | **[Migration planner design](design/migration-planner-design.md)** · **[Building a migration plan](building-migration-plan.md)** |
+| CI policy and governance | **[CI policy design](design/ci-policy-checks-design.md)** · **[Policy format](policy-format.md)** |
+| All feature engineering designs (screenshots) | **[design/README.md](design/README.md)** |
+| Dashboard engineering / WASM phases | **[Dashboard design](dashboard-design.md)** |
+| Blast-radius caches and automated perf gates | **[CLI I/O sanity QE](cli-io-sanity-qe.md)** · **[Graph storage architecture](graph-storage-architecture.md)** |
+| All docs by persona | **[Documentation index](README.md)** |
 | Papers implemented, inspired, and contribution ideas | **[Further reading](further-reading.md#research-foundations-in-rbuilder)** |
 
 **Suggested first hour**
@@ -435,7 +470,3 @@ cd .rbuilder/dashboard && python3 -m http.server 8765
 2. Follow [User Guide §1–4](user-guide.md#1-installation) — install, clone [coolstore](https://github.com/konveyor-ecosystem/coolstore), run `discover`.  
 3. Run one **GQL** query and one **blast-radius** on a function you recognize.  
 4. Optionally open the **dashboard** (try the **Migration** tab after `discover --all --export-migration-plan`) or try `-f json` with [JSON API](json-api.md).
-
----
-
-*Background on naming and design philosophy: [what-is-rBuilder-thoughts.md](what-is-rBuilder-thoughts.md)*
