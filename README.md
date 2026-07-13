@@ -11,9 +11,8 @@ AI coding agents default to reading files sequentially. That burns context, miss
 
 **~28s** dashboard tour — discover metrics, GQL, graph metrics, CFG/PDG, slicing, blast radius, taint, migration planner, CI policy, and export.
 
-<video src="docs/videos/rbuilder-feature-demo.mp4" controls playsinline width="100%">
-  <a href="docs/videos/rbuilder-feature-demo.mp4">Watch the rBuilder feature demo</a>
-</video>
+https://github.com/user-attachments/assets/547bf5d1-2058-4668-b990-35def9c38636
+
 
 Regenerate: [docs/videos/README.md](docs/videos/README.md)
 
