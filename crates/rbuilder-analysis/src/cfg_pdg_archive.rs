@@ -116,6 +116,14 @@ impl CfgPdgArchive {
             .collect()
     }
 
+    /// Zero-copy interprocedural CFG view (avoids cloning every archived CFG).
+    pub fn interprocedural_cfg_view(
+        &self,
+        backend: &MemoryBackend,
+    ) -> Result<crate::interprocedural_cfg::InterproceduralCfgView<'_>> {
+        crate::interprocedural_cfg::InterproceduralCfgView::from_archive(self, backend)
+    }
+
     /// Build interprocedural CFG using archived CFGs and live call graph from backend.
     pub fn to_interprocedural_cfg(
         &self,

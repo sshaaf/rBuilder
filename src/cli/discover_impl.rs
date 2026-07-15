@@ -399,12 +399,20 @@ pub(crate) fn run_full_analysis(
             println!("\n✓ Control flow analysis:");
         }
         use crate::analysis::{cfg_language_list, AnalysisStorage, CfgPdgArchive};
-        use super::discover_cfg::run_cfg_analysis_batch;
+        use super::discover_cfg::{run_cfg_analysis_batch, CfgAnalysisOptions};
 
         let storage = AnalysisStorage::new(&output_dir);
         storage.ensure_dir()?;
 
-        let batch = run_cfg_analysis_batch(&functions, &storage, root);
+        let batch = run_cfg_analysis_batch(
+            &functions,
+            &storage,
+            root,
+            CfgAnalysisOptions {
+                verbose,
+                thread_count: None,
+            },
+        );
         let success_count = batch.success_count;
         let error_count = batch.error_count;
 

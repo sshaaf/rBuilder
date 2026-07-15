@@ -3,12 +3,25 @@
 use crate::callgraph::CallGraph;
 use crate::cfg::ControlFlowGraph;
 use crate::cfg_builder::build_cfg_for_function;
+use crate::cfg_pdg_archive::CfgPdgArchive;
 use crate::language_profile::language_id_from_path;
 use rbuilder_error::Result;
 use rbuilder_graph::backend::MemoryBackend;
 use std::collections::HashMap;
 use std::path::Path;
 use uuid::Uuid;
+
+/// Shared CFG lookup surface for intra- and inter-procedural analysis.
+pub trait InterproceduralCfgAccess {
+    /// CFG for one function.
+    fn get_cfg(&self, function: Uuid) -> Option<&ControlFlowGraph>;
+    /// Caller CFGs for `function`.
+    fn caller_cfgs(&self, function: Uuid) -> Vec<(Uuid, &ControlFlowGraph)>;
+    /// Program call graph.
+    fn call_graph(&self) -> &CallGraph;
+    /// Count of distinct source lines referenced by all known CFGs.
+    fn total_cfg_lines(&self) -> usize;
+}
 
 /// CFGs for all functions linked by a call graph.
 #[derive(Debug, Clone)]
@@ -19,6 +32,97 @@ pub struct InterproceduralCFG {
     pub call_graph: CallGraph,
 }
 
+/// Zero-copy CFG view backed by a discover-time archive.
+#[derive(Debug)]
+pub struct InterproceduralCfgView<'a> {
+    archive: &'a CfgPdgArchive,
+    call_graph: CallGraph,
+}
+
+impl InterproceduralCfgView<'_> {
+    /// Build a borrowed view over archived CFGs and a live call graph.
+    pub fn from_archive<'a>(
+        archive: &'a CfgPdgArchive,
+        backend: &MemoryBackend,
+    ) -> Result<InterproceduralCfgView<'a>> {
+        Ok(InterproceduralCfgView {
+            archive,
+            call_graph: CallGraph::from_backend(backend)?,
+        })
+    }
+}
+
+impl InterproceduralCfgAccess for InterproceduralCFG {
+    fn get_cfg(&self, function: Uuid) -> Option<&ControlFlowGraph> {
+        self.function_cfgs.get(&function)
+    }
+
+    fn caller_cfgs(&self, function: Uuid) -> Vec<(Uuid, &ControlFlowGraph)> {
+        self.call_graph
+            .callers(function)
+            .into_iter()
+            .filter_map(|caller_id| {
+                self.function_cfgs
+                    .get(&caller_id)
+                    .map(|cfg| (caller_id, cfg))
+            })
+            .collect()
+    }
+
+    fn call_graph(&self) -> &CallGraph {
+        &self.call_graph
+    }
+
+    fn total_cfg_lines(&self) -> usize {
+        self.function_cfgs
+            .values()
+            .flat_map(|cfg| {
+                cfg.blocks
+                    .values()
+                    .flat_map(|b| b.statements.iter().map(|s| s.line))
+            })
+            .collect::<std::collections::HashSet<_>>()
+            .len()
+    }
+}
+
+impl InterproceduralCfgAccess for InterproceduralCfgView<'_> {
+    fn get_cfg(&self, function: Uuid) -> Option<&ControlFlowGraph> {
+        self.archive.get_cfg(function)
+    }
+
+    fn caller_cfgs(&self, function: Uuid) -> Vec<(Uuid, &ControlFlowGraph)> {
+        self.call_graph
+            .callers(function)
+            .into_iter()
+            .filter_map(|caller_id| {
+                self.archive
+                    .get_cfg(caller_id)
+                    .map(|cfg| (caller_id, cfg))
+            })
+            .collect()
+    }
+
+    fn call_graph(&self) -> &CallGraph {
+        &self.call_graph
+    }
+
+    fn total_cfg_lines(&self) -> usize {
+        self.archive
+            .records
+            .values()
+            .flat_map(|record| {
+                record
+                    .cfg
+                    .blocks
+                    .values()
+                    .flat_map(|b| b.statements.iter().map(|s| s.line))
+            })
+            .collect::<std::collections::HashSet<_>>()
+            .len()
+    }
+}
+
 impl InterproceduralCFG {
     /// Build from backend and source file contents keyed by path.
     pub fn build(backend: &MemoryBackend, source_files: &HashMap<String, String>) -> Result<Self> {
@@ -27,7 +131,6 @@ impl InterproceduralCFG {
         let call_graph = CallGraph::from_backend(backend)?;
         let mut function_cfgs = HashMap::new();
 
-        // Iterate over function IDs and fetch metadata from backend
         for &func_id in call_graph.function_ids() {
             if let Ok(Some(func_node)) = backend.get_node(func_id) {
                 let file_path = func_node.file_path.as_deref().unwrap_or("");
@@ -60,20 +163,12 @@ impl InterproceduralCFG {
 
     /// CFG for one function.
     pub fn get_cfg(&self, function: Uuid) -> Option<&ControlFlowGraph> {
-        self.function_cfgs.get(&function)
+        InterproceduralCfgAccess::get_cfg(self, function)
     }
 
     /// Caller CFGs for `function`.
     pub fn caller_cfgs(&self, function: Uuid) -> Vec<(Uuid, &ControlFlowGraph)> {
-        self.call_graph
-            .callers(function)
-            .into_iter()
-            .filter_map(|caller_id| {
-                self.function_cfgs
-                    .get(&caller_id)
-                    .map(|cfg| (caller_id, cfg))
-            })
-            .collect()
+        InterproceduralCfgAccess::caller_cfgs(self, function)
     }
 }
 
@@ -169,8 +264,8 @@ fn helper() -> i32 { 42 }
             });
         }
 
-        let icfg = archive.to_interprocedural_cfg(&backend).unwrap();
-        assert_eq!(icfg.function_cfgs.len(), 2);
-        assert!(icfg.get_cfg(id_main).is_some());
+        let view = InterproceduralCfgView::from_archive(&archive, &backend).unwrap();
+        assert!(view.get_cfg(id_main).is_some());
+        assert!(view.get_cfg(id_helper).is_some());
     }
 }

@@ -3,7 +3,7 @@
 pub mod parallel;
 mod pipeline;
 
-pub use parallel::par_filter_map;
+pub use parallel::{par_filter_map, par_map, thread_pool, with_pool};
 pub use pipeline::{PipelineConfig, PipelineStats, ProcessingPipeline};
 
 use rbuilder_error::Result;

@@ -491,9 +491,16 @@ fn compute_post_dominators(cfg: &ControlFlowGraph) -> PostDominatorTree {
             if succs.is_empty() {
                 continue;
             }
-            let mut intersection = post_dom[&succs[0]].clone();
-            for succ in &succs[1..] {
-                intersection.retain(|b| post_dom[succ].contains(b));
+            let &smallest_succ = succs
+                .iter()
+                .min_by_key(|&&s| post_dom[&s].len())
+                .unwrap();
+            let mut intersection = post_dom[&smallest_succ].clone();
+            for &succ in succs {
+                if succ == smallest_succ {
+                    continue;
+                }
+                intersection.retain(|b| post_dom[&succ].contains(b));
             }
             intersection.insert(block);
             if post_dom.get(&block) != Some(&intersection) {

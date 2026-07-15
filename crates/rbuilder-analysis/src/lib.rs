@@ -85,7 +85,7 @@ pub use language_profile::{
     function_kinds_for, language_id_from_path, parse_source, profile_for_language,
     taint_enabled_for, LanguageAnalysisProfile,
 };
-pub use interprocedural_cfg::InterproceduralCFG;
+pub use interprocedural_cfg::{InterproceduralCfgAccess, InterproceduralCfgView, InterproceduralCFG};
 pub use interprocedural_slicing::{InterproceduralSlice, InterproceduralSlicer};
 pub use macro_call_index::{GraphFingerprint, MacroCallIndex, MacroCallIndexEntry, SymbolContext};
 pub use macro_call_lookup::{

@@ -278,7 +278,15 @@ impl GraphBuilder {
         );
 
         if let (Some(from), Some(to)) = (from_id, to_id) {
-            self.add_edge(from, to, relation_type_to_edge_type(relation.relation_type));
+            let edge_type = relation_type_to_edge_type(relation.relation_type);
+            let mut edge = Edge::new(from, to, edge_type);
+            if relation.relation_type == RelationType::Calls {
+                edge = edge.with_property(
+                    "call_site_line".to_string(),
+                    relation.location.start_line.to_string(),
+                );
+            }
+            self.edges.push(edge);
         }
         Ok(())
     }

@@ -1,6 +1,6 @@
 //! Interprocedural backward slicing (Phase 13.1).
 
-use crate::interprocedural_cfg::InterproceduralCFG;
+use crate::interprocedural_cfg::InterproceduralCfgAccess;
 use crate::pdg::{PdgNodeId, ProgramDependenceGraph};
 use crate::slicing::{BackwardSlicer, SliceCriterion};
 use rbuilder_error::{Error, Result};
@@ -43,23 +43,23 @@ pub struct InterproceduralSlice {
 }
 
 /// Backward slicer across function boundaries with lazy PDG construction.
-pub struct InterproceduralSlicer<'a> {
-    icfg: &'a InterproceduralCFG,
+pub struct InterproceduralSlicer<'a, C: InterproceduralCfgAccess + ?Sized> {
+    icfg: &'a C,
     backend: &'a MemoryBackend,
     source_files: HashMap<String, String>,
     pdg_cache: PdgCache,
     function_names: HashMap<Uuid, String>,
 }
 
-impl<'a> InterproceduralSlicer<'a> {
+impl<'a, C: InterproceduralCfgAccess + ?Sized> InterproceduralSlicer<'a, C> {
     /// Build slicer; PDGs are constructed lazily per function during slicing.
     pub fn new(
-        icfg: &'a InterproceduralCFG,
+        icfg: &'a C,
         backend: &'a MemoryBackend,
         source_files: &HashMap<String, String>,
     ) -> Result<Self> {
         let mut function_names = HashMap::new();
-        for &func_id in icfg.call_graph.function_ids() {
+        for &func_id in icfg.call_graph().function_ids() {
             if let Ok(Some(func_node)) = backend.get_node(func_id) {
                 function_names.insert(func_id, func_node.name.clone());
             }
@@ -111,7 +111,7 @@ impl<'a> InterproceduralSlicer<'a> {
                     for (caller_id, _) in self.icfg.caller_cfgs(current_func) {
                         let caller_pdg = self.pdg_for(caller_id)?;
                         let call_sites =
-                            self.find_call_site_nodes(caller_pdg.as_ref(), current_func);
+                            self.find_call_site_nodes(caller_id, caller_pdg.as_ref(), current_func);
                         for call_node in call_sites {
                             if slice.insert((caller_id, call_node)) {
                                 worklist.push_back((caller_id, call_node));
@@ -134,7 +134,7 @@ impl<'a> InterproceduralSlicer<'a> {
             })
             .collect();
 
-        let total = self.count_total_lines();
+        let total = self.icfg.total_cfg_lines();
         let reduction_percent = if total == 0 {
             0.0
         } else {
@@ -182,7 +182,7 @@ impl<'a> InterproceduralSlicer<'a> {
     fn is_parameter(&self, function: Uuid, variable: &str) -> bool {
         if self
             .icfg
-            .call_graph
+            .call_graph()
             .parameter_names(function)
             .iter()
             .any(|p| p == variable)
@@ -203,10 +203,29 @@ impl<'a> InterproceduralSlicer<'a> {
 
     fn find_call_site_nodes(
         &self,
+        caller_id: Uuid,
         caller_pdg: &ProgramDependenceGraph,
-        callee_func: Uuid,
+        callee_id: Uuid,
     ) -> Vec<PdgNodeId> {
-        if let Some(callee_name) = self.function_names.get(&callee_func) {
+        let edges = self
+            .icfg
+            .call_graph()
+            .call_edges_between(caller_id, callee_id);
+        let lines: HashSet<usize> = edges
+            .iter()
+            .map(|edge| edge.call_site)
+            .filter(|line| *line > 0)
+            .collect();
+        if !lines.is_empty() {
+            return caller_pdg
+                .nodes
+                .iter()
+                .filter(|(_, node)| lines.contains(&node.statement.line))
+                .map(|(id, _)| *id)
+                .collect();
+        }
+
+        if let Some(callee_name) = self.function_names.get(&callee_id) {
             caller_pdg
                 .nodes
                 .iter()
@@ -216,19 +235,6 @@ impl<'a> InterproceduralSlicer<'a> {
         } else {
             Vec::new()
         }
-    }
-
-    fn count_total_lines(&self) -> usize {
-        self.icfg
-            .function_cfgs
-            .values()
-            .flat_map(|cfg| {
-                cfg.blocks
-                    .values()
-                    .flat_map(|b| b.statements.iter().map(|s| s.line))
-            })
-            .collect::<HashSet<_>>()
-            .len()
     }
 }
 

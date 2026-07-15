@@ -8,7 +8,7 @@ use uuid::Uuid;
 pub type BlockId = Uuid;
 
 /// A control-flow graph for a single function body.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize)]
 pub struct ControlFlowGraph {
     /// Basic blocks keyed by id.
     pub blocks: HashMap<BlockId, BasicBlock>,
@@ -18,6 +18,12 @@ pub struct ControlFlowGraph {
     pub entry: BlockId,
     /// Exit block ids (returns, implicit fall-through exits).
     pub exits: Vec<BlockId>,
+    /// Successor lists keyed by block id (derived from [`Self::edges`], not serialized).
+    #[serde(skip)]
+    succ: HashMap<BlockId, Vec<BlockId>>,
+    /// Predecessor lists keyed by block id (derived from [`Self::edges`], not serialized).
+    #[serde(skip)]
+    pred: HashMap<BlockId, Vec<BlockId>>,
 }
 
 /// A sequence of statements with no internal branches.
@@ -116,6 +122,18 @@ impl ControlFlowGraph {
             edges: Vec::new(),
             entry,
             exits: Vec::new(),
+            succ: HashMap::new(),
+            pred: HashMap::new(),
+        }
+    }
+
+    /// Rebuild cached adjacency lists from [`Self::edges`].
+    pub fn rebuild_adjacency(&mut self) {
+        self.succ.clear();
+        self.pred.clear();
+        for edge in &self.edges {
+            self.succ.entry(edge.from).or_default().push(edge.to);
+            self.pred.entry(edge.to).or_default().push(edge.from);
         }
     }
 
@@ -131,24 +149,20 @@ impl ControlFlowGraph {
             to,
             edge_type,
         });
+        self.succ.entry(from).or_default().push(to);
+        self.pred.entry(to).or_default().push(from);
     }
 
     /// Predecessor block ids for `block_id`.
-    pub fn predecessors(&self, block_id: BlockId) -> Vec<BlockId> {
-        self.edges
-            .iter()
-            .filter(|e| e.to == block_id)
-            .map(|e| e.from)
-            .collect()
+    pub fn predecessors(&self, block_id: BlockId) -> &[BlockId] {
+        static EMPTY: &[BlockId] = &[];
+        self.pred.get(&block_id).map(|v| v.as_slice()).unwrap_or(EMPTY)
     }
 
     /// Successor block ids for `block_id`.
-    pub fn successors(&self, block_id: BlockId) -> Vec<BlockId> {
-        self.edges
-            .iter()
-            .filter(|e| e.from == block_id)
-            .map(|e| e.to)
-            .collect()
+    pub fn successors(&self, block_id: BlockId) -> &[BlockId] {
+        static EMPTY: &[BlockId] = &[];
+        self.succ.get(&block_id).map(|v| v.as_slice()).unwrap_or(EMPTY)
     }
 
     /// Blocks reachable from the entry block.
@@ -159,7 +173,7 @@ impl ControlFlowGraph {
             if !reachable.insert(block) {
                 continue;
             }
-            for succ in self.successors(block) {
+            for &succ in self.successors(block) {
                 if !reachable.contains(&succ) {
                     stack.push(succ);
                 }
@@ -175,6 +189,7 @@ impl ControlFlowGraph {
         self.edges
             .retain(|e| reachable.contains(&e.from) && reachable.contains(&e.to));
         self.exits.retain(|id| reachable.contains(id));
+        self.rebuild_adjacency();
     }
 
     /// Returns true when the CFG contains a cycle reachable from entry.
@@ -193,7 +208,7 @@ impl ControlFlowGraph {
         visited.insert(node);
         rec_stack.insert(node);
 
-        for succ in cfg.successors(node) {
+        for &succ in cfg.successors(node) {
             if !visited.contains(&succ) {
                 if Self::dfs_cycle(cfg, succ, visited, rec_stack) {
                     return true;
@@ -231,7 +246,7 @@ impl ControlFlowGraph {
 
         visited.insert(current);
 
-        for succ in self.successors(current) {
+        for &succ in self.successors(current) {
             if !visited.contains(&succ) {
                 path.push(succ);
                 self.dfs_paths(succ, target, path, visited, paths);
@@ -285,6 +300,33 @@ impl ControlFlowGraph {
 impl Default for ControlFlowGraph {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+impl<'de> Deserialize<'de> for ControlFlowGraph {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        struct ControlFlowGraphData {
+            blocks: HashMap<BlockId, BasicBlock>,
+            edges: Vec<CfgEdge>,
+            entry: BlockId,
+            exits: Vec<BlockId>,
+        }
+
+        let data = ControlFlowGraphData::deserialize(deserializer)?;
+        let mut cfg = Self {
+            blocks: data.blocks,
+            edges: data.edges,
+            entry: data.entry,
+            exits: data.exits,
+            succ: HashMap::new(),
+            pred: HashMap::new(),
+        };
+        cfg.rebuild_adjacency();
+        Ok(cfg)
     }
 }
 
