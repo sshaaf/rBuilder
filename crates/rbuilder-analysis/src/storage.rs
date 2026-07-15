@@ -462,6 +462,7 @@ impl FunctionAnalysisPdgFour {
                     pdg.control_deps,
                     pdg.block_nodes,
                     HashMap::new(),
+                    HashMap::new(),
                 );
                 graph.restore_derived_indexes();
                 graph
@@ -485,6 +486,7 @@ impl FunctionAnalysisPdgThree {
                     pdg.nodes,
                     pdg.data_deps,
                     pdg.control_deps,
+                    HashMap::new(),
                     HashMap::new(),
                     HashMap::new(),
                 );

@@ -505,6 +505,30 @@ impl MacroCallLookupDb {
         }
     }
 
+    /// Returns true when SQLite metadata matches digest and graph topology counts.
+    pub fn matches_digest_and_counts(
+        path: &Path,
+        graph_digest: &str,
+        node_count: usize,
+        edge_count: usize,
+    ) -> Result<bool> {
+        if !path.exists() {
+            return Ok(false);
+        }
+        let conn = Self::open(path)?;
+        let Some(stored_digest) = Self::read_meta(&conn, "graph_digest")? else {
+            return Ok(false);
+        };
+        if stored_digest != graph_digest {
+            return Ok(false);
+        }
+        let nodes: Option<usize> = Self::read_meta(&conn, "node_count")?
+            .and_then(|s| s.parse().ok());
+        let edges: Option<usize> = Self::read_meta(&conn, "edge_count")?
+            .and_then(|s| s.parse().ok());
+        Ok(nodes == Some(node_count) && edges == Some(edge_count))
+    }
+
     /// Returns true when the SQLite cache matches the repository graph state.
     pub fn is_valid_for_repo(path: &Path, repo_root: &Path) -> Result<bool> {
         if !path.exists() {

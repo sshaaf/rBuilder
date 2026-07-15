@@ -3,6 +3,7 @@
 use crate::communities::{summarize_communities, CommunitiesPayload, COMMUNITIES_FILE};
 use rbuilder_analysis::community::CommunityDetector;
 use rbuilder_analysis::graph_utils::PetGraphView;
+use rbuilder_analysis::AnalysisResults;
 use rbuilder_graph::backend::MemoryBackend;
 use rbuilder_graph::schema::{EdgeType, NodeType};
 use serde::{Deserialize, Serialize};
@@ -74,15 +75,34 @@ struct PackageBucket {
 /// Build package metagraph from indexed graph and write JSON beside the dashboard bundle.
 pub fn write_metagraph(
     backend: &MemoryBackend,
-    snapshot_path: &Path,
+    _snapshot_path: &Path,
     out_dir: &Path,
     source_node_count: u64,
+    analysis: Option<&AnalysisResults>,
+    uuid_to_col: &HashMap<Uuid, u32>,
 ) -> Result<MetagraphExport, String> {
-    let uuid_to_col = load_uuid_index_map(snapshot_path);
     let mut uuid_to_pkg: HashMap<Uuid, u32> = HashMap::new();
     let mut packages: HashMap<String, PackageBucket> = HashMap::new();
+    let include_member_indices = source_node_count < COMMUNITY_ONLY_THRESHOLD;
 
-    let (community_assignments, modularity) = detect_node_communities(backend)?;
+    let (modularity, detected_communities) = if analysis.is_some() {
+        (
+            analysis
+                .and_then(|a| a.community.as_ref())
+                .map(|c| c.modularity)
+                .unwrap_or(0.0),
+            None,
+        )
+    } else {
+        let start = std::time::Instant::now();
+        let (assignments, modularity) = detect_node_communities(backend)?;
+        tracing::info!(
+            target: "profile",
+            secs = start.elapsed().as_secs_f64(),
+            "[profile] write_metagraph community_detect"
+        );
+        (modularity, Some(assignments))
+    };
 
     let _ = backend.for_each_node(|n| {
         if !matches!(n.node_type, NodeType::Function | NodeType::Class) {
@@ -100,8 +120,10 @@ pub fn write_metagraph(
                 member_indices: Vec::new(),
                 community_votes: HashMap::new(),
             });
-        if let Some(cid) = community_assignments.get(&n.id) {
-            *bucket.community_votes.entry(*cid).or_insert(0) += 1;
+        if let Some(cid) =
+            community_id_for_node(analysis, detected_communities.as_ref(), n.id)
+        {
+            *bucket.community_votes.entry(cid).or_insert(0) += 1;
         }
         match n.node_type {
             NodeType::Function => bucket.functions += 1,
@@ -116,8 +138,10 @@ pub fn write_metagraph(
             bucket.complexity_sum += c;
             bucket.complexity_count += 1;
         }
-        if let Some(col_idx) = uuid_to_col.get(&n.id) {
-            bucket.member_indices.push(*col_idx);
+        if include_member_indices {
+            if let Some(col_idx) = uuid_to_col.get(&n.id) {
+                bucket.member_indices.push(*col_idx);
+            }
         }
     });
 
@@ -240,17 +264,69 @@ pub fn write_metagraph(
 
     let communities = summarize_communities(modularity, &payload.nodes);
 
-    let json = serde_json::to_string_pretty(&payload).map_err(|e| e.to_string())?;
-    fs_write(out_dir.join(METAGRAPH_FILE), json.as_bytes())?;
+    let metagraph_json = {
+        let start = std::time::Instant::now();
+        let json = serde_json::to_string_pretty(&payload).map_err(|e| e.to_string())?;
+        tracing::info!(
+            target: "profile",
+            file = METAGRAPH_FILE,
+            serialize_secs = start.elapsed().as_secs_f64(),
+            json_bytes = json.len(),
+            member_index_total = payload
+                .nodes
+                .iter()
+                .map(|n| n.member_indices.len())
+                .sum::<usize>(),
+            "[profile] save_dashboard json serialize"
+        );
+        json
+    };
+    let write_start = std::time::Instant::now();
+    fs_write(out_dir.join(METAGRAPH_FILE), metagraph_json.as_bytes())?;
+    tracing::info!(
+        target: "profile",
+        file = METAGRAPH_FILE,
+        write_secs = write_start.elapsed().as_secs_f64(),
+        "[profile] save_dashboard json write"
+    );
 
-    let communities_json =
-        serde_json::to_string_pretty(&communities).map_err(|e| e.to_string())?;
+    let communities_json = {
+        let start = std::time::Instant::now();
+        let json = serde_json::to_string_pretty(&communities).map_err(|e| e.to_string())?;
+        tracing::info!(
+            target: "profile",
+            file = COMMUNITIES_FILE,
+            serialize_secs = start.elapsed().as_secs_f64(),
+            json_bytes = json.len(),
+            "[profile] save_dashboard json serialize"
+        );
+        json
+    };
+    let write_start = std::time::Instant::now();
     fs_write(out_dir.join(COMMUNITIES_FILE), communities_json.as_bytes())?;
+    tracing::info!(
+        target: "profile",
+        file = COMMUNITIES_FILE,
+        write_secs = write_start.elapsed().as_secs_f64(),
+        "[profile] save_dashboard json write"
+    );
 
     Ok(MetagraphExport {
         meta: payload,
         communities,
     })
+}
+
+fn community_id_for_node(
+    analysis: Option<&AnalysisResults>,
+    detected: Option<&HashMap<Uuid, usize>>,
+    node_id: Uuid,
+) -> Option<usize> {
+    if let Some(ar) = analysis {
+        let compact = ar.get_compact_id(node_id)?;
+        return ar.community.as_ref()?.get(compact);
+    }
+    detected.and_then(|m| m.get(&node_id).copied())
 }
 
 fn detect_node_communities(
@@ -329,42 +405,6 @@ pub fn package_label(file_path: &str) -> String {
 
 fn fs_write(path: std::path::PathBuf, bytes: &[u8]) -> Result<(), String> {
     std::fs::write(path, bytes).map_err(|e| e.to_string())
-}
-
-fn load_uuid_index_map(snapshot_path: &Path) -> HashMap<Uuid, u32> {
-    if !snapshot_path.is_file() {
-        return HashMap::new();
-    }
-    let Ok(bytes) = std::fs::read(snapshot_path) else {
-        return HashMap::new();
-    };
-    scan_columnar_uuid_indices(&bytes)
-        .unwrap_or_default()
-        .into_iter()
-        .map(|(raw, idx)| (Uuid::from_bytes(raw), idx))
-        .collect()
-}
-
-/// Scan columnar v2 node id column without pulling in memmap (export-time only).
-fn scan_columnar_uuid_indices(bytes: &[u8]) -> Result<HashMap<[u8; 16], u32>, String> {
-    const HEADER_SIZE: usize = 136;
-    const NODE_ROW_SIZE: usize = 64;
-    if bytes.len() < HEADER_SIZE || &bytes[0..4] != b"RBGR" {
-        return Err("not columnar v2".into());
-    }
-    let node_count = u64::from_le_bytes(bytes[12..20].try_into().unwrap()) as usize;
-    let offset_nodes = u64::from_le_bytes(bytes[92..100].try_into().unwrap()) as usize;
-    let end = offset_nodes + node_count * NODE_ROW_SIZE;
-    if end > bytes.len() {
-        return Err("node column out of range".into());
-    }
-    let mut map = HashMap::with_capacity(node_count);
-    for idx in 0..node_count {
-        let off = offset_nodes + idx * NODE_ROW_SIZE;
-        let id: [u8; 16] = bytes[off..off + 16].try_into().unwrap();
-        map.insert(id, idx as u32);
-    }
-    Ok(map)
 }
 
 #[cfg(test)]

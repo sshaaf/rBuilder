@@ -112,7 +112,7 @@ Use the features above together for **migration and modernization** work:
 
 After `discover --all`, open the dashboard **Migration** tab or export a machine-readable plan for agents and downstream tools:
 
-*Unified view: tune α/β/γ weights and presets, explore the package call graph (Louvain-colored, size = priority), and paginate through the ordered package table.*
+*Unified view: tune α/β/γ weights and presets, explore the package call graph (community-colored by label propagation — see [graph metrics naming](docs/design/graph-metrics-design.md#31-community-detection-naming)), and paginate through the ordered package table.*
 
 - **Package macro graph** — aggregates functions into path-derived package labels (Java package paths, Rust/C `/src/` modules)
 - **Dual ordering** — **scheduled step** (Kahn topological sort, callee before caller) and **priority rank** (score-only)
@@ -126,6 +126,18 @@ rbuilder serve   # http://127.0.0.1:8080/ → Migration tab
 
 Design → **[Migration planner design](docs/design/migration-planner-design.md)** · Workflow → **[Building a migration plan](docs/building-migration-plan.md)**  
 All feature designs → **[docs/design/](docs/design/README.md)**
+
+### Community detection naming
+
+rBuilder does **not** run the Leiden algorithm today. What ships is **label propagation** (Raghavan et al., 2007) with Newman modularity scoring, plus hub stripping and deterministic tie-breaking. Docs/UI still say “Louvain” in places (`louvain_community_id`, migration layout), and `TASK_PLAN.md` lists Leiden as planned but unimplemented.
+
+| Name in repo | What it actually is |
+|--------------|---------------------|
+| `CommunityDetector` | Label propagation on `Calls` + `Uses` |
+| “Louvain” in dashboard/migration | Majority vote of label-propagation ids |
+| Leiden (task 2.1.1) | Not implemented |
+
+Full detail → **[Graph metrics — community naming](docs/design/graph-metrics-design.md#31-community-detection-naming)**.
 
 Walkthrough on a real Java repo → **[coolstore example](docs/user-guide.md#3-example-project-coolstore)** (User Guide).
 

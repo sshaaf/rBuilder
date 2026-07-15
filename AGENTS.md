@@ -66,6 +66,7 @@ rbuilder -r "$REPO" serve --daemon
 4. **`slice --function`** is the **method/function name**, not the class name.
 5. **`export --query`** uses filter syntax (`name:Foo`, `type:Function`, `all`) — not full GQL `MATCH`.
 6. **Deep analysis** needs `discover --cfg` or `--all` (slice, inspect, taint).
+7. **Profile discover** — `discover -v` with `RUST_LOG=profile=info` for `[profile] stage` and centrality sub-phase timings (see [analysis-architecture.md](docs/analysis-architecture.md)).
 
 ---
 

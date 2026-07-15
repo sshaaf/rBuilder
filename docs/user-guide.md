@@ -202,11 +202,22 @@ rbuilder discover . --all
 
 Use `--cfg` or `--all` when you need `inspect`, `slice` overlays, or taint flows. On large monorepos (100k+ functions) expect minutes to hours.
 
-### Verbose logging
+### Verbose logging and stage profiling
 
 ```bash
 rbuilder discover . -v
 ```
+
+With `-v`, discover emits a **`[profile] discover summary`** line (wall time, peak RSS, node count) and per-stage timings.
+
+For centrality sub-phase breakdown (PageRank, betweenness, harmonic, columnar fill):
+
+```bash
+RUST_LOG=info,profile=info rbuilder discover . -v 2>&1 | tee discover-profile.log
+grep '\[profile\]' discover-profile.log
+```
+
+See [analysis-architecture.md](analysis-architecture.md) and [internal/temp.md](internal/temp.md) for large-graph adaptive gating (PageRank / HyperBall caps at 500k+ nodes).
 
 ### Legacy JSON graph (optional)
 
@@ -725,6 +736,19 @@ rbuilder -r "$REPO" slice path/to/File.java \
 ### Slow `discover`
 
 Start with the default mode. Add `--cfg` or `--all` only when you need inspect, slice overlays, or taint.
+
+On **very large repos** (500k+ graph nodes), discover automatically:
+
+- Caps PageRank iterations and relaxes convergence tolerance
+- Caps HyperBall harmonic rounds and parallelizes propagation
+- Skips per-function rows in `function_metrics.json` (community/metagraph view instead)
+- Uses on-demand blast reachability for flat call graphs (no eager multi-hundred-GB bitsets)
+
+Profile where time goes:
+
+```bash
+RUST_LOG=info,profile=info rbuilder discover . -v
+```
 
 ### `rbuilder: command not found`
 

@@ -12,3 +12,4 @@ rbuilder-plugin-helpers = { workspace = true }
 tree-sitter = { workspace = true }
 tree-sitter-c = "0.24"
 serde_json = "1"
+tracing = "0.1"

@@ -8,7 +8,7 @@ use bit_set::BitSet;
 use memmap2::Mmap;
 use rbuilder_error::{Error, Result};
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::fs::File;
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -71,6 +71,22 @@ impl BlastEngineSnapshot {
         file.write_all(&(payload.len() as u64).to_le_bytes())?;
         file.write_all(&payload)?;
         Ok(())
+    }
+
+    /// Read the embedded graph digest without deserializing reachability rows.
+    pub fn read_graph_digest(path: &Path) -> Result<Option<String>> {
+        if !path.exists() {
+            return Ok(None);
+        }
+        let file = File::open(path)?;
+        // SAFETY: read-only map for parsing the digest prefix.
+        let mmap = unsafe { memmap2::Mmap::map(&file)? };
+        Ok(parse_graph_digest_from_mmap(&mmap))
+    }
+
+    /// Returns true when an on-disk snapshot matches the expected graph digest.
+    pub fn digest_matches(path: &Path, expected: &str) -> Result<bool> {
+        Ok(Self::read_graph_digest(path)?.as_deref() == Some(expected))
     }
 
     /// Load snapshot from disk via mmap (avoids an extra full-file buffer copy).
@@ -150,6 +166,12 @@ pub(crate) fn words_to_bitset(words: &[u64], bit_len: usize) -> BitSet {
     bs
 }
 
+/// When `scc_count / node_count` exceeds this, skip eager bitset propagation.
+pub const FLAT_SCC_COMPRESSION_THRESHOLD: f64 = 0.90;
+
+/// Max cached on-demand reachability rows (bounds memory on flat graphs).
+pub const ON_DEMAND_REACHABILITY_CACHE_CAP: usize = 4096;
+
 /// Lazy or eager SCC reachability storage for [`BlastRadiusEngine`].
 pub struct ReachabilityStore {
     scc_count: usize,
@@ -161,8 +183,77 @@ enum ReachabilityBacking {
     Eager(Vec<BitSet>),
     Lazy {
         rows: HashMap<u32, Vec<u8>>,
-        cache: Mutex<HashMap<usize, BitSet>>,
+        cache: Mutex<ReachabilityCache>,
     },
+    DagOnDemand {
+        incoming: Vec<Vec<usize>>,
+        cache: Mutex<ReachabilityCache>,
+    },
+}
+
+#[derive(Debug)]
+struct ReachabilityCache {
+    map: HashMap<usize, BitSet>,
+    order: VecDeque<usize>,
+    cap: usize,
+}
+
+impl ReachabilityCache {
+    fn new(cap: usize) -> Self {
+        Self {
+            map: HashMap::new(),
+            order: VecDeque::new(),
+            cap,
+        }
+    }
+
+    fn get(&self, key: usize) -> Option<BitSet> {
+        self.map.get(&key).cloned()
+    }
+
+    fn insert(&mut self, key: usize, value: BitSet) {
+        if self.map.contains_key(&key) {
+            self.order.retain(|&k| k != key);
+        } else if self.map.len() >= self.cap {
+            if let Some(evicted) = self.order.pop_front() {
+                self.map.remove(&evicted);
+            }
+        }
+        self.order.push_back(key);
+        self.map.insert(key, value);
+    }
+}
+
+/// Incoming SCC adjacency (caller lists) from condensed DAG edges.
+pub(crate) fn incoming_from_dag_edges(
+    dag_edges: &[(usize, usize)],
+    scc_count: usize,
+) -> Vec<Vec<usize>> {
+    let mut incoming = vec![Vec::new(); scc_count];
+    for &(from, to) in dag_edges {
+        if to < scc_count && from < scc_count {
+            incoming[to].push(from);
+        }
+    }
+    incoming
+}
+
+fn reachability_row_on_demand(
+    incoming: &[Vec<usize>],
+    scc_id: usize,
+    scc_count: usize,
+) -> BitSet {
+    let mut reachable = BitSet::new();
+    let mut stack = vec![scc_id];
+    reachable.insert(scc_id);
+    while let Some(cur) = stack.pop() {
+        for &parent in incoming.get(cur).map(Vec::as_slice).unwrap_or(&[]) {
+            if parent < scc_count && reachable.insert(parent) {
+                stack.push(parent);
+            }
+        }
+    }
+    reachable
 }
 
 impl ReachabilityStore {
@@ -175,7 +266,21 @@ impl ReachabilityStore {
         }
     }
 
-    /// Load v2 snapshots lazily; expand v1 dense snapshots eagerly.
+    /// Query-time reachability from a condensed SCC DAG (no eager bitset matrix).
+    pub fn from_dag_on_demand(incoming: Vec<Vec<usize>>, scc_count: usize) -> Self {
+        Self {
+            scc_count,
+            word_count: scc_count.div_ceil(64),
+            backing: ReachabilityBacking::DagOnDemand {
+                incoming,
+                cache: Mutex::new(ReachabilityCache::new(
+                    ON_DEMAND_REACHABILITY_CACHE_CAP,
+                )),
+            },
+        }
+    }
+
+    /// Load v2 snapshots lazily; expand v1 dense snapshots eagerly; fall back to DAG on-demand.
     pub fn from_snapshot(snapshot: &BlastEngineSnapshot) -> Result<Self> {
         let scc_count = snapshot.scc_count;
         if !snapshot.reachability_rows.is_empty() {
@@ -189,14 +294,20 @@ impl ReachabilityStore {
                 word_count: scc_count.div_ceil(64),
                 backing: ReachabilityBacking::Lazy {
                     rows,
-                    cache: Mutex::new(HashMap::new()),
+                    cache: Mutex::new(ReachabilityCache::new(
+                        ON_DEMAND_REACHABILITY_CACHE_CAP,
+                    )),
                 },
             });
         }
-        Ok(Self::from_eager(
-            reachability_from_snapshot_eager_only(snapshot)?,
-            scc_count,
-        ))
+        if !snapshot.reachability_words.is_empty() {
+            return Ok(Self::from_eager(
+                reachability_from_snapshot_eager_only(snapshot)?,
+                scc_count,
+            ));
+        }
+        let incoming = incoming_from_dag_edges(&snapshot.dag_edges, scc_count);
+        Ok(Self::from_dag_on_demand(incoming, scc_count))
     }
 
     /// Number of SCCs in the condensed call graph.
@@ -204,16 +315,21 @@ impl ReachabilityStore {
         self.scc_count
     }
 
-    /// True when rows are loaded on demand from compressed snapshot data.
+    /// True when rows are not fully materialized in memory (compressed snapshot or DAG on-demand).
     pub fn is_lazy(&self) -> bool {
-        matches!(self.backing, ReachabilityBacking::Lazy { .. })
+        !matches!(self.backing, ReachabilityBacking::Eager(_))
+    }
+
+    /// True when reachability is computed per query via DAG traversal (flat graphs).
+    pub fn is_on_demand(&self) -> bool {
+        matches!(self.backing, ReachabilityBacking::DagOnDemand { .. })
     }
 
     /// Full eager row slice when the store is not lazy.
     pub fn eager_slice(&self) -> Option<&[BitSet]> {
         match &self.backing {
             ReachabilityBacking::Eager(v) => Some(v.as_slice()),
-            ReachabilityBacking::Lazy { .. } => None,
+            ReachabilityBacking::Lazy { .. } | ReachabilityBacking::DagOnDemand { .. } => None,
         }
     }
 
@@ -228,8 +344,9 @@ impl ReachabilityStore {
         match &self.backing {
             ReachabilityBacking::Eager(v) => Ok(v[scc_id].clone()),
             ReachabilityBacking::Lazy { rows, cache } => {
-                if let Some(cached) = cache.lock().expect("reachability cache lock").get(&scc_id) {
-                    return Ok(cached.clone());
+                let mut cache = cache.lock().expect("reachability cache lock");
+                if let Some(cached) = cache.get(scc_id) {
+                    return Ok(cached);
                 }
                 let mut bs = BitSet::new();
                 bs.insert(scc_id);
@@ -237,10 +354,16 @@ impl ReachabilityStore {
                     let words = decompress_words(compressed, self.word_count)?;
                     bs = words_to_bitset(&words, self.scc_count);
                 }
-                cache
-                    .lock()
-                    .expect("reachability cache lock")
-                    .insert(scc_id, bs.clone());
+                cache.insert(scc_id, bs.clone());
+                Ok(bs)
+            }
+            ReachabilityBacking::DagOnDemand { incoming, cache } => {
+                let mut cache = cache.lock().expect("reachability cache lock");
+                if let Some(cached) = cache.get(scc_id) {
+                    return Ok(cached);
+                }
+                let bs = reachability_row_on_demand(incoming, scc_id, self.scc_count);
+                cache.insert(scc_id, bs.clone());
                 Ok(bs)
             }
         }
@@ -270,6 +393,30 @@ fn reachability_from_snapshot_eager_only(snapshot: &BlastEngineSnapshot) -> Resu
         reachability[idx] = words_to_bitset(words, scc_count);
     }
     Ok(reachability)
+}
+
+fn parse_graph_digest_from_mmap(mmap: &[u8]) -> Option<String> {
+    if mmap.len() < 16 || mmap[0..4] != BLAST_SNAPSHOT_MAGIC {
+        return None;
+    }
+    let version = u32::from_le_bytes(mmap[4..8].try_into().ok()?);
+    if version != BLAST_SNAPSHOT_VERSION && version != BLAST_SNAPSHOT_VERSION_V1 {
+        return None;
+    }
+    let payload_len = u64::from_le_bytes(mmap[8..16].try_into().ok()?) as usize;
+    let payload = mmap.get(16..16usize.checked_add(payload_len)?)?;
+    parse_bincode_leading_string(payload)
+}
+
+/// First field of [`BlastEngineSnapshot`] is `graph_digest: String` (bincode u64 len + utf8).
+fn parse_bincode_leading_string(payload: &[u8]) -> Option<String> {
+    if payload.len() < 8 {
+        return None;
+    }
+    let len = u64::from_le_bytes(payload[0..8].try_into().ok()?) as usize;
+    let end = 8usize.checked_add(len)?;
+    let bytes = payload.get(8..end)?;
+    std::str::from_utf8(bytes).ok().map(str::to_string)
 }
 
 fn parse_blast_payload(bytes: &[u8]) -> Result<BlastEngineSnapshot> {
@@ -313,6 +460,29 @@ pub fn try_load_engine(repo_root: &Path, graph_digest: &str) -> Result<Option<Bl
 mod tests {
     use super::*;
     use tempfile::TempDir;
+
+    #[test]
+    fn read_graph_digest_without_full_deserialize() {
+        let tmp = TempDir::new().unwrap();
+        let path = tmp.path().join("blast_engine.snapshot.bin");
+        let snap = BlastEngineSnapshot {
+            graph_digest: "abc123digest".into(),
+            scc_count: 2,
+            dag_edges: vec![],
+            scc_members: vec![vec![], vec![]],
+            scc_names: vec!["a".into(), "b".into()],
+            node_to_scc: vec![],
+            reachability_words: vec![],
+            reachability_rows: vec![],
+        };
+        snap.write_to_path(&path).unwrap();
+        assert_eq!(
+            BlastEngineSnapshot::read_graph_digest(&path).unwrap().as_deref(),
+            Some("abc123digest")
+        );
+        assert!(BlastEngineSnapshot::digest_matches(&path, "abc123digest").unwrap());
+        assert!(!BlastEngineSnapshot::digest_matches(&path, "other").unwrap());
+    }
 
     #[test]
     fn compress_round_trip() {
@@ -367,6 +537,47 @@ mod tests {
     }
 
     #[test]
+    fn on_demand_reachability_matches_eager_propagation() {
+        let scc_count = 5;
+        let dag_edges = vec![(0, 1), (1, 2), (2, 3), (1, 4)];
+        let incoming = incoming_from_dag_edges(&dag_edges, scc_count);
+
+        let mut eager: Vec<BitSet> = vec![BitSet::new(); scc_count];
+        let mut dag: petgraph::graph::DiGraph<(), ()> = petgraph::graph::DiGraph::new();
+        for _ in 0..scc_count {
+            dag.add_node(());
+        }
+        for (from, to) in &dag_edges {
+            dag.add_edge(
+                petgraph::graph::NodeIndex::new(*from),
+                petgraph::graph::NodeIndex::new(*to),
+                (),
+            );
+        }
+        let sorted = petgraph::algo::toposort(&dag, None).unwrap();
+        for &scc_idx in sorted.iter() {
+            let scc_id = scc_idx.index();
+            let mut reach = BitSet::new();
+            reach.insert(scc_id);
+            for parent_idx in dag.neighbors_directed(scc_idx, petgraph::Direction::Incoming) {
+                reach.union_with(&eager[parent_idx.index()]);
+            }
+            eager[scc_id] = reach;
+        }
+
+        let on_demand = ReachabilityStore::from_dag_on_demand(incoming, scc_count);
+        for idx in 0..scc_count {
+            let eager_row = &eager[idx];
+            let lazy_row = on_demand.row_bitset(idx).unwrap();
+            assert_eq!(
+                eager_row.iter().collect::<Vec<_>>(),
+                lazy_row.iter().collect::<Vec<_>>(),
+                "row {idx}"
+            );
+        }
+    }
+
+    #[test]
     fn lazy_store_defers_row_expand_until_query() {
         let scc_count = 4;
         let mut reachability: Vec<BitSet> = (0..scc_count)
@@ -403,7 +614,29 @@ mod tests {
 
         let store = ReachabilityStore::from_snapshot(&snap).unwrap();
         assert!(store.is_lazy());
+        assert!(!store.is_on_demand());
         let row = store.row_bitset(2).unwrap();
         assert!(row.contains(1));
+    }
+
+    #[test]
+    fn snapshot_without_rows_uses_dag_on_demand() {
+        let snap = BlastEngineSnapshot {
+            graph_digest: "flat".into(),
+            scc_count: 3,
+            dag_edges: vec![(0, 1), (1, 2)],
+            scc_members: vec![vec![], vec![], vec![]],
+            scc_names: vec!["a".into(), "b".into(), "c".into()],
+            node_to_scc: vec![],
+            reachability_words: vec![],
+            reachability_rows: vec![],
+        };
+
+        let store = ReachabilityStore::from_snapshot(&snap).unwrap();
+        assert!(store.is_on_demand());
+        let row = store.row_bitset(2).unwrap();
+        assert!(row.contains(2));
+        assert!(row.contains(1));
+        assert!(row.contains(0));
     }
 }

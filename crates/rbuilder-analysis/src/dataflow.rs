@@ -1,7 +1,7 @@
 //! Reaching-definitions data-flow analysis.
 //!
 //! **Algorithm:** iterative gen/kill dataflow on the CFG worklist.
-//! **Complexity:** O(n · d) blocks × definition-set size; worklist membership is O(1).
+//! **Complexity:** O(b · d) blocks × definition-set size; gen/kill built in O(total defs).
 
 use crate::cfg::{BasicBlock, BlockId, ControlFlowGraph};
 use crate::pdg::ProgramDependenceGraph;
@@ -34,17 +34,51 @@ pub fn compute_reaching_definitions(
     cfg: &ControlFlowGraph,
     pdg: &ProgramDependenceGraph,
 ) -> ReachingDefs {
-    let mut gen = HashMap::new();
-    let mut kill = HashMap::new();
-    let mut in_set = HashMap::new();
-    let mut out_set = HashMap::new();
+    let mut gen_sets = HashMap::with_capacity(cfg.blocks.len());
+    let mut kill_sets = HashMap::with_capacity(cfg.blocks.len());
+    let mut in_set = HashMap::with_capacity(cfg.blocks.len());
+    let mut out_set = HashMap::with_capacity(cfg.blocks.len());
 
-    for (block_id, block) in &cfg.blocks {
-        let (g, k) = compute_gen_kill(block, pdg);
-        gen.insert(*block_id, g);
-        kill.insert(*block_id, k);
-        in_set.insert(*block_id, HashSet::new());
-        out_set.insert(*block_id, HashSet::new());
+    let mut global_defs_by_var: HashMap<String, Vec<Definition>> = HashMap::new();
+    let mut block_local_defs = HashMap::with_capacity(cfg.blocks.len());
+
+    for (&block_id, block) in &cfg.blocks {
+        let defs = collect_block_definitions(block, pdg);
+        for def in &defs {
+            global_defs_by_var
+                .entry(def.variable.clone())
+                .or_default()
+                .push(def.clone());
+        }
+        block_local_defs.insert(block_id, defs);
+    }
+
+    for &block_id in cfg.blocks.keys() {
+        let local_defs = &block_local_defs[&block_id];
+
+        let mut gen_b = HashSet::new();
+        let mut defined_in_block = HashSet::new();
+        for def in local_defs.iter().rev() {
+            if defined_in_block.insert(def.variable.clone()) {
+                gen_b.insert(def.clone());
+            }
+        }
+
+        let mut kill_b = HashSet::new();
+        for var in &defined_in_block {
+            if let Some(all_defs_of_var) = global_defs_by_var.get(var) {
+                for def in all_defs_of_var {
+                    if !gen_b.contains(def) {
+                        kill_b.insert(def.clone());
+                    }
+                }
+            }
+        }
+
+        gen_sets.insert(block_id, gen_b);
+        kill_sets.insert(block_id, kill_b);
+        in_set.insert(block_id, HashSet::new());
+        out_set.insert(block_id, HashSet::new());
     }
 
     let mut worklist: VecDeque<BlockId> = cfg.blocks.keys().copied().collect();
@@ -52,14 +86,16 @@ pub fn compute_reaching_definitions(
 
     while let Some(block_id) = worklist.pop_front() {
         on_worklist.remove(&block_id);
-        let in_b: HashSet<Definition> = cfg
-            .predecessors(block_id)
-            .iter()
-            .flat_map(|pred| out_set.get(pred).cloned().unwrap_or_default())
-            .collect();
 
-        let gen_b = gen.get(&block_id).cloned().unwrap_or_default();
-        let kill_b = kill.get(&block_id).cloned().unwrap_or_default();
+        let mut in_b = HashSet::new();
+        for &pred in cfg.predecessors(block_id) {
+            if let Some(pred_out) = out_set.get(&pred) {
+                in_b.extend(pred_out.iter().cloned());
+            }
+        }
+
+        let gen_b = &gen_sets[&block_id];
+        let kill_b = &kill_sets[&block_id];
 
         let out_b: HashSet<Definition> = gen_b
             .iter()
@@ -70,7 +106,7 @@ pub fn compute_reaching_definitions(
         if out_set.get(&block_id) != Some(&out_b) {
             out_set.insert(block_id, out_b);
             in_set.insert(block_id, in_b);
-            for succ in cfg.successors(block_id) {
+            for &succ in cfg.successors(block_id) {
                 if on_worklist.insert(succ) {
                     worklist.push_back(succ);
                 }
@@ -83,38 +119,24 @@ pub fn compute_reaching_definitions(
     ReachingDefs { in_set, out_set }
 }
 
-fn compute_gen_kill(
+fn collect_block_definitions(
     block: &BasicBlock,
     pdg: &ProgramDependenceGraph,
-) -> (HashSet<Definition>, HashSet<Definition>) {
-    let mut gen = HashSet::new();
-    let mut kill = HashSet::new();
-    let mut all_defs: Vec<Definition> = Vec::new();
-
+) -> Vec<Definition> {
+    let mut defs = Vec::new();
     for (idx, stmt) in block.statements.iter().enumerate() {
         if let Some(pdg_node) = pdg.find_node_by_block_and_line(block.id, stmt.line) {
             for var in &pdg_node.defined_vars {
-                let def = Definition {
+                defs.push(Definition {
                     variable: var.clone(),
                     block: block.id,
                     statement_index: idx,
                     pdg_node: pdg_node.id,
-                };
-                all_defs.push(def.clone());
-                gen.insert(def);
+                });
             }
         }
     }
-
-    for def in &gen {
-        for other in &all_defs {
-            if other.variable == def.variable && other.pdg_node != def.pdg_node {
-                kill.insert(other.clone());
-            }
-        }
-    }
-
-    (gen, kill)
+    defs
 }
 
 #[cfg(test)]
@@ -184,6 +206,45 @@ fn diamond(cond: bool) {
         assert!(
             x_defs.len() >= 2,
             "diamond merge should see multiple reaching definitions for x"
+        );
+    }
+
+    #[test]
+    fn test_same_block_redefinition_masks_earlier_def() {
+        let code = r#"
+fn shadow() {
+    let mut x = 1;
+    x = 2;
+    let _y = x;
+}
+"#;
+        let cfg = build_cfg_for_function("rust", code, "shadow").unwrap();
+        let pdg = ProgramDependenceGraph::build(&cfg, code.as_bytes()).unwrap();
+        let reaching = compute_reaching_definitions(&cfg, &pdg);
+
+        let mut saw_double_def_block = false;
+        for (block_id, block) in &cfg.blocks {
+            let local_x: Vec<_> = collect_block_definitions(block, &pdg)
+                .into_iter()
+                .filter(|d| d.variable == "x")
+                .collect();
+            if local_x.len() < 2 {
+                continue;
+            }
+            saw_double_def_block = true;
+            let out_x: Vec<_> = reaching.out_set[block_id]
+                .iter()
+                .filter(|d| d.variable == "x")
+                .collect();
+            assert_eq!(
+                out_x.len(),
+                1,
+                "block with multiple assignments to x should gen only the last definition"
+            );
+        }
+        assert!(
+            saw_double_def_block,
+            "expected cfg to place at least two x assignments in one basic block"
         );
     }
 }

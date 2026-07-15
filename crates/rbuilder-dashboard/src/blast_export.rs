@@ -1,7 +1,6 @@
 //! Export blast-radius assets for the dashboard bundle (Phase 6).
 
-use rbuilder_analysis::AnalysisResults;
-use rbuilder_graph::snapshot::MmappedGraphSnapshot;
+use crate::export_context::{resolve_analysis, DashboardExportContext};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs;
@@ -41,9 +40,15 @@ pub struct BlastExportSummary {
     pub function_scores: usize,
 }
 
-pub fn export_blast_bundle(repo_root: &Path, out_dir: &Path) -> Result<BlastExportSummary, String> {
-    let snapshot_path = MmappedGraphSnapshot::default_path(repo_root);
-    let engine_snapshot_path = rbuilder_analysis::blast_engine_snapshot::BlastEngineSnapshot::default_path(repo_root);
+pub fn export_blast_bundle(
+    repo_root: &Path,
+    snapshot_path: &Path,
+    out_dir: &Path,
+    ctx: DashboardExportContext<'_>,
+    uuid_to_index: &HashMap<Uuid, u32>,
+) -> Result<BlastExportSummary, String> {
+    let engine_snapshot_path =
+        rbuilder_analysis::blast_engine_snapshot::BlastEngineSnapshot::default_path(repo_root);
     let mut snapshot_copied = false;
 
     if engine_snapshot_path.is_file() {
@@ -52,7 +57,7 @@ pub fn export_blast_bundle(repo_root: &Path, out_dir: &Path) -> Result<BlastExpo
         snapshot_copied = true;
     }
 
-    let functions = export_function_scores(repo_root, &snapshot_path)?;
+    let functions = export_function_scores(repo_root, ctx, snapshot_path, uuid_to_index)?;
 
     let index = BlastIndexPayload {
         schema_version: 2,
@@ -77,20 +82,23 @@ pub fn export_blast_bundle(repo_root: &Path, out_dir: &Path) -> Result<BlastExpo
 
 fn export_function_scores(
     repo_root: &Path,
+    ctx: DashboardExportContext<'_>,
     snapshot_path: &Path,
+    uuid_to_index: &HashMap<Uuid, u32>,
 ) -> Result<Vec<BlastFunctionScore>, String> {
-    let analysis_path = repo_root.join(".rbuilder/analysis_results.bin");
-    if !analysis_path.is_file() || !snapshot_path.is_file() {
+    if !snapshot_path.is_file() {
         return Ok(Vec::new());
     }
 
-    let results = AnalysisResults::load(&analysis_path).map_err(|e| e.to_string())?;
+    let results = match resolve_analysis(&ctx, repo_root) {
+        Ok(cow) => cow,
+        Err(_) => return Ok(Vec::new()),
+    };
     let Some(blast) = results.blast_radius.as_ref() else {
         return Ok(Vec::new());
     };
 
-    let bytes = fs::read(snapshot_path).map_err(|e| e.to_string())?;
-    let uuid_to_index = scan_columnar_uuid_indices(&bytes)?;
+    let snapshot_bytes = mmap_snapshot(snapshot_path)?;
     let mut scores = Vec::new();
 
     for compact_id in 0..results.node_count() {
@@ -100,7 +108,7 @@ fn export_function_scores(
         let Some(&index) = uuid_to_index.get(&uuid) else {
             continue;
         };
-        if columnar_node_type(&bytes, index)? != FUNCTION_NODE_TYPE {
+        if columnar_node_type(&snapshot_bytes, index)? != FUNCTION_NODE_TYPE {
             continue;
         }
         let score = blast.scores[compact_id];
@@ -124,6 +132,18 @@ fn export_function_scores(
             .then_with(|| a.index.cmp(&b.index))
     });
     Ok(scores)
+}
+
+/// Memory-map columnar snapshot and build UUID → row index (shared across exporters).
+pub fn load_columnar_uuid_indices(snapshot_path: &Path) -> Result<HashMap<Uuid, u32>, String> {
+    let bytes = mmap_snapshot(snapshot_path)?;
+    scan_columnar_uuid_indices(&bytes)
+}
+
+fn mmap_snapshot(snapshot_path: &Path) -> Result<memmap2::Mmap, String> {
+    let file = fs::File::open(snapshot_path).map_err(|e| e.to_string())?;
+    // SAFETY: read-only map for parsing columnar header/columns.
+    unsafe { memmap2::Mmap::map(&file).map_err(|e| e.to_string()) }
 }
 
 pub(crate) fn scan_columnar_uuid_indices(bytes: &[u8]) -> Result<HashMap<Uuid, u32>, String> {
@@ -159,13 +179,22 @@ fn columnar_node_type(bytes: &[u8], index: u32) -> Result<u16, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::export_context::DashboardExportContext;
+    use rbuilder_graph::snapshot::MmappedGraphSnapshot;
 
     #[test]
     fn blast_index_written_without_snapshot() {
         let tmp = tempfile::tempdir().unwrap();
         let out = tmp.path().join("dash");
         fs::create_dir_all(&out).unwrap();
-        let summary = export_blast_bundle(tmp.path(), &out).unwrap();
+        let summary = export_blast_bundle(
+            tmp.path(),
+            &tmp.path().join("missing.snapshot.bin"),
+            &out,
+            DashboardExportContext::default(),
+            &HashMap::new(),
+        )
+        .unwrap();
         assert!(summary.available);
         assert!(!summary.snapshot_copied);
         assert_eq!(summary.function_scores, 0);
@@ -182,8 +211,17 @@ mod tests {
         if !repo.join(".rbuilder/analysis_results.bin").is_file() {
             return;
         }
+        let snapshot_path = MmappedGraphSnapshot::default_path(repo);
+        let uuid_to_index = load_columnar_uuid_indices(&snapshot_path).unwrap();
         let out = tempfile::tempdir().unwrap();
-        let summary = export_blast_bundle(repo, out.path()).unwrap();
+        let summary = export_blast_bundle(
+            repo,
+            &snapshot_path,
+            out.path(),
+            DashboardExportContext::default(),
+            &uuid_to_index,
+        )
+        .unwrap();
         assert!(summary.function_scores > 0, "expected blast function scores");
         let index: BlastIndexPayload =
             serde_json::from_slice(&fs::read(out.path().join(BLAST_INDEX_FILE)).unwrap()).unwrap();
@@ -198,7 +236,16 @@ mod tests {
     fn refresh_gbuilder_blast_index() {
         let repo = Path::new("/Users/sshaaf/git/java/gbuilder");
         let out = repo.join(".rbuilder/dashboard");
-        let summary = export_blast_bundle(repo, &out).unwrap();
+        let snapshot_path = MmappedGraphSnapshot::default_path(repo);
+        let uuid_to_index = load_columnar_uuid_indices(&snapshot_path).unwrap();
+        let summary = export_blast_bundle(
+            repo,
+            &snapshot_path,
+            &out,
+            DashboardExportContext::default(),
+            &uuid_to_index,
+        )
+        .unwrap();
         eprintln!("exported {} function scores", summary.function_scores);
         assert!(summary.function_scores > 0);
     }

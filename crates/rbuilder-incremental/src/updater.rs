@@ -9,7 +9,8 @@ use rbuilder_extraction::discovery::{DiscoveryConfig, FileDiscoverer};
 use rbuilder_extraction::{Extractor, GraphBuilder};
 use rbuilder_graph::code_graph::CodeGraph;
 use rbuilder_graph::schema::EdgeType;
-use rbuilder_pipeline::parallel::{par_filter_map, par_map};
+use rbuilder_pipeline::parallel::par_map;
+use rbuilder_pipeline::stream::{stream_into_graph, DEFAULT_STREAM_CHANNEL_CAPACITY};
 use rbuilder_pipeline::{PipelineConfig, ProcessingPipeline};
 use rbuilder_registry::LanguageRegistry;
 use std::collections::HashMap;
@@ -280,12 +281,19 @@ impl IncrementalUpdater {
         }
 
         let extractor = Extractor::new(Arc::clone(&self.registry));
-        let extractions = par_filter_map(self.config.thread_count, &paths_to_update, |path| {
-            extractor.extract_file(path).ok()
-        });
-
         let mut builder = GraphBuilder::new();
-        extractor.populate_graph(&extractions, &mut builder)?;
+        let (files_processed, tails) = stream_into_graph(
+            self.config.thread_count,
+            &extractor,
+            Arc::clone(&self.registry),
+            &paths_to_update,
+            DEFAULT_STREAM_CHANNEL_CAPACITY,
+            &mut builder,
+            || {},
+        )?;
+        let _ = files_processed;
+        builder.build_resolution_indexes();
+        extractor.populate_pass2(&tails, &mut builder)?;
         let (new_nodes, new_edges) = builder.into_graph();
         let nodes_added = new_nodes.len();
         let edges_added = new_edges.len();

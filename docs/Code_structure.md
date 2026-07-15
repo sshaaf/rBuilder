@@ -246,7 +246,7 @@ Understanding files helps avoid duplicating cache layers:
 | `macro_call_index.db` / `.bin` | `discover` | `blast-radius` T0 fast path only — SQLite/bincode lookup cache, not the graph |
 | `cfg_pdg.archive.bin` | `discover --cfg` | `blast-radius --with-slices`, slice hand-offs |
 | `query.sock` | `serve --daemon` | blast-radius auto-connect (optional) |
-| `analysis_results.bin` | `discover` | Columnar metrics (centrality, community, blast tables) |
+| `analysis_results.bin` | `discover` | Columnar metrics (`CentralityTable`, community, blast); filled via `analyze_columnar` on discover |
 | `dashboard/` (bundle) | `discover` | Browser static dashboard (`index.html`, `manifest.json`, `graph_payload.bin`) |
 
 ---

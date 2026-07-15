@@ -58,6 +58,7 @@ rbuilder-rules = { path = "crates/rbuilder-rules", version = "0.2.0" }
 rbuilder-core = { path = "crates/rbuilder-core", version = "0.2.0" }
 tempfile = "3"
 zstd = "0.13"
+rayon = "1.7"
 rbuilder-lang-go = { path = "crates/rbuilder-lang-go", version = "0.2.0" }
 rbuilder-lang-java = { path = "crates/rbuilder-lang-java", version = "0.2.0" }
 rbuilder-lang-javascript = { path = "crates/rbuilder-lang-javascript", version = "0.2.0" }

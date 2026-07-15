@@ -1,28 +1,28 @@
 //! Interprocedural backward slicing (Phase 13.1).
 
-use crate::interprocedural_cfg::InterproceduralCFG;
+use crate::interprocedural_cfg::InterproceduralCfgAccess;
 use crate::pdg::{PdgNodeId, ProgramDependenceGraph};
 use crate::slicing::{BackwardSlicer, SliceCriterion};
 use rbuilder_error::{Error, Result};
 use rbuilder_graph::backend::{GraphBackend, MemoryBackend};
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet, VecDeque};
-use std::rc::Rc;
+use std::sync::Arc;
 use uuid::Uuid;
 
 /// Lazy per-function PDG cache used during interprocedural slicing.
-struct PdgCache(RefCell<HashMap<Uuid, Rc<ProgramDependenceGraph>>>);
+struct PdgCache(RefCell<HashMap<Uuid, Arc<ProgramDependenceGraph>>>);
 
 impl PdgCache {
     fn new() -> Self {
         Self(RefCell::new(HashMap::new()))
     }
 
-    fn borrow_map(&self) -> std::cell::Ref<'_, HashMap<Uuid, Rc<ProgramDependenceGraph>>> {
+    fn borrow_map(&self) -> std::cell::Ref<'_, HashMap<Uuid, Arc<ProgramDependenceGraph>>> {
         self.0.borrow()
     }
 
-    fn borrow_map_mut(&self) -> std::cell::RefMut<'_, HashMap<Uuid, Rc<ProgramDependenceGraph>>> {
+    fn borrow_map_mut(&self) -> std::cell::RefMut<'_, HashMap<Uuid, Arc<ProgramDependenceGraph>>> {
         self.0.borrow_mut()
     }
 }
@@ -43,23 +43,23 @@ pub struct InterproceduralSlice {
 }
 
 /// Backward slicer across function boundaries with lazy PDG construction.
-pub struct InterproceduralSlicer<'a> {
-    icfg: &'a InterproceduralCFG,
+pub struct InterproceduralSlicer<'a, C: InterproceduralCfgAccess + ?Sized> {
+    icfg: &'a C,
     backend: &'a MemoryBackend,
     source_files: HashMap<String, String>,
     pdg_cache: PdgCache,
     function_names: HashMap<Uuid, String>,
 }
 
-impl<'a> InterproceduralSlicer<'a> {
+impl<'a, C: InterproceduralCfgAccess + ?Sized> InterproceduralSlicer<'a, C> {
     /// Build slicer; PDGs are constructed lazily per function during slicing.
     pub fn new(
-        icfg: &'a InterproceduralCFG,
+        icfg: &'a C,
         backend: &'a MemoryBackend,
         source_files: &HashMap<String, String>,
     ) -> Result<Self> {
         let mut function_names = HashMap::new();
-        for &func_id in icfg.call_graph.function_ids() {
+        for &func_id in icfg.call_graph().function_ids() {
             if let Ok(Some(func_node)) = backend.get_node(func_id) {
                 function_names.insert(func_id, func_node.name.clone());
             }
@@ -73,11 +73,11 @@ impl<'a> InterproceduralSlicer<'a> {
         })
     }
 
-    /// Pre-populate PDGs from a discover-time archive (skips lazy rebuild when present).
+    /// Pre-populate PDG cache with refcount shares (no deep PDG clone).
     pub fn preload_pdgs(&self, archive: &crate::cfg_pdg_archive::CfgPdgArchive) {
         let mut pdgs = self.pdg_cache.borrow_map_mut();
         for (function_id, record) in &archive.records {
-            pdgs.insert(*function_id, Rc::new(record.pdg.clone()));
+            pdgs.insert(*function_id, Arc::clone(&record.pdg));
         }
     }
 
@@ -111,7 +111,7 @@ impl<'a> InterproceduralSlicer<'a> {
                     for (caller_id, _) in self.icfg.caller_cfgs(current_func) {
                         let caller_pdg = self.pdg_for(caller_id)?;
                         let call_sites =
-                            self.find_call_site_nodes(caller_pdg.as_ref(), current_func);
+                            self.find_call_site_nodes(caller_id, caller_pdg.as_ref(), current_func);
                         for call_node in call_sites {
                             if slice.insert((caller_id, call_node)) {
                                 worklist.push_back((caller_id, call_node));
@@ -134,7 +134,7 @@ impl<'a> InterproceduralSlicer<'a> {
             })
             .collect();
 
-        let total = self.count_total_lines();
+        let total = self.icfg.total_cfg_lines();
         let reduction_percent = if total == 0 {
             0.0
         } else {
@@ -150,7 +150,7 @@ impl<'a> InterproceduralSlicer<'a> {
         })
     }
 
-    fn pdg_for(&self, function: Uuid) -> Result<Rc<ProgramDependenceGraph>> {
+    fn pdg_for(&self, function: Uuid) -> Result<Arc<ProgramDependenceGraph>> {
         if let Some(pdg) = self.pdg_cache.borrow_map().get(&function).cloned() {
             return Ok(pdg);
         }
@@ -174,15 +174,17 @@ impl<'a> InterproceduralSlicer<'a> {
                     .map(|(_, v)| v)
             })
             .ok_or_else(|| Error::NotFound(format!("source for {file_path}")))?;
-        let pdg = Rc::new(ProgramDependenceGraph::build(cfg, source.as_bytes())?);
-        self.pdg_cache.borrow_map_mut().insert(function, Rc::clone(&pdg));
+        let pdg = Arc::new(ProgramDependenceGraph::build(cfg, source.as_bytes())?);
+        self.pdg_cache
+            .borrow_map_mut()
+            .insert(function, Arc::clone(&pdg));
         Ok(pdg)
     }
 
     fn is_parameter(&self, function: Uuid, variable: &str) -> bool {
         if self
             .icfg
-            .call_graph
+            .call_graph()
             .parameter_names(function)
             .iter()
             .any(|p| p == variable)
@@ -203,10 +205,28 @@ impl<'a> InterproceduralSlicer<'a> {
 
     fn find_call_site_nodes(
         &self,
+        caller_id: Uuid,
         caller_pdg: &ProgramDependenceGraph,
-        callee_func: Uuid,
+        callee_id: Uuid,
     ) -> Vec<PdgNodeId> {
-        if let Some(callee_name) = self.function_names.get(&callee_func) {
+        let edges = self
+            .icfg
+            .call_graph()
+            .call_edges_between(caller_id, callee_id);
+        let lines: HashSet<usize> = edges
+            .iter()
+            .map(|edge| edge.call_site)
+            .filter(|line| *line > 0)
+            .collect();
+        if !lines.is_empty() {
+            let mut nodes = Vec::new();
+            for line in lines {
+                nodes.extend_from_slice(caller_pdg.nodes_at_line(line));
+            }
+            return nodes;
+        }
+
+        if let Some(callee_name) = self.function_names.get(&callee_id) {
             caller_pdg
                 .nodes
                 .iter()
@@ -216,19 +236,6 @@ impl<'a> InterproceduralSlicer<'a> {
         } else {
             Vec::new()
         }
-    }
-
-    fn count_total_lines(&self) -> usize {
-        self.icfg
-            .function_cfgs
-            .values()
-            .flat_map(|cfg| {
-                cfg.blocks
-                    .values()
-                    .flat_map(|b| b.statements.iter().map(|s| s.line))
-            })
-            .collect::<HashSet<_>>()
-            .len()
     }
 }
 
