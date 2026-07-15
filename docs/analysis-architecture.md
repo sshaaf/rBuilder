@@ -24,7 +24,7 @@ Nodes represent symbols (functions, types, modules). Edges carry `EdgeType` sema
 | Analysis | Primary graph | Algorithm |
 |----------|---------------|-----------|
 | Centrality | `PetGraphView` → `FlatGraphIndex` | PageRank, Brandes betweenness, HyperBall harmonic |
-| Community | `PetGraphView` (undirected filter) | Label propagation + modularity |
+| Community | `PetGraphView` (undirected filter) | Label propagation + modularity ([naming note](design/graph-metrics-design.md#31-community-detection-naming)) |
 | Blast radius (engine) | Call-only DiGraph | Kosaraju SCC → bitset reachability |
 | Blast radius (analyzer) | `PetGraphView` Calls filter | Reverse BFS |
 | Dependencies | `PetGraphView` directed | Kosaraju SCC, reverse BFS impact |
