@@ -124,16 +124,16 @@ Scan `Calls` edges. For each call where caller and callee map to **different** p
 
 Intra-package calls are omitted from the macro graph (they do not create macro edges).
 
-### 3.5 Louvain community id on macro nodes
+### 3.5 Community id on macro nodes (`louvain_community_id`)
 
-Field: `louvain_community_id: Option<usize>` — **majority vote** of member functions’ label-propagation ids.
+Field: `louvain_community_id: Option<usize>` — **majority vote** of member functions’ label-propagation ids. The field name is historical (“Louvain”); rBuilder does **not** run Leiden or the Louvain library — see [Graph metrics — community naming](graph-metrics-design.md#31-community-detection-naming).
 
 Used for:
 
 - **Graph node color** in the dashboard (cluster visually)
 - **ForceAtlas2 layout edge weighting** (intra- vs inter-cluster pull)
 
-Community detection itself lives in `crates/rbuilder-analysis/src/community.rs` (**label propagation** with modularity scoring, not Louvain library — despite historical naming in comments).
+Community detection itself lives in `crates/rbuilder-analysis/src/community.rs` (**label propagation** with modularity scoring). See [Graph metrics — community naming](graph-metrics-design.md#31-community-detection-naming).
 
 ---
 

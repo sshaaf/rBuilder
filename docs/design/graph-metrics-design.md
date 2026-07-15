@@ -65,6 +65,20 @@ Background: [harmonic-centrality.md](../harmonic-centrality.md), [migration-algo
 
 ---
 
+## 3.1 Community detection naming
+
+**Naming first:** rBuilder does **not** run the Leiden algorithm today. What ships is **label propagation** ([Raghavan et al., 2007](https://doi.org/10.1107/S1744309107073516)) with Newman modularity scoring, plus hub stripping and deterministic tie-breaking. Docs and UI still say “Louvain” in places (`louvain_community_id`, migration layout colors), and [`.github/TASK_PLAN.md`](../../.github/TASK_PLAN.md) lists Leiden as planned but unimplemented.
+
+| Name in repo | What it actually is |
+|--------------|---------------------|
+| `CommunityDetector` | Label propagation on `Calls` + `Uses` |
+| “Louvain” in dashboard / migration | Majority vote of label-propagation ids (layout color only) |
+| Leiden (task 2.1.1) | **Not implemented** |
+
+Implementation: [`crates/rbuilder-analysis/src/community.rs`](../../crates/rbuilder-analysis/src/community.rs). For migration batching, the dashboard uses **package/module macro nodes**; community ids mainly drive graph coloring and cluster-aware layout, not the primary schedule order.
+
+---
+
 ## 4. Rust implementation map
 
 | Component | Path |
@@ -87,7 +101,7 @@ Background: [harmonic-centrality.md](../harmonic-centrality.md), [migration-algo
 | Sort | Column headers PR / BC / Harm / Blast |
 | Tooltips | `FUNCTION_COLUMN_TOOLTIPS` in `functionListUtils.ts` |
 
-Graph tab uses `communities.json` / metagraph Louvain colors for package view.
+Graph tab uses `communities.json` / metagraph community colors for package view (label-propagation ids; see [§3.1 Community detection naming](#31-community-detection-naming)).
 
 ---
 
