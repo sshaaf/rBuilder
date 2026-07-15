@@ -12,6 +12,7 @@ rbuilder-graph = { path = "../rbuilder-graph" }
 rbuilder-registry = { path = "../rbuilder-registry" }
 indicatif = "0.17"
 rayon = "1.7"
+crossbeam = "0.8"
 
 [dev-dependencies]
 tempfile = { workspace = true }

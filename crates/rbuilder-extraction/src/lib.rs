@@ -7,5 +7,5 @@ pub mod graph_builder;
 pub mod usage_detector;
 
 pub use discovery::{DiscoveryConfig, FileDiscoverer};
-pub use extractor::Extractor;
+pub use extractor::{ExtractionTail, Extractor, FileExtraction};
 pub use graph_builder::GraphBuilder;

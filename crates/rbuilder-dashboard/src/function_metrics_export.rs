@@ -5,6 +5,7 @@ use rbuilder_analysis::AnalysisResults;
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::Path;
+use std::time::Instant;
 
 pub const FUNCTION_METRICS_FILE: &str = "function_metrics.json";
 
@@ -95,8 +96,27 @@ pub fn export_function_metrics(
         schema_version: 2,
         rows: rows.clone(),
     };
-    let json = serde_json::to_string_pretty(&payload).map_err(|e| e.to_string())?;
+    let json = {
+        let start = std::time::Instant::now();
+        let json = serde_json::to_string_pretty(&payload).map_err(|e| e.to_string())?;
+        tracing::info!(
+            target: "profile",
+            file = FUNCTION_METRICS_FILE,
+            serialize_secs = start.elapsed().as_secs_f64(),
+            json_bytes = json.len(),
+            rows = rows.len(),
+            "[profile] save_dashboard json serialize"
+        );
+        json
+    };
+    let write_start = std::time::Instant::now();
     fs::write(out_dir.join(FUNCTION_METRICS_FILE), json).map_err(|e| e.to_string())?;
+    tracing::info!(
+        target: "profile",
+        file = FUNCTION_METRICS_FILE,
+        write_secs = write_start.elapsed().as_secs_f64(),
+        "[profile] save_dashboard json write"
+    );
 
     Ok(())
 }

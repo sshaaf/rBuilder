@@ -305,10 +305,26 @@ impl AnalysisResults {
 
     /// Save analysis results to a binary file.
     pub fn save(&self, path: &Path) -> Result<()> {
-        let file = std::fs::File::create(path)?;
-        bincode::serialize_into(file, self).map_err(|e| {
+        use std::time::Instant;
+
+        let serialize_start = Instant::now();
+        let payload = bincode::serialize(self).map_err(|e| {
             rbuilder_error::Error::SerdeError(format!("Failed to serialize: {}", e))
         })?;
+        let serialize_secs = serialize_start.elapsed().as_secs_f64();
+
+        let write_start = Instant::now();
+        std::fs::write(path, &payload)?;
+        let write_secs = write_start.elapsed().as_secs_f64();
+
+        tracing::info!(
+            target: "profile",
+            serialize_secs,
+            write_secs,
+            bytes = payload.len(),
+            "[profile] save_analysis breakdown"
+        );
+
         Ok(())
     }
 
@@ -369,5 +385,26 @@ mod tests {
         let metrics = results.get_centrality(uuid1).unwrap();
         assert_eq!(metrics.pagerank, 0.15);
         assert_eq!(metrics.in_degree, 5);
+    }
+
+    #[test]
+    #[ignore = "manual: profile save_analysis on example/linux artifact"]
+    fn profile_save_linux_artifact() {
+        let _ = tracing_subscriber::fmt()
+            .with_env_filter("profile=info")
+            .try_init();
+        let path = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../example/linux/.rbuilder/analysis_results.bin");
+        if !path.is_file() {
+            eprintln!(
+                "skip: {} missing (run discover on example/linux first)",
+                path.display()
+            );
+            return;
+        }
+        let results = AnalysisResults::load(&path).unwrap();
+        results
+            .save(&Path::new("/tmp/rbuilder-analysis_results-resave.bin"))
+            .unwrap();
     }
 }

@@ -2,7 +2,7 @@
 //!
 //! Task 1.6.2: Parallel file parsing with rayon
 
-use crate::parallel::par_filter_map;
+use crate::stream::{stream_into_graph, DEFAULT_STREAM_CHANNEL_CAPACITY};
 use indicatif::{ProgressBar, ProgressStyle};
 use rbuilder_error::Result;
 use rbuilder_extraction::discovery::{DiscoveryConfig, FileDiscoverer};
@@ -25,6 +25,8 @@ pub struct PipelineConfig {
     pub thread_count: Option<usize>,
     /// Batch size for parallel file processing
     pub batch_size: usize,
+    /// Max in-flight extractions between parallel workers and graph merge
+    pub stream_channel_capacity: usize,
 }
 
 impl Default for PipelineConfig {
@@ -34,6 +36,7 @@ impl Default for PipelineConfig {
             show_progress: true,
             thread_count: None,
             batch_size: 64,
+            stream_channel_capacity: DEFAULT_STREAM_CHANNEL_CAPACITY,
         }
     }
 }
@@ -103,27 +106,33 @@ impl ProcessingPipeline {
         };
 
         let extractor = Extractor::new(Arc::clone(&self.registry));
-        let progress_ref = progress.as_ref();
         let extract_start = Instant::now();
-        let extractions = par_filter_map(self.config.thread_count, &files, |path| {
-            let result = extractor.extract_file(path);
-            if let Some(pb) = progress_ref {
-                pb.inc(1);
-            }
-            result.ok()
-        });
+        let mut builder = GraphBuilder::new();
+        let progress_for_stream = progress.as_ref().map(|pb| pb.clone());
+        let (files_processed, tails) = stream_into_graph(
+            self.config.thread_count,
+            &extractor,
+            Arc::clone(&self.registry),
+            &files,
+            self.config.stream_channel_capacity,
+            &mut builder,
+            move || {
+                if let Some(pb) = &progress_for_stream {
+                    pb.inc(1);
+                }
+            },
+        )?;
         let extract_duration = extract_start.elapsed();
 
         if let Some(pb) = progress {
             pb.finish_with_message("done");
         }
 
-        let files_processed = extractions.len();
         let files_failed = files_discovered.saturating_sub(files_processed);
 
         let graph_start = Instant::now();
-        let mut builder = GraphBuilder::new();
-        extractor.populate_graph(&extractions, &mut builder)?;
+        builder.build_resolution_indexes();
+        extractor.populate_pass2(&tails, &mut builder)?;
         let (nodes, edges): (Vec<Node>, Vec<Edge>) = builder.into_graph();
 
         let nodes_created = nodes.len();

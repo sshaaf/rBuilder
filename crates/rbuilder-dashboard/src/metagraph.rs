@@ -82,7 +82,16 @@ pub fn write_metagraph(
     let mut uuid_to_pkg: HashMap<Uuid, u32> = HashMap::new();
     let mut packages: HashMap<String, PackageBucket> = HashMap::new();
 
-    let (community_assignments, modularity) = detect_node_communities(backend)?;
+    let (community_assignments, modularity) = {
+        let start = std::time::Instant::now();
+        let result = detect_node_communities(backend)?;
+        tracing::info!(
+            target: "profile",
+            secs = start.elapsed().as_secs_f64(),
+            "[profile] write_metagraph community_detect"
+        );
+        result
+    };
 
     let _ = backend.for_each_node(|n| {
         if !matches!(n.node_type, NodeType::Function | NodeType::Class) {
@@ -240,12 +249,52 @@ pub fn write_metagraph(
 
     let communities = summarize_communities(modularity, &payload.nodes);
 
-    let json = serde_json::to_string_pretty(&payload).map_err(|e| e.to_string())?;
-    fs_write(out_dir.join(METAGRAPH_FILE), json.as_bytes())?;
+    let metagraph_json = {
+        let start = std::time::Instant::now();
+        let json = serde_json::to_string_pretty(&payload).map_err(|e| e.to_string())?;
+        tracing::info!(
+            target: "profile",
+            file = METAGRAPH_FILE,
+            serialize_secs = start.elapsed().as_secs_f64(),
+            json_bytes = json.len(),
+            member_index_total = payload
+                .nodes
+                .iter()
+                .map(|n| n.member_indices.len())
+                .sum::<usize>(),
+            "[profile] save_dashboard json serialize"
+        );
+        json
+    };
+    let write_start = std::time::Instant::now();
+    fs_write(out_dir.join(METAGRAPH_FILE), metagraph_json.as_bytes())?;
+    tracing::info!(
+        target: "profile",
+        file = METAGRAPH_FILE,
+        write_secs = write_start.elapsed().as_secs_f64(),
+        "[profile] save_dashboard json write"
+    );
 
-    let communities_json =
-        serde_json::to_string_pretty(&communities).map_err(|e| e.to_string())?;
+    let communities_json = {
+        let start = std::time::Instant::now();
+        let json = serde_json::to_string_pretty(&communities).map_err(|e| e.to_string())?;
+        tracing::info!(
+            target: "profile",
+            file = COMMUNITIES_FILE,
+            serialize_secs = start.elapsed().as_secs_f64(),
+            json_bytes = json.len(),
+            "[profile] save_dashboard json serialize"
+        );
+        json
+    };
+    let write_start = std::time::Instant::now();
     fs_write(out_dir.join(COMMUNITIES_FILE), communities_json.as_bytes())?;
+    tracing::info!(
+        target: "profile",
+        file = COMMUNITIES_FILE,
+        write_secs = write_start.elapsed().as_secs_f64(),
+        "[profile] save_dashboard json write"
+    );
 
     Ok(MetagraphExport {
         meta: payload,

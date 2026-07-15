@@ -2,9 +2,11 @@
 
 pub mod parallel;
 mod pipeline;
+pub mod stream;
 
 pub use parallel::{par_filter_map, par_map, thread_pool, with_pool};
 pub use pipeline::{PipelineConfig, PipelineStats, ProcessingPipeline};
+pub use stream::{stream_into_graph, DEFAULT_STREAM_CHANNEL_CAPACITY};
 
 use rbuilder_error::Result;
 use rbuilder_graph::CodeGraph;
