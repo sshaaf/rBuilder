@@ -164,7 +164,7 @@ fn dedupe_seeds(seeds: Vec<SliceHandoffSeed>) -> Vec<SliceHandoffSeed> {
 /// Build slice criterion for a callee parameter (first use line in callee PDG).
 pub fn criterion_for_parameter(
     backend: &MemoryBackend,
-    icfg: &InterproceduralCFG,
+    icfg: &dyn crate::interprocedural_cfg::InterproceduralCfgAccess,
     source_files: &HashMap<String, String>,
     callee_id: Uuid,
     param_name: &str,
@@ -261,12 +261,16 @@ pub fn trace_blast_to_slices_with_blast(
 
     let source_files = load_source_files(backend, repo_root);
     let archive = crate::cfg_pdg_archive::CfgPdgArchive::open_if_exists(repo_root)?;
-    let icfg = if let Some(ref archive) = archive {
-        archive.to_interprocedural_cfg(backend)?
+    let icfg_view;
+    let icfg_owned;
+    let icfg: &dyn crate::interprocedural_cfg::InterproceduralCfgAccess = if let Some(ref archive) = archive {
+        icfg_view = archive.interprocedural_cfg_view(backend)?;
+        &icfg_view
     } else {
-        InterproceduralCFG::build(backend, &source_files)?
+        icfg_owned = InterproceduralCFG::build(backend, &source_files)?;
+        &icfg_owned
     };
-    let slicer = InterproceduralSlicer::new(&icfg, backend, &source_files)?;
+    let slicer = InterproceduralSlicer::new(icfg, backend, &source_files)?;
     if let Some(ref archive) = archive {
         slicer.preload_pdgs(archive);
     }
@@ -280,7 +284,7 @@ pub fn trace_blast_to_slices_with_blast(
         }
         let criterion = criterion_for_parameter(
             backend,
-            &icfg,
+            icfg,
             &source_files,
             seed.callee_id,
             &seed.param_name,

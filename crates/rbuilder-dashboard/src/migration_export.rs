@@ -1,7 +1,8 @@
 //! Export community-level migration graph for the dashboard bundle.
 
+use crate::export_context::{resolve_analysis, DashboardExportContext};
 use rbuilder_analysis::{
-    build_migration_graph, compute_migration_plan, AnalysisResults, MigrationGraphPayload,
+    build_migration_graph, compute_migration_plan, MigrationGraphPayload,
     MigrationOrderMode, MigrationPlanPayload, MigrationWeights,
 };
 use rbuilder_graph::backend::MemoryBackend;
@@ -22,14 +23,16 @@ pub fn export_migration_graph(
     backend: &MemoryBackend,
     repo_root: &Path,
     out_dir: &Path,
+    ctx: DashboardExportContext<'_>,
 ) -> Result<(MigrationExportSummary, Option<MigrationGraphPayload>), String> {
-    let analysis_path = repo_root.join(".rbuilder/analysis_results.bin");
-    if !analysis_path.is_file() {
-        write_empty_graph(out_dir)?;
-        return Ok((MigrationExportSummary::default(), None));
-    }
+    let results = match resolve_analysis(&ctx, repo_root) {
+        Ok(cow) => cow,
+        Err(_) => {
+            write_empty_graph(out_dir)?;
+            return Ok((MigrationExportSummary::default(), None));
+        }
+    };
 
-    let results = AnalysisResults::load(&analysis_path).map_err(|e| e.to_string())?;
     let Some(graph) = build_migration_graph(backend, &results) else {
         write_empty_graph(out_dir)?;
         return Ok((MigrationExportSummary::default(), None));
@@ -74,8 +77,25 @@ pub fn write_migration_plan_from_repo(
     preset: &str,
     order_mode: MigrationOrderMode,
 ) -> Result<MigrationPlanPayload, String> {
-    let analysis_path = repo_root.join(".rbuilder/analysis_results.bin");
-    let results = AnalysisResults::load(&analysis_path).map_err(|e| e.to_string())?;
+    write_migration_plan_from_repo_with_context(
+        backend,
+        repo_root,
+        output,
+        preset,
+        order_mode,
+        DashboardExportContext::default(),
+    )
+}
+
+pub fn write_migration_plan_from_repo_with_context(
+    backend: &MemoryBackend,
+    repo_root: &Path,
+    output: &Path,
+    preset: &str,
+    order_mode: MigrationOrderMode,
+    ctx: DashboardExportContext<'_>,
+) -> Result<MigrationPlanPayload, String> {
+    let results = resolve_analysis(&ctx, repo_root)?;
     let graph = build_migration_graph(backend, &results)
         .ok_or_else(|| "migration graph unavailable (run discover first)".to_string())?;
     let weights = MigrationWeights::from_preset(preset);

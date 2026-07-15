@@ -24,6 +24,8 @@ use std::collections::HashMap;
 use std::path::Path;
 use uuid::Uuid;
 
+use crate::graph_utils::PetGraphView;
+
 /// Compact node ID for dense array indexing.
 /// Internal representation - not exposed outside this module.
 type CompactId = u32;
@@ -273,6 +275,35 @@ impl AnalysisResults {
         self.centrality.as_mut().unwrap()
     }
 
+    /// Write flat centrality arrays into the columnar table without intermediate mappings.
+    pub fn fill_centrality_from_flat(
+        &mut self,
+        view: &PetGraphView,
+        pagerank: &[f64],
+        betweenness: &[f64],
+        harmonic: &[f64],
+        in_degree: &[usize],
+        out_degree: &[usize],
+    ) {
+        let compact_to_uuid = &self.compact_to_uuid;
+        let node_count = compact_to_uuid.len();
+        let table = self
+            .centrality
+            .get_or_insert_with(|| CentralityTable::with_capacity(node_count));
+        for slot in 0..node_count {
+            let uuid = compact_to_uuid[slot];
+            let Some(node_idx) = view.uuid_to_index.get(&uuid) else {
+                continue;
+            };
+            let flat_id = node_idx.index();
+            table.pagerank[slot] = pagerank[flat_id] as f32;
+            table.betweenness[slot] = betweenness[flat_id] as f32;
+            table.harmonic[slot] = harmonic[flat_id] as f32;
+            table.in_degree[slot] = in_degree[flat_id] as u32;
+            table.out_degree[slot] = out_degree[flat_id] as u32;
+        }
+    }
+
     /// Initialize blast radius table.
     pub fn init_blast_radius(&mut self) -> &mut BlastRadiusTable {
         self.blast_radius = Some(BlastRadiusTable::with_capacity(self.node_count()));
@@ -305,10 +336,26 @@ impl AnalysisResults {
 
     /// Save analysis results to a binary file.
     pub fn save(&self, path: &Path) -> Result<()> {
-        let file = std::fs::File::create(path)?;
-        bincode::serialize_into(file, self).map_err(|e| {
+        use std::time::Instant;
+
+        let serialize_start = Instant::now();
+        let payload = bincode::serialize(self).map_err(|e| {
             rbuilder_error::Error::SerdeError(format!("Failed to serialize: {}", e))
         })?;
+        let serialize_secs = serialize_start.elapsed().as_secs_f64();
+
+        let write_start = Instant::now();
+        std::fs::write(path, &payload)?;
+        let write_secs = write_start.elapsed().as_secs_f64();
+
+        tracing::info!(
+            target: "profile",
+            serialize_secs,
+            write_secs,
+            bytes = payload.len(),
+            "[profile] save_analysis breakdown"
+        );
+
         Ok(())
     }
 
@@ -369,5 +416,26 @@ mod tests {
         let metrics = results.get_centrality(uuid1).unwrap();
         assert_eq!(metrics.pagerank, 0.15);
         assert_eq!(metrics.in_degree, 5);
+    }
+
+    #[test]
+    #[ignore = "manual: profile save_analysis on example/linux artifact"]
+    fn profile_save_linux_artifact() {
+        let _ = tracing_subscriber::fmt()
+            .with_env_filter("profile=info")
+            .try_init();
+        let path = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../example/linux/.rbuilder/analysis_results.bin");
+        if !path.is_file() {
+            eprintln!(
+                "skip: {} missing (run discover on example/linux first)",
+                path.display()
+            );
+            return;
+        }
+        let results = AnalysisResults::load(&path).unwrap();
+        results
+            .save(&Path::new("/tmp/rbuilder-analysis_results-resave.bin"))
+            .unwrap();
     }
 }

@@ -17,6 +17,15 @@ use uuid::Uuid;
 /// Convergence tolerance for PageRank power iteration.
 pub const PAGERANK_TOLERANCE: f64 = 1e-6;
 
+/// Node count above which discover uses capped PageRank iterations and relaxed tolerance.
+pub const LARGE_GRAPH_PAGERANK_NODE_LIMIT: usize = 500_000;
+
+/// PageRank iteration cap for graphs above [`LARGE_GRAPH_PAGERANK_NODE_LIMIT`].
+pub const LARGE_GRAPH_PAGERANK_ITERATIONS: usize = 8;
+
+/// PageRank convergence tolerance for graphs above [`LARGE_GRAPH_PAGERANK_NODE_LIMIT`].
+pub const LARGE_GRAPH_PAGERANK_TOLERANCE: f64 = 1e-4;
+
 /// Edge types excluded from behavioral centrality (structural containment).
 pub const STRUCTURAL_EDGE_TYPES: &[EdgeType] = &[EdgeType::Contains, EdgeType::DefinedIn];
 
@@ -246,6 +255,27 @@ impl FastPageRank {
 
         (current_ranks, stats)
     }
+
+    /// Run power iteration and return only the flat rank vector (no UUID map).
+    pub fn compute_flat_only(&self, index: &FlatGraphIndex) -> Vec<f64> {
+        self.compute_flat(index).0
+    }
+}
+
+/// Adaptive PageRank iteration budget and tolerance for a graph size.
+pub fn adaptive_pagerank_config(
+    node_count: usize,
+    default_iterations: usize,
+    default_tolerance: f64,
+) -> (usize, f64) {
+    if node_count > LARGE_GRAPH_PAGERANK_NODE_LIMIT {
+        (
+            LARGE_GRAPH_PAGERANK_ITERATIONS,
+            LARGE_GRAPH_PAGERANK_TOLERANCE,
+        )
+    } else {
+        (default_iterations, default_tolerance)
+    }
 }
 
 /// Brandes betweenness restricted to an edge-type filter.
@@ -436,11 +466,78 @@ fn is_structural_container(node_type: NodeType) -> bool {
     )
 }
 
-fn flat_scores_to_uuid_map(view: &PetGraphView, flat: &[f64]) -> HashMap<Uuid, f64> {
-    view.index_to_uuid
-        .iter()
-        .filter_map(|(idx, uuid)| flat.get(idx.index()).copied().map(|s| (*uuid, s)))
-        .collect()
+/// Align a UUID-keyed score map onto petgraph node indices.
+fn align_map_to_flat(view: &PetGraphView, map: &HashMap<Uuid, f64>) -> Vec<f64> {
+    let mut flat = vec![0.0; view.directed.node_count()];
+    for (node_idx, &uuid) in &view.index_to_uuid {
+        if let Some(&score) = map.get(&uuid) {
+            flat[node_idx.index()] = score;
+        }
+    }
+    flat
+}
+
+fn flat_pagerank_score(index: &FlatGraphIndex, flat_ranks: &[f64], flat_id: usize) -> f64 {
+    if index.participates.get(flat_id).copied().unwrap_or(false) {
+        flat_ranks.get(flat_id).copied().unwrap_or(0.0)
+    } else {
+        0.0
+    }
+}
+
+/// Summary metadata from a columnar centrality pass (no UUID hash maps).
+#[derive(Debug, Clone)]
+pub struct CentralityRunSummary {
+    /// Top nodes by PageRank (up to 10).
+    pub top_pagerank: Vec<(Uuid, f64)>,
+    /// Whether any node has non-zero betweenness.
+    pub has_betweenness: bool,
+    /// Approximation metadata and timings.
+    pub approx_stats: crate::centrality_approx::CentralityApproxStats,
+}
+
+struct FlatCentralityArrays {
+    pagerank: Vec<f64>,
+    betweenness: Vec<f64>,
+    harmonic: Vec<f64>,
+    in_degree: Vec<usize>,
+    out_degree: Vec<usize>,
+}
+
+fn top_pagerank_from_table(
+    results: &crate::results::AnalysisResults,
+    limit: usize,
+) -> (Vec<(Uuid, f64)>, bool) {
+    let Some(table) = results.centrality.as_ref() else {
+        return (Vec::new(), false);
+    };
+
+    let n = results.node_count();
+    let mut has_betweenness = false;
+    let mut top: Vec<(Uuid, f64)> = Vec::with_capacity(limit);
+
+    for slot in 0..n {
+        if table.betweenness[slot] > 0.0 {
+            has_betweenness = true;
+        }
+
+        let Some(uuid) = results.get_uuid(slot as u32) else {
+            continue;
+        };
+        let pr = f64::from(table.pagerank[slot]);
+        if top.len() < limit {
+            top.push((uuid, pr));
+            if top.len() == limit {
+                top.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+            }
+        } else if pr > top[limit - 1].1 {
+            top[limit - 1] = (uuid, pr);
+            top.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+        }
+    }
+
+    top.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+    (top, has_betweenness)
 }
 
 /// Centrality analysis engine with configurable edge-type isolation.
@@ -522,8 +619,54 @@ impl CentralityAnalyzer {
         &self.allowed_types
     }
 
-    /// Calculate centrality metrics for all nodes using the configured edge filter.
-    pub fn analyze_with_view(&self, view: &PetGraphView) -> Result<CentralityReport> {
+    /// Zero-allocation columnar centrality analysis for large graphs.
+    ///
+    /// Writes flat computation buffers directly into [`crate::results::AnalysisResults`]
+    /// without intermediate UUID hash maps.
+    pub fn analyze_columnar(
+        &self,
+        view: &PetGraphView,
+        results: &mut crate::results::AnalysisResults,
+    ) -> Result<CentralityRunSummary> {
+        use std::time::Instant;
+
+        let node_count = view.directed.node_count();
+        if node_count == 0 {
+            return Ok(CentralityRunSummary {
+                top_pagerank: Vec::new(),
+                has_betweenness: false,
+                approx_stats: crate::centrality_approx::CentralityApproxStats::default(),
+            });
+        }
+
+        let (_index, arrays, mut approx_stats) = self.compute_flat_centrality(view)?;
+        let fill_start = Instant::now();
+        results.fill_centrality_from_flat(
+            view,
+            &arrays.pagerank,
+            &arrays.betweenness,
+            &arrays.harmonic,
+            &arrays.in_degree,
+            &arrays.out_degree,
+        );
+        approx_stats.columnar_fill_ms = fill_start.elapsed().as_millis() as u64;
+
+        let top_start = Instant::now();
+        let (top_pagerank, has_betweenness) = top_pagerank_from_table(results, 10);
+        approx_stats.top_k_ms = top_start.elapsed().as_millis() as u64;
+        approx_stats.log_profile();
+
+        Ok(CentralityRunSummary {
+            top_pagerank,
+            has_betweenness,
+            approx_stats,
+        })
+    }
+
+    fn compute_flat_centrality(
+        &self,
+        view: &PetGraphView,
+    ) -> Result<(FlatGraphIndex, FlatCentralityArrays, crate::centrality_approx::CentralityApproxStats)> {
         use crate::centrality_approx::{
             BetweennessMode, CentralityApproxStats, HarmonicMode, HyperBallHarmonic,
             SampledBetweenness,
@@ -532,70 +675,103 @@ impl CentralityAnalyzer {
 
         let allowed = &self.allowed_types;
         let n = view.directed.node_count();
+
+        let index_start = Instant::now();
         let index = FlatGraphIndex::from_view(view, allowed);
-
-        let pagerank_engine = FastPageRank::new(self.iterations, self.damping);
-        let (pagerank_map, _stats) = pagerank_engine.compute(view, allowed);
-        let degree_map = DegreeCentrality::compute(view, allowed);
-
         let mut approx_stats = CentralityApproxStats::default();
-        let betweenness_map = if n == 0 {
-            HashMap::new()
-        } else if n <= self.exact_limit {
+        approx_stats.flat_index_ms = index_start.elapsed().as_millis() as u64;
+
+        let degrees_start = Instant::now();
+        let (in_degree, out_degree) = index.filtered_degrees();
+        approx_stats.degrees_ms = degrees_start.elapsed().as_millis() as u64;
+
+        let (max_iters, tolerance) =
+            adaptive_pagerank_config(n, self.iterations, PAGERANK_TOLERANCE);
+        if n > LARGE_GRAPH_PAGERANK_NODE_LIMIT {
+            tracing::info!(
+                node_count = n,
+                max_iters,
+                tolerance,
+                "Graph exceeds 500K nodes: adaptive PageRank gating active"
+            );
+        }
+
+        let pagerank_start = Instant::now();
+        let pagerank_engine =
+            FastPageRank::new(max_iters, self.damping).with_tolerance(tolerance);
+        let pagerank = pagerank_engine.compute_flat_only(&index);
+        approx_stats.pagerank_ms = pagerank_start.elapsed().as_millis() as u64;
+
+        let betweenness = if n <= self.exact_limit {
             approx_stats.betweenness_mode = Some(BetweennessMode::Exact);
             let start = Instant::now();
-            let map = BetweennessCentrality::compute_unbounded(view, allowed);
+            let exact_map = BetweennessCentrality::compute_unbounded(view, allowed);
             approx_stats.betweenness_ms = start.elapsed().as_millis() as u64;
-            map
+            align_map_to_flat(view, &exact_map)
         } else {
             let pivots = self.sample_pivots.min(n);
             approx_stats.betweenness_mode = Some(BetweennessMode::Sampled { pivots });
             let start = Instant::now();
             let flat = SampledBetweenness::compute_flat(&index, pivots, self.sample_seed);
             approx_stats.betweenness_ms = start.elapsed().as_millis() as u64;
-            flat_scores_to_uuid_map(view, &flat)
+            flat
         };
 
-        let harmonic_map = if n == 0 {
-            HashMap::new()
-        } else if n <= self.exact_limit {
+        let harmonic = if n <= self.exact_limit {
             approx_stats.harmonic_mode = Some(HarmonicMode::Exact);
             let start = Instant::now();
-            let map = HarmonicCentrality::compute(view, allowed, self.exact_limit);
+            let exact_map = HarmonicCentrality::compute(view, allowed, self.exact_limit);
             approx_stats.harmonic_ms = start.elapsed().as_millis() as u64;
-            map
+            align_map_to_flat(view, &exact_map)
         } else {
-            approx_stats.harmonic_mode = Some(HarmonicMode::HyperBall {
-                rounds: self.hyperball_rounds,
-            });
+            let rounds = HyperBallHarmonic::effective_rounds(n, self.hyperball_rounds);
+            approx_stats.harmonic_mode = Some(HarmonicMode::HyperBall { rounds });
             let start = Instant::now();
             let flat = HyperBallHarmonic::compute_flat(&index, self.hyperball_rounds);
             approx_stats.harmonic_ms = start.elapsed().as_millis() as u64;
-            flat_scores_to_uuid_map(view, &flat)
+            flat
         };
 
-        let mut scores: HashMap<Uuid, CentralityScores> = HashMap::new();
-        for (uuid, (in_degree, out_degree)) in degree_map {
+        Ok((
+            index,
+            FlatCentralityArrays {
+                pagerank,
+                betweenness,
+                harmonic,
+                in_degree,
+                out_degree,
+            },
+            approx_stats,
+        ))
+    }
+
+    /// Calculate centrality metrics for all nodes using the configured edge filter.
+    pub fn analyze_with_view(&self, view: &PetGraphView) -> Result<CentralityReport> {
+        let n = view.directed.node_count();
+        if n == 0 {
+            return Ok(CentralityReport {
+                scores: HashMap::new(),
+                top_pagerank: Vec::new(),
+                top_betweenness: Vec::new(),
+                approx_stats: crate::centrality_approx::CentralityApproxStats::default(),
+            });
+        }
+
+        let (index, arrays, approx_stats) = self.compute_flat_centrality(view)?;
+
+        let mut scores: HashMap<Uuid, CentralityScores> = HashMap::with_capacity(n);
+        for (node_idx, &uuid) in &view.index_to_uuid {
+            let flat_id = node_idx.index();
             scores.insert(
                 uuid,
                 CentralityScores {
-                    pagerank: pagerank_map.get(&uuid).copied().unwrap_or(0.0),
-                    betweenness: betweenness_map.get(&uuid).copied().unwrap_or(0.0),
-                    harmonic: harmonic_map.get(&uuid).copied().unwrap_or(0.0),
-                    in_degree,
-                    out_degree,
+                    pagerank: flat_pagerank_score(&index, &arrays.pagerank, flat_id),
+                    betweenness: arrays.betweenness[flat_id],
+                    harmonic: arrays.harmonic[flat_id],
+                    in_degree: arrays.in_degree[flat_id],
+                    out_degree: arrays.out_degree[flat_id],
                 },
             );
-        }
-
-        for (uuid, pr) in pagerank_map {
-            scores
-                .entry(uuid)
-                .and_modify(|s| s.pagerank = pr)
-                .or_insert_with(|| CentralityScores {
-                    pagerank: pr,
-                    ..Default::default()
-                });
         }
 
         let mut top_pagerank: Vec<_> = scores.iter().map(|(id, s)| (*id, s.pagerank)).collect();
@@ -606,6 +782,8 @@ impl CentralityAnalyzer {
             scores.iter().map(|(id, s)| (*id, s.betweenness)).collect();
         top_betweenness.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
         top_betweenness.truncate(10);
+
+        approx_stats.log_profile();
 
         Ok(CentralityReport {
             scores,
@@ -767,6 +945,53 @@ mod tests {
         let view = PetGraphView::from_backend(&backend).unwrap();
         let (scores, _) = FastPageRank::new(20, 0.85).compute(&view, &[EdgeType::Calls]);
         assert_eq!(scores.get(&id_mod).copied().unwrap_or(0.0), 0.0);
+    }
+
+    #[test]
+    fn test_adaptive_pagerank_gating() {
+        let (iters, tol) = adaptive_pagerank_config(100, 20, PAGERANK_TOLERANCE);
+        assert_eq!(iters, 20);
+        assert_eq!(tol, PAGERANK_TOLERANCE);
+
+        let (iters, tol) = adaptive_pagerank_config(600_000, 20, PAGERANK_TOLERANCE);
+        assert_eq!(iters, LARGE_GRAPH_PAGERANK_ITERATIONS);
+        assert_eq!(tol, LARGE_GRAPH_PAGERANK_TOLERANCE);
+    }
+
+    #[test]
+    fn test_analyze_columnar_matches_report() {
+        let mut backend = MemoryBackend::new();
+        let main = Node::new(NodeType::Function, "main".to_string());
+        let helper = Node::new(NodeType::Function, "helper".to_string());
+        let id_main = main.id;
+        let id_helper = helper.id;
+        backend.insert_node(main).unwrap();
+        backend.insert_node(helper).unwrap();
+        backend
+            .insert_edge(Edge::new(id_main, id_helper, EdgeType::Calls))
+            .unwrap();
+
+        let view = PetGraphView::from_backend(&backend).unwrap();
+        let mut results = crate::results::AnalysisResults::new(vec![id_main, id_helper]);
+
+        let summary = CentralityAnalyzer::new()
+            .analyze_columnar(&view, &mut results)
+            .unwrap();
+        let report = CentralityAnalyzer::new().analyze_with_view(&view).unwrap();
+
+        assert!(summary.top_pagerank[0].1 > 0.0);
+        assert_eq!(summary.top_pagerank[0].0, report.top_pagerank[0].0);
+
+        let table = results.centrality.as_ref().unwrap();
+        let main_id = results.get_compact_id(id_main).unwrap() as usize;
+        let helper_id = results.get_compact_id(id_helper).unwrap() as usize;
+        assert!(
+            (f64::from(table.pagerank[main_id]) - report.scores[&id_main].pagerank).abs() < 1e-5
+        );
+        assert!(
+            (f64::from(table.pagerank[helper_id]) - report.scores[&id_helper].pagerank).abs()
+                < 1e-5
+        );
     }
 
     #[test]

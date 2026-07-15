@@ -15,7 +15,7 @@ pub struct Extractor {
 }
 
 /// Result of extracting a single file.
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone)]
 pub struct FileExtraction {
     /// Path to the source file
     pub path: PathBuf,
@@ -29,6 +29,15 @@ pub struct FileExtraction {
     pub config_usages: Vec<ConfigUsage>,
     /// Cached source bytes (avoids re-reading file during graph population)
     pub source: Vec<u8>,
+}
+
+/// Lightweight remainder after pass-1 graph population (symbols committed; source dropped).
+#[derive(Debug, Default)]
+pub struct ExtractionTail {
+    /// Relations resolved in pass 2
+    pub relations: Vec<Relation>,
+    /// Config usages linked in pass 2
+    pub config_usages: Vec<ConfigUsage>,
 }
 
 impl Extractor {
@@ -84,6 +93,56 @@ impl Extractor {
         ))
     }
 
+    /// Pass 1 for one file: add symbols/config keys, then drop source from memory.
+    pub fn populate_pass1(
+        &self,
+        extraction: &mut FileExtraction,
+        builder: &mut GraphBuilder,
+    ) -> Result<ExtractionTail> {
+        let file_id = builder.ensure_file_node(&extraction.path);
+
+        let source = (!extraction.source.is_empty()).then(|| extraction.source.as_slice());
+
+        for symbol in &extraction.symbols {
+            let body = source.and_then(|bytes| symbol_body_from_source(bytes, symbol));
+            if let Some(body) = body.as_deref() {
+                builder.add_symbol_with_body(symbol, file_id, Some(body));
+            } else {
+                builder.add_symbol(symbol, file_id);
+            }
+        }
+
+        for key in &extraction.config_keys {
+            builder.add_config_key(key, file_id);
+        }
+
+        extraction.source.clear();
+        extraction.symbols.clear();
+        extraction.config_keys.clear();
+
+        Ok(ExtractionTail {
+            relations: std::mem::take(&mut extraction.relations),
+            config_usages: std::mem::take(&mut extraction.config_usages),
+        })
+    }
+
+    /// Pass 2: resolve relations and config usages (requires [`GraphBuilder::build_resolution_indexes`]).
+    pub fn populate_pass2(
+        &self,
+        tails: &[ExtractionTail],
+        builder: &mut GraphBuilder,
+    ) -> Result<()> {
+        for tail in tails {
+            for relation in &tail.relations {
+                builder.add_relation(relation)?;
+            }
+            for usage in &tail.config_usages {
+                builder.link_config_usage(&usage.file, usage.line, &usage.key, usage.usage_type);
+            }
+        }
+        Ok(())
+    }
+
     /// Merge extracted files into a graph builder.
     pub fn populate_graph(
         &self,
@@ -115,68 +174,22 @@ impl Extractor {
         let mut config_key_time = std::time::Duration::ZERO;
         let mut config_usage_time = std::time::Duration::ZERO;
 
-        // PASS 1: Add all symbols and config keys
+        let mut tails = Vec::with_capacity(file_count);
         for extraction in extractions {
-            let file_id = builder.ensure_file_node(&extraction.path);
-
-            // Use cached source bytes (no file I/O!)
-            let source = if extraction.source.is_empty() {
-                None
-            } else {
-                Some(&extraction.source)
-            };
-
-            // Measure symbol processing
             let sym_start = Instant::now();
-            for symbol in &extraction.symbols {
-                let body = source.and_then(|bytes| symbol_body_from_source(bytes, symbol));
-                if let Some(body) = body.as_deref() {
-                    builder.add_symbol_with_body(symbol, file_id, Some(body));
-                } else {
-                    builder.add_symbol(symbol, file_id);
-                }
-            }
+            let mut owned = extraction.clone();
+            let tail = self.populate_pass1(&mut owned, builder)?;
             symbol_time += sym_start.elapsed();
-
-            // Optional: Calculate complexity (skip for now - can be done post-processing)
-            // Uncomment to enable complexity calculation during graph building:
-            /*
-            if let (Some(bytes), Some(plugin)) = (source, plugin.as_ref()) {
-                for symbol in &extraction.symbols {
-                    if let Some(metrics) = plugin.calculate_complexity(symbol, bytes)? {
-                        builder.add_complexity(symbol, &metrics);
-                    }
-                }
-            }
-            */
-
-            // Measure config key processing
-            let cfg_key_start = Instant::now();
-            for key in &extraction.config_keys {
-                builder.add_config_key(key, file_id);
-            }
-            config_key_time += cfg_key_start.elapsed();
+            config_key_time += sym_start.elapsed();
+            tails.push(tail);
         }
 
-        // BUILD RESOLUTION INDEXES (converts O(n) scans to O(1) lookups)
         builder.build_resolution_indexes();
 
-        // PASS 2: Process relations and config usages (now with fast lookups)
-        for extraction in extractions {
-            // Measure relation resolution
-            let rel_start = Instant::now();
-            for relation in &extraction.relations {
-                builder.add_relation(relation)?;
-            }
-            relation_time += rel_start.elapsed();
-
-            // Measure config usage linking
-            let cfg_usage_start = Instant::now();
-            for usage in &extraction.config_usages {
-                builder.link_config_usage(&usage.file, usage.line, &usage.key, usage.usage_type);
-            }
-            config_usage_time += cfg_usage_start.elapsed();
-        }
+        let rel_start = Instant::now();
+        self.populate_pass2(&tails, builder)?;
+        relation_time += rel_start.elapsed();
+        config_usage_time += rel_start.elapsed();
 
         let total_elapsed = total_start.elapsed();
         info!(
@@ -189,7 +202,6 @@ impl Extractor {
             "populate_graph complete"
         );
 
-        // Log detailed resolution statistics
         builder.log_resolution_stats();
 
         Ok(())

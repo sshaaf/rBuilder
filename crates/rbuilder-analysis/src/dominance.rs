@@ -37,17 +37,17 @@ impl DominatorTree {
                 if block_id == cfg.entry {
                     continue;
                 }
-                let preds: Vec<BlockId> = cfg
+                let mut preds = cfg
                     .predecessors(block_id)
-                    .into_iter()
-                    .filter(|p| reachable.contains(p))
-                    .collect();
-                if preds.is_empty() {
+                    .iter()
+                    .copied()
+                    .filter(|p| reachable.contains(p));
+                let Some(first_pred) = preds.next() else {
                     continue;
-                }
-                let mut new_idom = preds[0];
-                for pred in &preds[1..] {
-                    new_idom = intersect(&idom, &block_order, new_idom, *pred);
+                };
+                let mut new_idom = first_pred;
+                for pred in preds {
+                    new_idom = intersect(&idom, &block_order, new_idom, pred);
                 }
                 if idom.get(&block_id) != Some(&new_idom) {
                     idom.insert(block_id, new_idom);
@@ -145,7 +145,7 @@ fn compute_block_order(
         }
         order.insert(block, idx);
         idx += 1;
-        for succ in cfg.successors(block) {
+        for &succ in cfg.successors(block) {
             if reachable.contains(&succ) && !visited.contains(&succ) {
                 stack.push(succ);
             }
@@ -186,16 +186,16 @@ fn compute_dominance_frontiers(
         reachable.iter().map(|id| (*id, HashSet::new())).collect();
 
     for block in reachable {
-        let preds: Vec<BlockId> = cfg
-            .predecessors(*block)
-            .into_iter()
-            .filter(|p| reachable.contains(p))
-            .collect();
-        if preds.len() < 2 {
+        let preds = cfg.predecessors(*block);
+        let reachable_pred_count = preds.iter().filter(|p| reachable.contains(p)).count();
+        if reachable_pred_count < 2 {
             continue;
         }
         let block_idom = idom.get(block).copied().unwrap_or(cfg.entry);
-        for pred in preds {
+        for &pred in preds {
+            if !reachable.contains(&pred) {
+                continue;
+            }
             let mut runner = pred;
             while runner != block_idom {
                 frontiers.entry(runner).or_default().insert(*block);

@@ -56,6 +56,8 @@ pub fn fixture_discover_response() -> DiscoverJsonResponse {
             nodes_created: 231_410,
             edges_created: 562_067,
             duration: std::time::Duration::from_millis(18_200),
+            extract_duration: std::time::Duration::from_millis(12_000),
+            graph_build_duration: std::time::Duration::from_millis(6_200),
         },
         18_200,
     )

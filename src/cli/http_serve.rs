@@ -17,7 +17,7 @@ use serde::Deserialize;
 use serde_json::Value;
 use std::net::SocketAddr;
 use std::path::PathBuf;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, RwLock};
 use tower_http::services::ServeDir;
 
 /// Options for the unified HTTP `serve` command.
@@ -31,7 +31,7 @@ pub struct HttpServeArgs {
 }
 
 struct AppState {
-    graph: Mutex<CodeGraph>,
+    graph: RwLock<CodeGraph>,
     registry: QueryMacroRegistry,
 }
 
@@ -72,7 +72,7 @@ pub fn serve(ctx: &CliContext, args: HttpServeArgs) -> Result<()> {
             .load_graph()
             .context("load graph for query API (run `rbuilder discover` first)")?;
         Some(Arc::new(AppState {
-            graph: Mutex::new(graph),
+            graph: RwLock::new(graph),
             registry: QueryMacroRegistry::with_defaults(),
         }))
     };
@@ -153,7 +153,7 @@ async fn api_query(
 ) -> Result<Json<Value>, (StatusCode, String)> {
     let graph = state
         .graph
-        .lock()
+        .read()
         .map_err(|_| (StatusCode::INTERNAL_SERVER_ERROR, "graph lock poisoned".into()))?;
     let backend = graph.backend();
 

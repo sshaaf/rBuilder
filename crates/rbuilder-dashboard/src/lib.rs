@@ -7,17 +7,20 @@ mod cfg_export;
 mod cfg_record_pack;
 mod communities;
 mod dataflow_export;
+mod export_context;
 mod export_util;
 mod function_meta;
 mod function_metrics_export;
 mod manifest;
 mod metagraph;
 mod migration_export;
+mod profile;
 mod slice_export;
 mod source_catalog;
 mod taint_export;
 
 pub use bundle::{default_dashboard_path, dist_embedded, DASHBOARD_DIR_NAME};
+pub use export_context::DashboardExportContext;
 pub use communities::{CommunitiesPayload, COMMUNITIES_FILE, COMMUNITIES_SCHEMA_VERSION};
 pub use dataflow_export::{DataflowExportSummary, DATAFLOW_INDEX_FILE};
 pub use manifest::{
@@ -28,13 +31,14 @@ pub use metagraph::{
 };
 pub use migration_export::{
     export_default_migration_plan, export_migration_graph, write_migration_plan,
-    write_migration_plan_from_repo, MigrationExportSummary, MIGRATION_GRAPH_FILE,
-    MIGRATION_PLAN_FILE,
+    write_migration_plan_from_repo, write_migration_plan_from_repo_with_context,
+    MigrationExportSummary, MIGRATION_GRAPH_FILE, MIGRATION_PLAN_FILE,
 };
 pub use slice_export::{SliceExportSummary, SLICE_INDEX_FILE};
 pub use taint_export::{TaintExportSummary, TAINT_INDEX_FILE};
 
-use blast_export::export_blast_bundle;
+use profile::profile_stage;
+use blast_export::{export_blast_bundle, load_columnar_uuid_indices};
 use function_metrics_export::export_function_metrics;
 use bundle::{extract_static_assets, inject_manifest_bootstrap};
 use dataflow_export::export_dataflow_index;
@@ -42,6 +46,7 @@ use manifest::DashboardManifest as Manifest;
 use metagraph::write_metagraph;
 use rbuilder_graph::backend::MemoryBackend;
 use rbuilder_graph::schema::{EdgeType, NodeType};
+use std::collections::HashMap;
 use std::fs;
 use std::path::Path;
 use taint_export::export_taint_bundle;
@@ -53,8 +58,22 @@ pub fn export_dashboard_bundle(
     repo_root: &Path,
     snapshot_path: &Path,
 ) -> Result<(), String> {
-    export_dashboard_bundle_inner(backend, repo_root, snapshot_path, false)?;
-    Ok(())
+    export_dashboard_bundle_with_context(
+        backend,
+        repo_root,
+        snapshot_path,
+        DashboardExportContext::default(),
+    )
+}
+
+/// Write dashboard bundle using in-memory analysis from discover (avoids reloading results).
+pub fn export_dashboard_bundle_with_context(
+    backend: &MemoryBackend,
+    repo_root: &Path,
+    snapshot_path: &Path,
+    ctx: DashboardExportContext<'_>,
+) -> Result<(), String> {
+    export_dashboard_bundle_inner(backend, repo_root, snapshot_path, false, ctx)
 }
 
 /// Export dashboard only when semantic content fingerprint is unchanged.
@@ -62,6 +81,21 @@ pub fn export_dashboard_bundle_if_changed(
     backend: &MemoryBackend,
     repo_root: &Path,
     snapshot_path: &Path,
+) -> Result<bool, String> {
+    export_dashboard_bundle_if_changed_with_context(
+        backend,
+        repo_root,
+        snapshot_path,
+        DashboardExportContext::default(),
+    )
+}
+
+/// Export dashboard when fingerprint changed, with optional in-memory analysis.
+pub fn export_dashboard_bundle_if_changed_with_context(
+    backend: &MemoryBackend,
+    repo_root: &Path,
+    snapshot_path: &Path,
+    ctx: DashboardExportContext<'_>,
 ) -> Result<bool, String> {
     let out_dir = bundle::default_dashboard_path(repo_root);
     let manifest_path = out_dir.join("manifest.json");
@@ -75,8 +109,7 @@ pub fn export_dashboard_bundle_if_changed(
             }
         }
     }
-    let _ = snapshot_path;
-    export_dashboard_bundle_inner(backend, repo_root, snapshot_path, true)?;
+    export_dashboard_bundle_inner(backend, repo_root, snapshot_path, true, ctx)?;
     Ok(true)
 }
 
@@ -85,44 +118,86 @@ fn export_dashboard_bundle_inner(
     repo_root: &Path,
     snapshot_path: &Path,
     replace_out_dir: bool,
+    ctx: DashboardExportContext<'_>,
 ) -> Result<(), String> {
     let out_dir = bundle::default_dashboard_path(repo_root);
     if replace_out_dir && out_dir.exists() {
-        let trash = out_dir.with_file_name(format!(
-            "{}.trash.{}",
-            out_dir
-                .file_name()
-                .and_then(|s| s.to_str())
-                .unwrap_or("dashboard"),
-            std::process::id()
-        ));
-        if trash.exists() {
+        profile_stage("replace_out_dir", || {
+            let trash = out_dir.with_file_name(format!(
+                "{}.trash.{}",
+                out_dir
+                    .file_name()
+                    .and_then(|s| s.to_str())
+                    .unwrap_or("dashboard"),
+                std::process::id()
+            ));
+            if trash.exists() {
+                let _ = fs::remove_dir_all(&trash);
+            }
+            fs::rename(&out_dir, &trash).map_err(|e| e.to_string())?;
             let _ = fs::remove_dir_all(&trash);
-        }
-        fs::rename(&out_dir, &trash).map_err(|e| e.to_string())?;
-        let _ = fs::remove_dir_all(&trash);
+            Ok::<(), String>(())
+        })?;
     }
     fs::create_dir_all(&out_dir).map_err(|e| e.to_string())?;
 
-    extract_static_assets(&out_dir)?;
+    profile_stage("extract_static_assets", || {
+        extract_static_assets(&out_dir).map_err(|e| e.to_string())
+    })?;
 
-    let (node_count, edge_count, digest) = payload_stats(snapshot_path, backend)?;
-    let export_fingerprint = compute_export_fingerprint(backend, repo_root);
-    let metrics = collect_metrics(backend);
+    let (node_count, edge_count, digest) =
+        profile_stage("payload_stats", || payload_stats(snapshot_path, backend))?;
+    let export_fingerprint =
+        profile_stage("export_fingerprint", || compute_export_fingerprint(backend, repo_root));
+    let metrics = profile_stage("collect_metrics", || collect_metrics(backend));
 
-    let export = write_metagraph(backend, snapshot_path, &out_dir, node_count)?;
-    let streamed =
-        analysis_stream_export::export_cfg_slice_from_storage(backend, repo_root, &out_dir)?;
+    let uuid_to_index = profile_stage("load_uuid_index", || {
+        if snapshot_path.is_file() {
+            load_columnar_uuid_indices(snapshot_path)
+        } else {
+            Ok(HashMap::new())
+        }
+    })?;
+
+    let export = profile_stage("write_metagraph", || {
+        write_metagraph(
+            backend,
+            snapshot_path,
+            &out_dir,
+            node_count,
+            ctx.analysis,
+            &uuid_to_index,
+        )
+    })?;
+    let streamed = profile_stage("export_cfg_slice", || {
+        analysis_stream_export::export_cfg_slice_from_storage(backend, repo_root, &out_dir)
+    })?;
     let cfg_summary = streamed.cfg;
     let slice_summary = streamed.slice;
-    let dataflow_summary = export_dataflow_index(&slice_summary, &out_dir)?;
-    let taint_summary = export_taint_bundle(repo_root, &out_dir)?;
-    let blast_summary = export_blast_bundle(repo_root, &out_dir)?;
-    export_function_metrics(repo_root, snapshot_path, &out_dir)?;
-    let (migration_summary, migration_graph) =
-        migration_export::export_migration_graph(backend, repo_root, &out_dir)?;
+    let dataflow_summary = profile_stage("export_dataflow", || {
+        export_dataflow_index(&slice_summary, &out_dir)
+    })?;
+    let taint_summary =
+        profile_stage("export_taint", || export_taint_bundle(repo_root, &out_dir))?;
+    let blast_summary = profile_stage("export_blast", || {
+        export_blast_bundle(repo_root, snapshot_path, &out_dir, ctx, &uuid_to_index)
+    })?;
+    profile_stage("export_function_metrics", || {
+        export_function_metrics(
+            snapshot_path,
+            &out_dir,
+            node_count,
+            ctx,
+            &uuid_to_index,
+        )
+    })?;
+    let (migration_summary, migration_graph) = profile_stage("export_migration", || {
+        migration_export::export_migration_graph(backend, repo_root, &out_dir, ctx)
+    })?;
     if let Some(ref graph) = migration_graph {
-        migration_export::export_default_migration_plan(graph, &out_dir)?;
+        profile_stage("export_migration_plan", || {
+            migration_export::export_default_migration_plan(graph, &out_dir)
+        })?;
     }
     let manifest = Manifest::with_phases(
         node_count,
@@ -138,11 +213,25 @@ fn export_dashboard_bundle_inner(
         &taint_summary,
         &migration_summary,
     );
-    let manifest_json = serde_json::to_string_pretty(&manifest).map_err(|e| e.to_string())?;
-    fs::write(out_dir.join("manifest.json"), &manifest_json).map_err(|e| e.to_string())?;
-    inject_manifest_bootstrap(&out_dir, &manifest_json)?;
+    let (manifest_json, manifest_serialize_secs) = profile_stage("manifest_serialize", || {
+        let start = std::time::Instant::now();
+        let json = serde_json::to_string_pretty(&manifest).map_err(|e| e.to_string())?;
+        Ok::<_, String>((json, start.elapsed().as_secs_f64()))
+    })?;
+    tracing::info!(
+        target: "profile",
+        serialize_secs = manifest_serialize_secs,
+        json_bytes = manifest_json.len(),
+        "[profile] save_dashboard json serialize"
+    );
+    profile_stage("manifest_write", || {
+        fs::write(out_dir.join("manifest.json"), &manifest_json).map_err(|e| e.to_string())
+    })?;
+    profile_stage("inject_manifest_bootstrap", || {
+        inject_manifest_bootstrap(&out_dir, &manifest_json).map_err(|e| e.to_string())
+    })?;
 
-    copy_graph_payload(snapshot_path, &out_dir)?;
+    profile_stage("copy_graph_payload", || copy_graph_payload(snapshot_path, &out_dir))?;
 
     Ok(())
 }

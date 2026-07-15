@@ -3,6 +3,7 @@
 use super::args::OutputFormat;
 use super::context::CliContext;
 use super::discover_output::build_discover_response;
+use super::stage_profile::{secs, DiscoverStageReport};
 use anyhow::Result;
 use rbuilder_graph::backend::GraphBackend;
 use std::path::Path;
@@ -28,6 +29,9 @@ pub(crate) fn run_full_analysis(
     let json_output = ctx.format == OutputFormat::Json;
     let human_output = !json_output;
     let run_start = Instant::now();
+    let mut profile = DiscoverStageReport::default();
+    profile.cfg_enabled = cfg || all;
+    profile.security_enabled = security || all;
     use crate::analysis::graph_utils::PetGraphView;
     use crate::analysis::{
         CentralityAnalyzer, CommunityDetector, ComplexityAnalyzer, DependencyAnalyzer,
@@ -36,11 +40,13 @@ pub(crate) fn run_full_analysis(
     use crate::discovery::{DiscoveryConfig, FileDiscoverer};
     use crate::incremental::FileTracker;
     use crate::languages::registry::LanguageRegistry;
-    use crate::pipeline::{PipelineConfig, ProcessingPipeline};
+    use crate::pipeline::{PipelineConfig, PipelineStats, ProcessingPipeline};
     use rayon::prelude::*;
+    use rbuilder_graph::code_graph::CodeGraph;
     use rbuilder_graph::PreparedGraphSnapshot;
     use std::path::Path;
     use std::sync::Arc;
+    use std::time::Duration;
 
     let root = Path::new(path);
     let mut discovery = DiscoveryConfig::default();
@@ -100,18 +106,56 @@ pub(crate) fn run_full_analysis(
     let discoverer = FileDiscoverer::with_config(Arc::clone(&registry), discovery_config.clone());
     let files = discoverer.discover(root)?;
 
-    // Index the repository
-    let (graph, index_stats) = {
-        let _span = if verbose {
-            Some(info_span!("indexing").entered())
-        } else {
-            None
+    let snapshot_path = rbuilder_graph::snapshot::MmappedGraphSnapshot::default_path(root);
+    let mut file_tracker = FileTracker::load(root).unwrap_or_else(|_| FileTracker::new(root));
+    let file_changes = file_tracker.detect_changes(&files)?;
+
+    // Index the repository (or hydrate from snapshot when sources are unchanged)
+    let index_start = Instant::now();
+    let graph_from_snapshot =
+        file_changes.is_empty() && snapshot_path.is_file();
+    let (graph, index_stats) = if graph_from_snapshot {
+        let load_start = Instant::now();
+        let graph = CodeGraph::open_snapshot(&snapshot_path)?;
+        let load_elapsed = load_start.elapsed();
+        if verbose {
+            debug!(
+                path = %snapshot_path.display(),
+                nodes = graph.node_count(),
+                edges = graph.edge_count(),
+                "No file changes — loaded graph from snapshot"
+            );
+        }
+        let stats = PipelineStats {
+            files_discovered: files.len(),
+            files_processed: files.len(),
+            files_failed: 0,
+            nodes_created: graph.node_count(),
+            edges_created: graph.edge_count(),
+            duration: load_elapsed,
+            extract_duration: Duration::default(),
+            graph_build_duration: load_elapsed,
         };
-        pipeline.process_repository(root)?
+        (graph, stats)
+    } else {
+        let (graph, stats) = pipeline.process_repository(root)?;
+        (graph, stats)
     };
+    profile.index_pipeline.secs = secs(index_start.elapsed());
+    profile.index_extract.secs = secs(index_stats.extract_duration);
+    profile.index_graph_build.secs = secs(index_stats.graph_build_duration);
+    profile.nodes = index_stats.nodes_created;
 
     if human_output {
-        if verbose {
+        if graph_from_snapshot {
+            info!(
+                "[✓] Loaded {} files from snapshot -> {} nodes, {} edges ({:.1}s)",
+                index_stats.files_discovered,
+                index_stats.nodes_created,
+                index_stats.edges_created,
+                index_stats.duration.as_secs_f64()
+            );
+        } else if verbose {
             info!(
                 files = index_stats.files_processed,
                 nodes = index_stats.nodes_created,
@@ -145,7 +189,13 @@ pub(crate) fn run_full_analysis(
 
     // One prepared snapshot for topology views, digest, and mmap write (Sprint B dedup).
     let prepared = PreparedGraphSnapshot::from_backend(graph.backend())?;
-    let graph_digest = prepared.content_digest.clone();
+    let graph_digest = if graph_from_snapshot {
+        rbuilder_graph::snapshot::MmappedGraphSnapshot::open(&snapshot_path)?
+            .content_digest()?
+            .to_string()
+    } else {
+        prepared.content_digest.clone()
+    };
 
     // Initialize columnar analysis results
     use crate::analysis::AnalysisResults;
@@ -154,6 +204,7 @@ pub(crate) fn run_full_analysis(
     let mut analysis_results = AnalysisResults::new(node_ids);
 
     // Build PetGraphView ONCE from prepared snapshot — reused for community, centrality, blast radius
+    let topo_start = Instant::now();
     let petgraph_view = {
         let _span = if verbose {
             Some(info_span!("topology").entered())
@@ -168,8 +219,10 @@ pub(crate) fn run_full_analysis(
         );
         view
     };
+    profile.topology.secs = secs(topo_start.elapsed());
 
     // Community detection - write to columnar table
+    let community_start = Instant::now();
     let community_result = CommunityDetector::new().detect_with_view(&petgraph_view)?;
     {
         // Collect data with compact IDs first
@@ -191,6 +244,7 @@ pub(crate) fn run_full_analysis(
             table.assignments[compact_id as usize] = community_id;
         }
     }
+    profile.community.secs = secs(community_start.elapsed());
 
     if human_output {
         if verbose {
@@ -213,6 +267,7 @@ pub(crate) fn run_full_analysis(
     debug!("{}", mem_monitor.report());
 
     // Complexity analysis - write to columnar table
+    let complexity_start = Instant::now();
     let complexity_report = ComplexityAnalyzer::analyze(graph.backend())?;
     {
         // Collect data with compact IDs first
@@ -235,6 +290,8 @@ pub(crate) fn run_full_analysis(
             table.cognitive[compact_id as usize] = cognitive;
         }
     }
+
+    profile.complexity.secs = secs(complexity_start.elapsed());
 
     if verbose {
         debug!("✓ Complexity analysis:");
@@ -283,49 +340,29 @@ pub(crate) fn run_full_analysis(
     debug!("{}", mem_monitor.report());
 
     // Centrality analysis — exact below 500 nodes; sampled betweenness + HyperBall harmonic above.
-    let centrality_report = CentralityAnalyzer::new().analyze_with_view(&petgraph_view)?;
-    {
-        // Collect data with compact IDs first
-        let centrality_data: Vec<_> = centrality_report
-            .scores
-            .iter()
-            .filter_map(|(node_id, scores)| {
-                analysis_results
-                    .get_compact_id(*node_id)
-                    .map(|compact_id| (compact_id, scores))
-            })
-            .collect();
+    let centrality_start = Instant::now();
+    let centrality_summary =
+        CentralityAnalyzer::new().analyze_columnar(&petgraph_view, &mut analysis_results)?;
+    profile.centrality.secs = secs(centrality_start.elapsed());
 
-        // Now update table
-        let table = analysis_results.init_centrality();
-        for (compact_id, scores) in centrality_data {
-            let idx = compact_id as usize;
-            table.pagerank[idx] = scores.pagerank as f32;
-            table.betweenness[idx] = scores.betweenness as f32;
-            table.harmonic[idx] = scores.harmonic as f32;
-            table.in_degree[idx] = scores.in_degree as u32;
-            table.out_degree[idx] = scores.out_degree as u32;
-        }
-    }
-
-    // Check if we have betweenness data
-    let has_betweenness = centrality_report
-        .scores
-        .values()
-        .any(|s| s.betweenness > 0.0);
+    let has_betweenness = centrality_summary.has_betweenness;
 
     if human_output {
-        if let Some((top_id, top_score)) = centrality_report.top_pagerank.first() {
+        if let Some((top_id, top_score)) = centrality_summary.top_pagerank.first() {
             if let Ok(Some(node)) = graph.backend().get_node(*top_id) {
                 let short_name = node.name.split('/').next_back().unwrap_or(&node.name);
+                let (in_degree, out_degree) = analysis_results
+                    .get_centrality(*top_id)
+                    .map(|m| (m.in_degree, m.out_degree))
+                    .unwrap_or((0, 0));
 
                 if verbose {
                     info!(
                         hotspot = short_name,
                         pagerank = %format!("{:.4}", top_score),
                         betweenness_enabled = has_betweenness,
-                        in_degree = centrality_report.scores.get(top_id).map(|s| s.in_degree).unwrap_or(0),
-                        out_degree = centrality_report.scores.get(top_id).map(|s| s.out_degree).unwrap_or(0),
+                        in_degree,
+                        out_degree,
                         "[*] Top hotspot: {} (PageRank: {:.4})",
                         short_name,
                         top_score
@@ -343,8 +380,10 @@ pub(crate) fn run_full_analysis(
     debug!("{}", mem_monitor.report());
 
     // Dependency analysis
+    let dependency_start = Instant::now();
     let cycles =
         DependencyAnalyzer::find_circular_dependencies_with_view(&petgraph_view, graph.backend())?;
+    profile.dependency.secs = secs(dependency_start.elapsed());
     if !cycles.is_empty() && human_output {
         if verbose {
             warn!(
@@ -360,8 +399,11 @@ pub(crate) fn run_full_analysis(
     }
 
     // Security analysis (opt-in with --security or --all)
-    if (security || all) && human_output {
-        println!("\n✓ Security analysis:");
+    if security || all {
+        let security_start = Instant::now();
+        if human_output {
+            println!("\n✓ Security analysis:");
+        }
         let detector = SecretDetector::new();
         let mut total_secrets = 0usize;
 
@@ -384,7 +426,10 @@ pub(crate) fn run_full_analysis(
                 }
             }
         }
-        println!("  Potential secrets found: {total_secrets}");
+        if human_output {
+            println!("  Potential secrets found: {total_secrets}");
+        }
+        profile.security.secs = secs(security_start.elapsed());
     }
 
     // Get backend and functions for later use (blast radius, etc.)
@@ -393,22 +438,41 @@ pub(crate) fn run_full_analysis(
     let functions = backend.collect_nodes_by_type(NodeType::Function)?;
     let output_dir = root.join(".rbuilder/analysis");
 
+    profile.functions = functions.len();
+
     // CFG/PDG/Dominance analysis (opt-in with --cfg or --all)
     if cfg || all {
+        let cfg_start = Instant::now();
         if human_output {
             println!("\n✓ Control flow analysis:");
         }
         use crate::analysis::{cfg_language_list, AnalysisStorage, CfgPdgArchive};
-        use super::discover_cfg::run_cfg_analysis_batch;
+        use super::discover_cfg::{run_cfg_analysis_batch, CfgAnalysisOptions};
 
         let storage = AnalysisStorage::new(&output_dir);
         storage.ensure_dir()?;
 
-        let batch = run_cfg_analysis_batch(&functions, &storage, root);
+        let batch = run_cfg_analysis_batch(
+            &functions,
+            &storage,
+            root,
+            CfgAnalysisOptions {
+                verbose,
+                thread_count: None,
+            },
+        );
         let success_count = batch.success_count;
         let error_count = batch.error_count;
+        profile.cfg_total.secs = secs(cfg_start.elapsed());
+        if let Some(sp) = batch.stage_profile {
+            profile.cfg_build.secs = sp.build_cfg_secs;
+            profile.cfg_dominator.secs = sp.dominator_secs;
+            profile.cfg_pdg.secs = sp.pdg_secs;
+            profile.cfg_taint.secs = sp.taint_secs;
+        }
 
         let archive_path = CfgPdgArchive::default_path(root);
+        let archive_start = Instant::now();
         if batch.archive_unchanged {
             if verbose {
                 debug!(
@@ -443,6 +507,7 @@ pub(crate) fn run_full_analysis(
                 }
             }
         }
+        profile.cfg_archive.secs = secs(archive_start.elapsed());
 
         if human_output {
             if success_count > 0 {
@@ -514,15 +579,28 @@ pub(crate) fn run_full_analysis(
 
     // Analyze all functions in parallel (O(1) lookup per function, read-only engine)
     let query_start = Instant::now();
-    let blast_results: Vec<(uuid::Uuid, crate::analysis::BlastRadiusResult)> = functions
-        .par_iter()
-        .filter_map(|func_node| {
-            engine
-                .analyze(func_node.id)
-                .ok()
-                .map(|result| (func_node.id, result))
-        })
-        .collect();
+    let skip_bulk_blast = engine.uses_on_demand_reachability();
+    if skip_bulk_blast {
+        if verbose {
+            debug!(
+                functions = functions.len(),
+                "Flat graph — skipping bulk blast-radius scan (use `blast-radius` for on-demand queries)"
+            );
+        }
+    }
+    let blast_results: Vec<(uuid::Uuid, crate::analysis::BlastRadiusResult)> = if skip_bulk_blast {
+        Vec::new()
+    } else {
+        functions
+            .par_iter()
+            .filter_map(|func_node| {
+                engine
+                    .analyze(func_node.id)
+                    .ok()
+                    .map(|result| (func_node.id, result))
+            })
+            .collect()
+    };
 
     let mut high_impact_count = 0;
     let mut max_impact_score = 0.0f64;
@@ -547,69 +625,101 @@ pub(crate) fn run_full_analysis(
     let query_time = query_start.elapsed();
     let blast_updates = blast_results;
 
+    profile.blast_build.secs = secs(build_time);
+    profile.blast_query.secs = secs(query_time);
+
     // Persist SCC engine snapshot for instant blast-radius cache misses
+    let blast_snap_start = Instant::now();
     {
         use crate::analysis::BlastEngineSnapshot;
-        let blast_snap = engine.to_engine_snapshot(graph_digest.clone());
         let blast_path = BlastEngineSnapshot::default_path(root);
-        if let Err(err) = blast_snap.write_to_path(&blast_path) {
-            warn!(error = %err, "Failed to save blast engine snapshot");
-        } else if verbose {
-            debug!(path = %blast_path.display(), "Blast engine snapshot saved");
+        if BlastEngineSnapshot::digest_matches(&blast_path, &graph_digest)? {
+            if verbose {
+                debug!(
+                    path = %blast_path.display(),
+                    "Blast engine snapshot unchanged — skipping rewrite"
+                );
+            }
+        } else {
+            let blast_snap = engine.to_engine_snapshot(graph_digest.clone());
+            if let Err(err) = blast_snap.write_to_path(&blast_path) {
+                warn!(error = %err, "Failed to save blast engine snapshot");
+            } else if verbose {
+                debug!(path = %blast_path.display(), "Blast engine snapshot saved");
+            }
         }
     }
+    profile.blast_snapshot.secs = secs(blast_snap_start.elapsed());
 
     // Serialize minimized macro-call index for instant blast-radius lookups
+    let macro_start = Instant::now();
     {
         use crate::analysis::MacroCallIndex;
-        let macro_index = MacroCallIndex::from_results(
-            db_path,
-            backend,
-            &blast_updates,
-            Some(graph_digest.clone()),
-        )?;
-        let macro_path = root.join(".rbuilder/macro_call_index.bin");
-        if let Err(err) = macro_index.save(&macro_path) {
-            warn!(error = %err, "Failed to save macro_call_index cache");
-        } else if verbose {
-            debug!(
-                path = %macro_path.display(),
-                entries = macro_index.entries.len(),
-                "Macro call index saved"
-            );
-        }
-
         use crate::analysis::MacroCallLookupDb;
+        let macro_path = root.join(".rbuilder/macro_call_index.bin");
         let lookup_db_path = MacroCallLookupDb::default_path(root);
-        let lookup_rows = macro_index.unique_lookup_rows();
-        let candidate_rows = macro_index.all_candidate_rows();
-        if let Err(err) = MacroCallLookupDb::replace_all(&lookup_db_path, &lookup_rows) {
-            warn!(error = %err, "Failed to save macro_call_index.db");
-        } else if let Err(err) =
-            MacroCallLookupDb::replace_candidates(&lookup_db_path, &candidate_rows)
-        {
-            warn!(error = %err, "Failed to save macro_call_candidates table");
-        } else if let Err(err) = MacroCallLookupDb::write_meta_with_digest(
+
+        if MacroCallIndex::caches_are_current(
+            &macro_path,
             &lookup_db_path,
-            if write_json_graph {
-                std::fs::metadata(db_path).map(|m| m.len()).unwrap_or(0)
-            } else {
-                0
-            },
-            backend.node_count(),
-            backend.edge_count(),
-            Some(graph_digest.as_str()),
-        ) {
-            warn!(error = %err, "Failed to write macro_call_index.db metadata");
-        } else if verbose {
-            debug!(
-                path = %lookup_db_path.display(),
-                rows = lookup_rows.len(),
-                candidates = candidate_rows.len(),
-                "Macro call lookup DB saved"
-            );
+            root,
+            backend,
+            &graph_digest,
+        )? {
+            if verbose {
+                debug!(
+                    path = %macro_path.display(),
+                    "Macro call index unchanged — skipping rebuild"
+                );
+            }
+        } else {
+            let macro_index = MacroCallIndex::from_results(
+                db_path,
+                backend,
+                &blast_updates,
+                Some(graph_digest.clone()),
+            )?;
+            if let Err(err) = macro_index.save(&macro_path) {
+                warn!(error = %err, "Failed to save macro_call_index cache");
+            } else if verbose {
+                debug!(
+                    path = %macro_path.display(),
+                    entries = macro_index.entries.len(),
+                    "Macro call index saved"
+                );
+            }
+
+            let lookup_rows = macro_index.unique_lookup_rows();
+            let candidate_rows = macro_index.all_candidate_rows();
+            if let Err(err) = MacroCallLookupDb::replace_all(&lookup_db_path, &lookup_rows) {
+                warn!(error = %err, "Failed to save macro_call_index.db");
+            } else if let Err(err) =
+                MacroCallLookupDb::replace_candidates(&lookup_db_path, &candidate_rows)
+            {
+                warn!(error = %err, "Failed to save macro_call_candidates table");
+            } else if let Err(err) = MacroCallLookupDb::write_meta_with_digest(
+                &lookup_db_path,
+                if write_json_graph {
+                    std::fs::metadata(db_path).map(|m| m.len()).unwrap_or(0)
+                } else {
+                    0
+                },
+                backend.node_count(),
+                backend.edge_count(),
+                Some(graph_digest.as_str()),
+            ) {
+                warn!(error = %err, "Failed to write macro_call_index.db metadata");
+            } else if verbose {
+                debug!(
+                    path = %lookup_db_path.display(),
+                    rows = lookup_rows.len(),
+                    candidates = candidate_rows.len(),
+                    "Macro call lookup DB saved"
+                );
+            }
         }
     }
+    profile.macro_index.secs = secs(macro_start.elapsed());
 
     // Write blast radius results to columnar table
     {
@@ -678,21 +788,34 @@ pub(crate) fn run_full_analysis(
     }
 
     // Save analysis results (columnar format - separate from graph!)
+    let save_analysis_start = Instant::now();
     let analysis_path = root.join(".rbuilder/analysis_results.bin");
     std::fs::create_dir_all(root.join(".rbuilder"))?;
     analysis_results.save(&analysis_path)?;
+    profile.save_analysis.secs = secs(save_analysis_start.elapsed());
 
     // Save graph topology (no analysis properties!)
-    let mut tracker = FileTracker::new(root);
-    tracker.index_files(&files, &graph)?;
-    tracker.save()?;
+    let save_tracker_start = Instant::now();
+    file_tracker.index_files(&files, &graph)?;
+    file_tracker.save()?;
+    profile.save_tracker.secs = secs(save_tracker_start.elapsed());
 
     std::fs::create_dir_all(root.join(".rbuilder"))?;
-    let snapshot_path = rbuilder_graph::snapshot::MmappedGraphSnapshot::default_path(root);
-    prepared.write_to_path(&snapshot_path)?;
-    if verbose {
-        debug!(path = %snapshot_path.display(), "Graph binary snapshot saved");
+    let save_snapshot_start = Instant::now();
+    if graph_from_snapshot {
+        if verbose {
+            debug!(
+                path = %snapshot_path.display(),
+                "Graph snapshot unchanged — skipping rewrite"
+            );
+        }
+    } else {
+        prepared.write_to_path(&snapshot_path)?;
+        if verbose {
+            debug!(path = %snapshot_path.display(), "Graph binary snapshot saved");
+        }
     }
+    profile.save_snapshot.secs = secs(save_snapshot_start.elapsed());
 
     if write_json_graph {
         let json = graph.export_json()?;
@@ -707,8 +830,14 @@ pub(crate) fn run_full_analysis(
     }
 
     // Export static dashboard bundle (Phase 0+1 — see docs/dashboard-design.md)
+    let save_dashboard_start = Instant::now();
     let dashboard_dir = root.join(".rbuilder/dashboard");
-    match rbuilder_dashboard::export_dashboard_bundle_if_changed(graph.backend(), root, &snapshot_path) {
+    match rbuilder_dashboard::export_dashboard_bundle_if_changed_with_context(
+        graph.backend(),
+        root,
+        &snapshot_path,
+        rbuilder_dashboard::DashboardExportContext::with_analysis(&analysis_results),
+    ) {
         Ok(true) => {
             if human_output {
                 info!("[✓] Dashboard: {}/index.html", dashboard_dir.display());
@@ -727,8 +856,10 @@ pub(crate) fn run_full_analysis(
             }
         }
     }
+    profile.save_dashboard.secs = secs(save_dashboard_start.elapsed());
 
     if export_migration_plan {
+        let migration_start = Instant::now();
         let plan_path = ctx
             .output
             .clone()
@@ -766,10 +897,16 @@ pub(crate) fn run_full_analysis(
                 }
             }
         }
+        profile.migration_plan.secs = secs(migration_start.elapsed());
     }
 
     let analysis_size = std::fs::metadata(&analysis_path)?.len() as f64 / (1024.0 * 1024.0);
     let snapshot = mem_monitor.snapshot()?;
+    profile.wall_total.secs = secs(run_start.elapsed());
+    profile.peak_rss_mb = snapshot.peak_mb;
+    if verbose {
+        profile.record();
+    }
 
     if json_output {
         let response =
