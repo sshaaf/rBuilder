@@ -10,6 +10,9 @@ import { useEngineWorker } from "./useEngineWorker";
 const GraphView = lazy(() =>
   import("./GraphView").then((m) => ({ default: m.GraphView })),
 );
+const SearchView = lazy(() =>
+  import("./SearchView").then((m) => ({ default: m.SearchView })),
+);
 const FunctionsView = lazy(() =>
   import("./FunctionsView").then((m) => ({ default: m.FunctionsView })),
 );
@@ -220,6 +223,14 @@ function TabPanel({
           wasmReady={wasmReady}
           expand={expand}
         />
+      </TabPanelStack>
+    );
+  }
+
+  if (id === "search") {
+    return (
+      <TabPanelStack tabId={id}>
+        <SearchView manifest={manifest} />
       </TabPanelStack>
     );
   }

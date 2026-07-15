@@ -1,5 +1,6 @@
 export type TabId =
   | "graph"
+  | "search"
   | "functions"
   | "cfg"
   | "dataflow"
@@ -33,6 +34,23 @@ export const TAB_DOCS: Record<TabId, TabDocContent> = {
       "Click a metanode to expand its internal graph.",
       "Use breadcrumbs to zoom back out.",
       "Toggle edge types and fit the view from the toolbar controls.",
+    ],
+  },
+  search: {
+    title: "Semantic search",
+    goal: "Find functions by meaning — shopping cart, orders, security, APIs — not just substring name match.",
+    description:
+      "Uses the bundled code-daemon embedder and Hamming nearest-neighbor index built by `rbuilder semantic index`. Late fusion re-ranks candidates with blast radius, centrality, name overlap, and eager token-bloom sketches. Requires `rbuilder serve` (the query API is server-side).",
+    benefits: [
+      "Natural-language queries over the whole function inventory",
+      "Keyword AND filter for precise CamelCase / multi-token lookups",
+      "Fusion ranking surfaces structurally important symbols",
+    ],
+    usage: [
+      "Run `rbuilder semantic index` once per repo (after discover).",
+      "Start the dashboard with `rbuilder serve --open`.",
+      "Open the Search tab, enter a query, toggle fusion or keyword AND as needed.",
+      "Example queries: shopping cart checkout, OrderService, security login.",
     ],
   },
   functions: {

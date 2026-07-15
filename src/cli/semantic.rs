@@ -3,15 +3,13 @@
 use super::args::OutputFormat;
 use super::context::CliContext;
 use super::semantic_output::{
-    build_index_response, build_query_response, hit_from_semantic, index_response_to_json,
-    query_response_to_json,
+    build_index_response, index_response_to_json, query_response_to_json,
 };
 use crate::analysis::{
     blast_summary_from_result, build_index, default_tokenizer_path,
-    expand_semantic_hits, query_index_with_fusion, resolve_embedder, try_load_engine,
-    validate_mrl_dimensions, AnalysisResults, BlastRadiusEngine, BlastSummaryProvider,
-    EmbedderChoice, OnnxReloadOptions, SemanticBuildOptions, SemanticExpandConfig,
-    SemanticExpandMode, SemanticExpansion, SemanticFusionConfig, SemanticIndex,
+    resolve_embedder, try_load_engine,
+    validate_mrl_dimensions, BlastRadiusEngine, BlastSummaryProvider,
+    EmbedderChoice, SemanticBuildOptions, SemanticExpansion, SemanticIndex,
     CODE_DAEMON_MRL_DIMS,
 };
 use anyhow::{bail, Context, Result};
@@ -151,96 +149,8 @@ pub fn run_query(ctx: &CliContext, args: SemanticQueryArgs) -> Result<()> {
     let index = SemanticIndex::load(&path)
         .with_context(|| format!("load semantic index {}", path.display()))?;
 
-    let reload = OnnxReloadOptions {
-        model_path: args.model.clone(),
-        tokenizer_path: args.tokenizer.clone(),
-    };
-
-    let analysis_path = ctx.repo.join(".rbuilder/analysis_results.bin");
-    let analysis = if analysis_path.is_file() {
-        Some(
-            AnalysisResults::load(&analysis_path).with_context(|| {
-                format!("load analysis results {}", analysis_path.display())
-            })?,
-        )
-    } else {
-        None
-    };
-
-    let fusion = SemanticFusionConfig {
-        enabled: args.fusion,
-        candidate_pool: args.candidate_pool.max(args.limit),
-        keyword_and: args.keyword_and,
-        ..SemanticFusionConfig::default()
-    };
-
-    let hits = query_index_with_fusion(
-        &index,
-        &args.query,
-        args.limit,
-        &reload,
-        &fusion,
-        analysis.as_ref(),
-        Some(&ctx.repo),
-    )?;
-
     let graph = ctx.load_graph()?;
-    let backend = graph.backend();
-
-    let expansion = if let Some(mode) = args.expand {
-        let expand_mode = match mode {
-            CliExpandMode::Neighbors => SemanticExpandMode::Neighbors,
-            CliExpandMode::Blast => SemanticExpandMode::Blast,
-            CliExpandMode::Gql => SemanticExpandMode::Gql,
-            CliExpandMode::All => SemanticExpandMode::All,
-        };
-        let config = SemanticExpandConfig {
-            mode: expand_mode,
-            call_depth: args.expand_depth.max(1),
-            anchor_limit: args.limit.min(5),
-            per_anchor_limit: 20,
-        };
-        let blast_provider = EngineBlastProvider {
-            repo: &ctx.repo,
-            backend,
-            graph_digest: ctx.graph_digest()?,
-        };
-        let mut expansion = expand_semantic_hits(
-            backend,
-            &hits,
-            &config,
-            if matches!(expand_mode, SemanticExpandMode::Blast | SemanticExpandMode::All) {
-                Some(&blast_provider)
-            } else {
-                None
-            },
-        )?;
-
-        if matches!(expand_mode, SemanticExpandMode::Gql | SemanticExpandMode::All) {
-            expansion.gql = Some(expand_gql_neighbors(
-                backend,
-                &hits,
-                args.expand_depth.max(1),
-                config.anchor_limit,
-            )?);
-        }
-        Some(expansion)
-    } else {
-        None
-    };
-
-    let hit_json: Vec<_> = hits
-        .iter()
-        .map(|hit| hit_from_semantic(&hit.entry, hit.distance, index.dimensions, Some(hit)))
-        .collect();
-
-    let response = build_query_response(
-        &args.query,
-        &index.model_id,
-        index.dimensions,
-        hit_json,
-        expansion,
-    );
+    let response = super::semantic_api::execute_semantic_query(&ctx.repo, &graph, &index, &args)?;
 
     if ctx.format == OutputFormat::Json {
         ctx.emit_json_value(&query_response_to_json(&response))?;
@@ -347,10 +257,10 @@ fn store_paths(
     }
 }
 
-struct EngineBlastProvider<'a> {
-    repo: &'a Path,
-    backend: &'a MemoryBackend,
-    graph_digest: Option<String>,
+pub(crate) struct EngineBlastProvider<'a> {
+    pub(crate) repo: &'a Path,
+    pub(crate) backend: &'a MemoryBackend,
+    pub(crate) graph_digest: Option<String>,
 }
 
 impl BlastSummaryProvider for EngineBlastProvider<'_> {
@@ -388,7 +298,7 @@ impl BlastSummaryProvider for EngineBlastProvider<'_> {
     }
 }
 
-fn expand_gql_neighbors(
+pub(crate) fn expand_gql_neighbors(
     backend: &MemoryBackend,
     hits: &[crate::analysis::SemanticHit],
     depth: usize,

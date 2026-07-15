@@ -13,6 +13,16 @@ use std::collections::BTreeMap;
 pub const MANIFEST_SCHEMA_VERSION: u32 = 1;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SemanticSection {
+    pub available: bool,
+    pub functions_indexed: usize,
+    pub model_id: String,
+    pub dimensions: usize,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub graph_digest: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DashboardManifest {
     pub schema_version: u32,
     pub dashboard_version: String,
@@ -21,6 +31,8 @@ pub struct DashboardManifest {
     pub view: ViewSection,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub analysis: Option<AnalysisSection>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub semantic: Option<SemanticSection>,
     pub metrics: MetricsSection,
     pub generated_at: String,
     /// Stable fingerprint for incremental dashboard export (semantic, not volatile UUID digest).
@@ -113,6 +125,7 @@ impl DashboardManifest {
         dataflow: &DataflowExportSummary,
         taint: &TaintExportSummary,
         migration: &MigrationExportSummary,
+        semantic: Option<SemanticSection>,
     ) -> Self {
         let mut phases = BTreeMap::new();
         phases.insert("0".into(), "complete".into());
@@ -249,6 +262,7 @@ impl DashboardManifest {
                 },
             },
             analysis,
+            semantic,
             metrics,
             generated_at: chrono_now_rfc3339(),
             export_fingerprint: Some(export_fingerprint),
@@ -327,6 +341,7 @@ mod tests {
             &DataflowExportSummary::default(),
             &TaintExportSummary::default(),
             &MigrationExportSummary::default(),
+            None,
         );
         let v = serde_json::to_value(&m).unwrap();
         assert_eq!(v["phases"]["2"], "complete");

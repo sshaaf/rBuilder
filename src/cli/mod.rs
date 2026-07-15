@@ -21,6 +21,7 @@ mod metrics;
 pub mod metrics_output;
 mod policy_file;
 mod query_daemon;
+mod semantic_api;
 mod semantic;
 pub mod semantic_output;
 mod slice;

@@ -935,3 +935,14 @@ code {
   gap: 0.25rem;
   white-space: nowrap;
 }
+
+.search-view .search-results {
+  min-height: 12rem;
+}
+
+.search-view .fn-name {
+  max-width: 22rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
