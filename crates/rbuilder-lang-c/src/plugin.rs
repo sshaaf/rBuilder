@@ -103,68 +103,80 @@ impl CPlugin {
         })
     }
 
+    /// Iterative tree traversal using an explicit stack to prevent stack overflows on deep ASTs.
     fn traverse(
         &self,
-        node: Node,
+        root: Node,
         source: &[u8],
         file_path: &str,
         symbols: &mut Vec<Symbol>,
     ) -> Result<()> {
-        match node.kind() {
-            "function_definition" => {
-                if let Some(sym) = self.extract_function(node, source, file_path)? {
-                    symbols.push(sym);
-                }
+        const MAX_DEPTH: usize = 2048;
+        let mut stack = vec![(root, 0usize)];
+
+        while let Some((node, depth)) = stack.pop() {
+            if depth > MAX_DEPTH {
+                tracing::warn!(
+                    file = %file_path,
+                    depth = depth,
+                    "AST depth limit exceeded during traversal; skipping deep branches"
+                );
+                continue;
             }
-            "declaration" => {
-                if let Some(sym) = self.extract_function(node, source, file_path)? {
-                    symbols.push(sym);
-                }
-            }
-            "struct_specifier" => {
-                if struct_name(node, source).is_some() {
-                    symbols.push(self.extract_struct(node, source, file_path)?);
-                }
-            }
-            "enum_specifier" => {
-                if node.child_by_field_name("name").is_some() {
-                    symbols.push(self.extract_enum(node, source, file_path)?);
-                }
-            }
-            "type_definition" => {
-                let mut cursor = node.walk();
-                for child in node.children(&mut cursor) {
-                    if child.kind() == "struct_specifier" && struct_name(child, source).is_some() {
-                        symbols.push(self.extract_struct(child, source, file_path)?);
-                    } else if child.kind() == "enum_specifier"
-                        && child.child_by_field_name("name").is_some()
-                    {
-                        symbols.push(self.extract_enum(child, source, file_path)?);
+
+            match node.kind() {
+                "function_definition" | "declaration" => {
+                    if let Some(sym) = self.extract_function(node, source, file_path)? {
+                        symbols.push(sym);
                     }
                 }
+                "struct_specifier" => {
+                    if struct_name(node, source).is_some() {
+                        symbols.push(self.extract_struct(node, source, file_path)?);
+                    }
+                }
+                "enum_specifier" => {
+                    if node.child_by_field_name("name").is_some() {
+                        symbols.push(self.extract_enum(node, source, file_path)?);
+                    }
+                }
+                "type_definition" => {
+                    let mut cursor = node.walk();
+                    for child in node.children(&mut cursor) {
+                        if child.kind() == "struct_specifier" && struct_name(child, source).is_some()
+                        {
+                            symbols.push(self.extract_struct(child, source, file_path)?);
+                        } else if child.kind() == "enum_specifier"
+                            && child.child_by_field_name("name").is_some()
+                        {
+                            symbols.push(self.extract_enum(child, source, file_path)?);
+                        }
+                    }
+                }
+                "preprocessor_include" => {
+                    let text = node.utf8_text(source)?.trim().to_string();
+                    symbols.push(Symbol {
+                        name: text,
+                        symbol_type: SymbolType::Import,
+                        qualified_name: None,
+                        location: source_location(node, file_path),
+                        signature: None,
+                        return_type: None,
+                        parameters: vec![],
+                        fields: vec![],
+                        modifiers: vec![],
+                        documentation: None,
+                        metadata: serde_json::json!({ "language": "c" }),
+                    });
+                }
+                _ => {}
             }
-            "preprocessor_include" => {
-                let text = node.utf8_text(source)?.trim().to_string();
-                symbols.push(Symbol {
-                    name: text,
-                    symbol_type: SymbolType::Import,
-                    qualified_name: None,
-                    location: source_location(node, file_path),
-                    signature: None,
-                    return_type: None,
-                    parameters: vec![],
-                    fields: vec![],
-                    modifiers: vec![],
-                    documentation: None,
-                    metadata: serde_json::json!({ "language": "c" }),
-                });
-            }
-            _ => {}
-        }
 
-        let mut cursor = node.walk();
-        for child in node.children(&mut cursor) {
-            self.traverse(child, source, file_path, symbols)?;
+            let mut cursor = node.walk();
+            let children: Vec<Node> = node.children(&mut cursor).collect();
+            for child in children.into_iter().rev() {
+                stack.push((child, depth + 1));
+            }
         }
         Ok(())
     }
@@ -225,12 +237,7 @@ impl LanguagePlugin for CPlugin {
 }
 
 fn function_name_from_node(node: Node, source: &[u8]) -> Option<String> {
-    if node.kind() == "function_definition" {
-        if let Some(decl) = node.child_by_field_name("declarator") {
-            return name_from_declarator(decl, source);
-        }
-    }
-    if node.kind() == "declaration" {
+    if node.kind() == "function_definition" || node.kind() == "declaration" {
         if let Some(decl) = node.child_by_field_name("declarator") {
             return name_from_declarator(decl, source);
         }
@@ -238,35 +245,47 @@ fn function_name_from_node(node: Node, source: &[u8]) -> Option<String> {
     None
 }
 
-fn name_from_declarator(node: Node, source: &[u8]) -> Option<String> {
-    match node.kind() {
-        "identifier" | "type_identifier" => node.utf8_text(source).ok().map(str::to_string),
-        "function_declarator" | "pointer_declarator" | "parenthesized_declarator" => {
-            if let Some(inner) = node.child_by_field_name("declarator") {
-                return name_from_declarator(inner, source);
-            }
-            let mut cursor = node.walk();
-            for child in node.children(&mut cursor) {
-                if child.is_named() {
-                    if let Some(name) = name_from_declarator(child, source) {
-                        return Some(name);
-                    }
-                }
-            }
-            None
+/// Iterative declarator name parser to avoid deep nested recursion stack frames.
+fn name_from_declarator(root: Node, source: &[u8]) -> Option<String> {
+    const MAX_DEPTH: usize = 512;
+    let mut stack = vec![(root, 0usize)];
+
+    while let Some((node, depth)) = stack.pop() {
+        if depth > MAX_DEPTH {
+            continue;
         }
-        _ => {
-            let mut cursor = node.walk();
-            for child in node.children(&mut cursor) {
-                if child.is_named() {
-                    if let Some(name) = name_from_declarator(child, source) {
-                        return Some(name);
+
+        match node.kind() {
+            "identifier" | "type_identifier" => {
+                if let Ok(text) = node.utf8_text(source) {
+                    return Some(text.to_string());
+                }
+            }
+            "function_declarator" | "pointer_declarator" | "parenthesized_declarator" => {
+                if let Some(inner) = node.child_by_field_name("declarator") {
+                    stack.push((inner, depth + 1));
+                } else {
+                    let mut cursor = node.walk();
+                    let children: Vec<Node> = node.children(&mut cursor).collect();
+                    for child in children.into_iter().rev() {
+                        if child.is_named() {
+                            stack.push((child, depth + 1));
+                        }
                     }
                 }
             }
-            None
+            _ => {
+                let mut cursor = node.walk();
+                let children: Vec<Node> = node.children(&mut cursor).collect();
+                for child in children.into_iter().rev() {
+                    if child.is_named() {
+                        stack.push((child, depth + 1));
+                    }
+                }
+            }
         }
     }
+    None
 }
 
 fn struct_name(node: Node, source: &[u8]) -> Option<String> {
@@ -351,5 +370,21 @@ int baz(int x) { return x; }
             .extract_symbols(Path::new("order.h"), source)
             .unwrap();
         assert!(symbols.iter().any(|s| s.name == "checkout"));
+    }
+
+    #[test]
+    fn test_adf_admin_deep_ast_does_not_stack_overflow() {
+        let path = Path::new(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../example/linux/drivers/crypto/intel/qat/qat_common/adf_admin.c"
+        ));
+        if !path.exists() {
+            return;
+        }
+        let src = std::fs::read(path).unwrap();
+        let plugin = CPlugin::new().unwrap();
+        let symbols = plugin.extract_symbols(path, &src).unwrap();
+        assert!(!symbols.is_empty());
+        let _relations = plugin.extract_relations(path, &src, &symbols).unwrap();
     }
 }

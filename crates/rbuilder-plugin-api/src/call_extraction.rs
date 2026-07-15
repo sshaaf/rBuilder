@@ -24,34 +24,54 @@ pub fn containing_function<'a>(node: Node, symbols: &'a [Symbol]) -> Option<&'a 
         .min_by_key(|s| s.location.end_line - s.location.start_line)
 }
 
-/// Best-effort callee name from a call expression subtree.
-pub fn callee_name(node: Node, source: &[u8]) -> Option<String> {
-    match node.kind() {
-        "identifier" | "type_identifier" => node.utf8_text(source).ok().map(str::to_string),
-        "field_expression" | "selector_expression" | "attribute" => node
-            .child_by_field_name("field")
-            .or_else(|| node.child_by_field_name("attribute"))
-            .or_else(|| node.child_by_field_name("name"))
-            .and_then(|n| n.utf8_text(source).ok().map(str::to_string)),
-        "scoped_identifier" | "qualified_type" => node
-            .child_by_field_name("name")
-            .and_then(|n| n.utf8_text(source).ok().map(str::to_string)),
-        "parenthesized_expression" => node
-            .named_child(0)
-            .and_then(|inner| callee_name(inner, source)),
-        "invocation_expression" => node
-            .named_child(0)
-            .and_then(|n| callee_name(n, source)),
-        _ => {
-            if let Some(func) = node.child_by_field_name("function") {
-                return callee_name(func, source);
+/// Best-effort callee name from a call expression subtree (iterative; bounded depth).
+pub fn callee_name(root: Node, source: &[u8]) -> Option<String> {
+    const MAX_DEPTH: usize = 512;
+    let mut stack = vec![(root, 0usize)];
+
+    while let Some((node, depth)) = stack.pop() {
+        if depth > MAX_DEPTH {
+            continue;
+        }
+
+        match node.kind() {
+            "identifier" | "type_identifier" => {
+                return node.utf8_text(source).ok().map(str::to_string);
             }
-            if let Some(name) = node.child_by_field_name("name") {
-                return name.utf8_text(source).ok().map(str::to_string);
+            "field_expression" | "selector_expression" | "attribute" => {
+                if let Some(n) = node
+                    .child_by_field_name("field")
+                    .or_else(|| node.child_by_field_name("attribute"))
+                    .or_else(|| node.child_by_field_name("name"))
+                {
+                    stack.push((n, depth + 1));
+                }
             }
-            None
+            "scoped_identifier" | "qualified_type" => {
+                if let Some(n) = node.child_by_field_name("name") {
+                    stack.push((n, depth + 1));
+                }
+            }
+            "parenthesized_expression" => {
+                if let Some(inner) = node.named_child(0) {
+                    stack.push((inner, depth + 1));
+                }
+            }
+            "invocation_expression" => {
+                if let Some(n) = node.named_child(0) {
+                    stack.push((n, depth + 1));
+                }
+            }
+            _ => {
+                if let Some(func) = node.child_by_field_name("function") {
+                    stack.push((func, depth + 1));
+                } else if let Some(name) = node.child_by_field_name("name") {
+                    stack.push((name, depth + 1));
+                }
+            }
         }
     }
+    None
 }
 
 /// Push a `Calls` relation when `node` is a recognized call site.
@@ -114,9 +134,9 @@ pub fn push_call_relation(
     });
 }
 
-/// Depth-first walk that records call relations.
+/// Iterative tree walk that records call relations (heap stack; bounded depth).
 pub fn walk_calls(
-    node: Node,
+    root: Node,
     source: &[u8],
     file_path: &Path,
     symbols: &[Symbol],
@@ -124,13 +144,27 @@ pub fn walk_calls(
     language: &str,
     relations: &mut Vec<Relation>,
 ) {
-    push_call_relation(
-        node, source, file_path, symbols, call_kinds, language, relations,
-    );
-    let mut cursor = node.walk();
-    for child in node.children(&mut cursor) {
-        walk_calls(
-            child, source, file_path, symbols, call_kinds, language, relations,
+    const MAX_DEPTH: usize = 2048;
+    let mut stack = vec![(root, 0usize)];
+
+    while let Some((node, depth)) = stack.pop() {
+        if depth > MAX_DEPTH {
+            tracing::warn!(
+                file = ?file_path,
+                depth = depth,
+                "AST depth limit exceeded during walk_calls; skipping deep branches"
+            );
+            continue;
+        }
+
+        push_call_relation(
+            node, source, file_path, symbols, call_kinds, language, relations,
         );
+
+        let mut cursor = node.walk();
+        let children: Vec<Node> = node.children(&mut cursor).collect();
+        for child in children.into_iter().rev() {
+            stack.push((child, depth + 1));
+        }
     }
 }

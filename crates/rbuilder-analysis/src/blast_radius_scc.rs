@@ -22,7 +22,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use uuid::Uuid;
 
-use crate::blast_engine_snapshot::ReachabilityStore;
+use crate::blast_engine_snapshot::{ReachabilityStore, FLAT_SCC_COMPRESSION_THRESHOLD};
 use crate::centrality::CentralityScores;
 use crate::policy::{evaluate_policies, PolicyRegistry};
 
@@ -168,45 +168,57 @@ impl BlastRadiusEngine {
             "DAG condensation complete"
         );
 
-        // Step 6: Topological sort
-        let sorted = toposort(&dag, None)
-            .map_err(|_| Error::GraphError("DAG contains cycles after SCC condensation".into()))?;
+        // Step 7: Reachability — eager bitsets for condensed graphs; on-demand DAG for flat graphs.
+        let scc_fraction = scc_count as f64 / graph.node_count().max(1) as f64;
+        let reachability = if scc_fraction >= FLAT_SCC_COMPRESSION_THRESHOLD {
+            tracing::info!(
+                scc_fraction = %format!("{:.3}", scc_fraction),
+                scc_count,
+                "Flat call graph — skipping eager reachability propagation (on-demand queries)"
+            );
+            let mut incoming: Vec<Vec<usize>> = vec![Vec::new(); scc_count];
+            for edge in dag.edge_references() {
+                incoming[edge.target().index()].push(edge.source().index());
+            }
+            ReachabilityStore::from_dag_on_demand(incoming, scc_count)
+        } else {
+            let sorted = toposort(&dag, None).map_err(|_| {
+                Error::GraphError("DAG contains cycles after SCC condensation".into())
+            })?;
 
-        // Step 7: Propagate reachability in FORWARD topological order for blast radius
-        // Blast radius = who is affected if this node changes = who calls this node (transitively)
-        // So we propagate BACKWARDS: each node accumulates its parents + their parents
-        let mut reachability: Vec<BitSet> = vec![BitSet::new(); scc_count];
+            let mut reachability: Vec<BitSet> = vec![BitSet::new(); scc_count];
 
-        for &scc_idx in sorted.iter() {
-            let scc_id: usize = scc_idx.index();
-            let mut reach = BitSet::new();
+            for &scc_idx in sorted.iter() {
+                let scc_id: usize = scc_idx.index();
+                let mut reach = BitSet::new();
 
-            // Node can be reached by itself
-            reach.insert(scc_id);
+                reach.insert(scc_id);
 
-            // Union with all parents' reachability (who can reach them, can reach us)
-            for parent_idx in dag.neighbors_directed(scc_idx, petgraph::Direction::Incoming) {
-                let parent_id = parent_idx.index();
-                reach.union_with(&reachability[parent_id]);
+                for parent_idx in dag.neighbors_directed(scc_idx, petgraph::Direction::Incoming) {
+                    let parent_id = parent_idx.index();
+                    reach.union_with(&reachability[parent_id]);
+                }
+
+                reachability[scc_id] = reach;
             }
 
-            reachability[scc_id] = reach;
-        }
+            let total_bits: usize = reachability.iter().map(|bs| bs.len()).sum();
+            let avg_reachability = total_bits as f64 / scc_count as f64;
 
-        let total_bits: usize = reachability.iter().map(|bs| bs.len()).sum();
-        let avg_reachability = total_bits as f64 / scc_count as f64;
+            tracing::info!(
+                scc_count,
+                avg_reachability,
+                "Reachability propagation complete"
+            );
 
-        tracing::info!(
-            scc_count,
-            avg_reachability,
-            "Reachability propagation complete"
-        );
+            ReachabilityStore::from_eager(reachability, scc_count)
+        };
 
         Ok(Self {
             dag,
             node_to_scc,
             scc_members,
-            reachability: ReachabilityStore::from_eager(reachability, scc_count),
+            reachability,
             scc_count,
         })
     }
@@ -336,7 +348,9 @@ impl BlastRadiusEngine {
 
     /// Get statistics about the engine.
     pub fn stats(&self) -> EngineStats {
-        let memory_bytes = if self.reachability.is_lazy() {
+        let memory_bytes = if self.reachability.is_on_demand() {
+            self.scc_count * 64
+        } else if self.reachability.is_lazy() {
             self.scc_count * 64
         } else {
             self.scc_count * self.scc_count / 8
@@ -357,6 +371,11 @@ impl BlastRadiusEngine {
         self.reachability.is_lazy()
     }
 
+    /// True when reachability is computed on demand from the condensed DAG (flat graphs).
+    pub fn uses_on_demand_reachability(&self) -> bool {
+        self.reachability.is_on_demand()
+    }
+
     /// Serialize engine state for mmap reload (sparse + zstd-compressed reachability).
     pub fn to_engine_snapshot(
         &self,
@@ -367,25 +386,26 @@ impl BlastRadiusEngine {
         };
         use rayon::prelude::*;
 
-        let eager = self
-            .reachability
-            .eager_slice()
-            .expect("to_engine_snapshot requires an eagerly-built engine");
-
-        let reachability_rows: Vec<ReachabilityRow> = eager
-            .par_iter()
-            .enumerate()
-            .filter_map(|(idx, bs)| {
-                let words = bitset_to_words(bs, self.scc_count);
-                if words_popcount(&words) <= 1 {
-                    return None;
-                }
-                compress_words(&words).ok().map(|compressed| ReachabilityRow {
-                    scc_idx: idx as u32,
-                    compressed,
+        let reachability_rows: Vec<ReachabilityRow> = if let Some(eager) =
+            self.reachability.eager_slice()
+        {
+            eager
+                .par_iter()
+                .enumerate()
+                .filter_map(|(idx, bs)| {
+                    let words = bitset_to_words(bs, self.scc_count);
+                    if words_popcount(&words) <= 1 {
+                        return None;
+                    }
+                    compress_words(&words).ok().map(|compressed| ReachabilityRow {
+                        scc_idx: idx as u32,
+                        compressed,
+                    })
                 })
-            })
-            .collect();
+                .collect()
+        } else {
+            Vec::new()
+        };
 
         crate::blast_engine_snapshot::BlastEngineSnapshot {
             graph_digest,
