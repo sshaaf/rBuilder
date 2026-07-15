@@ -6,6 +6,7 @@ use crate::dominance::DominatorTree;
 use rbuilder_error::Result;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
+use std::sync::Arc;
 use uuid::Uuid;
 
 /// Identifier for a PDG node.
@@ -428,10 +429,7 @@ impl ProgramDependenceGraph {
             return 0;
         }
 
-        let mut adjacency: HashMap<PdgNodeId, Vec<PdgNodeId>> = HashMap::new();
-        for dep in &self.data_deps {
-            adjacency.entry(dep.from).or_default().push(dep.to);
-        }
+        let has_succ = !self.data_succ.is_empty();
 
         let mut max_depth = 0usize;
         for seed in seeds {
@@ -442,9 +440,15 @@ impl ProgramDependenceGraph {
                     continue;
                 }
                 max_depth = max_depth.max(depth);
-                if let Some(next) = adjacency.get(&node) {
-                    for &child in next {
-                        queue.push_back((child, depth + 1));
+                if has_succ {
+                    if let Some(next) = self.data_succ.get(&node) {
+                        for &child in next {
+                            queue.push_back((child, depth + 1));
+                        }
+                    }
+                } else {
+                    for dep in self.data_deps.iter().filter(|d| d.from == node) {
+                        queue.push_back((dep.to, depth + 1));
                     }
                 }
             }
@@ -470,14 +474,15 @@ impl PostDominatorTree {
 
 fn compute_post_dominators(cfg: &ControlFlowGraph) -> PostDominatorTree {
     let all_blocks: HashSet<BlockId> = cfg.blocks.keys().copied().collect();
-    let mut post_dom: HashMap<BlockId, HashSet<BlockId>> = HashMap::new();
+    let top: Arc<HashSet<BlockId>> = Arc::new(all_blocks.clone());
+    let mut post_dom: HashMap<BlockId, Arc<HashSet<BlockId>>> = HashMap::new();
 
     for &block in &all_blocks {
-        post_dom.insert(block, all_blocks.clone());
-    }
-
-    for exit in &cfg.exits {
-        post_dom.insert(*exit, HashSet::from([*exit]));
+        if cfg.exits.contains(&block) {
+            post_dom.insert(block, Arc::new(HashSet::from([block])));
+        } else {
+            post_dom.insert(block, Arc::clone(&top));
+        }
     }
 
     let mut changed = true;
@@ -491,26 +496,49 @@ fn compute_post_dominators(cfg: &ControlFlowGraph) -> PostDominatorTree {
             if succs.is_empty() {
                 continue;
             }
-            let &smallest_succ = succs
-                .iter()
-                .min_by_key(|&&s| post_dom[&s].len())
-                .unwrap();
-            let mut intersection = post_dom[&smallest_succ].clone();
-            for &succ in succs {
-                if succ == smallest_succ {
-                    continue;
-                }
-                intersection.retain(|b| post_dom[&succ].contains(b));
-            }
+            let mut intersection = intersect_post_dom_sets(&post_dom, succs);
             intersection.insert(block);
-            if post_dom.get(&block) != Some(&intersection) {
-                post_dom.insert(block, intersection);
+            let next = Arc::new(intersection);
+            if !post_dom_sets_equal(post_dom.get(&block), &next) {
+                post_dom.insert(block, next);
                 changed = true;
             }
         }
     }
 
-    PostDominatorTree { ipdom: post_dom }
+    PostDominatorTree {
+        ipdom: post_dom
+            .into_iter()
+            .map(|(block, set)| (block, Arc::try_unwrap(set).unwrap_or_else(|arc| (*arc).clone())))
+            .collect(),
+    }
+}
+
+fn intersect_post_dom_sets(
+    post_dom: &HashMap<BlockId, Arc<HashSet<BlockId>>>,
+    succs: &[BlockId],
+) -> HashSet<BlockId> {
+    let &smallest_succ = succs
+        .iter()
+        .min_by_key(|&&s| post_dom[&s].len())
+        .expect("non-empty successors");
+    let smallest = &post_dom[&smallest_succ];
+    if succs.len() == 1 {
+        return smallest.as_ref().clone();
+    }
+    smallest
+        .iter()
+        .filter(|b| succs.iter().all(|&s| post_dom[&s].contains(*b)))
+        .copied()
+        .collect()
+}
+
+fn post_dom_sets_equal(current: Option<&Arc<HashSet<BlockId>>>, next: &Arc<HashSet<BlockId>>) -> bool {
+    match current {
+        None => false,
+        Some(cur) if Arc::ptr_eq(cur, next) => true,
+        Some(cur) => **cur == **next,
+    }
 }
 
 #[cfg(test)]
@@ -569,5 +597,29 @@ fn example(a: i32) -> i32 {
                 .id,
         );
         assert!(!deps.is_empty());
+    }
+
+    #[test]
+    fn test_data_flow_depth_uses_data_succ() {
+        let code = r#"
+fn chain(a: i32) -> i32 {
+    let x = a + 1;
+    let y = x + 1;
+    let z = y + 1;
+    z
+}
+"#;
+        let cfg = build_cfg_for_function("rust", code, "chain").unwrap();
+        let pdg = ProgramDependenceGraph::build(&cfg, code.as_bytes()).unwrap();
+        assert!(!pdg.data_succ.is_empty());
+        assert!(pdg.data_flow_depth_for_symbol("a") >= 2);
+
+        let mut reloaded: ProgramDependenceGraph = bincode::deserialize(
+            &bincode::serialize(&pdg).expect("serialize pdg"),
+        )
+        .expect("deserialize pdg");
+        reloaded.data_succ.clear();
+        assert!(pdg.data_flow_depth_for_symbol("a") >= 2);
+        assert!(reloaded.data_flow_depth_for_symbol("a") >= 2);
     }
 }
