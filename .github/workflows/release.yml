@@ -32,7 +32,6 @@ permissions:
 
 env:
   CARGO_TERM_COLOR: always
-  FEATURES: ""
 
 jobs:
   build:
@@ -47,18 +46,24 @@ jobs:
             target: x86_64-unknown-linux-gnu
             archive: tar.gz
             bin: rbuilder
+            # Default features include semantic-onnx (code-daemon embedder).
+            cargo_args: --features semantic-onnx
           - os: macos-latest
             target: aarch64-apple-darwin
             archive: tar.gz
             bin: rbuilder
+            cargo_args: --features semantic-onnx
           - os: macos-latest
             target: x86_64-apple-darwin
             archive: tar.gz
             bin: rbuilder
+            # ort 2.x has no prebuilt ONNX Runtime for Intel Mac; hash embedder only.
+            cargo_args: --no-default-features
           - os: windows-latest
             target: x86_64-pc-windows-msvc
             archive: zip
             bin: rbuilder.exe
+            cargo_args: --features semantic-onnx
 
     steps:
       - name: Checkout
@@ -79,7 +84,7 @@ jobs:
           shared-key: release-${{ matrix.target }}
 
       - name: Build release binary
-        run: cargo build --release --features "${{ env.FEATURES }}" --target ${{ matrix.target }} --bin rbuilder
+        run: cargo build --release ${{ matrix.cargo_args }} --target ${{ matrix.target }} --bin rbuilder
 
       - name: Package archive (Unix)
         if: matrix.archive == 'tar.gz'
