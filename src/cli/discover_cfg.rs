@@ -15,7 +15,7 @@ use std::path::Path;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
-use tracing::debug;
+use tracing::info;
 
 /// Options for the CFG analysis batch.
 #[derive(Debug, Clone, Default)]
@@ -24,6 +24,15 @@ pub struct CfgAnalysisOptions {
     pub verbose: bool,
     /// Optional Rayon thread count (`None` = global pool default).
     pub thread_count: Option<usize>,
+}
+
+/// Wall-clock totals for CFG sub-stages (sum of per-function work).
+#[derive(Debug, Clone, Copy, Default)]
+pub struct CfgStageProfile {
+    pub build_cfg_secs: f64,
+    pub dominator_secs: f64,
+    pub pdg_secs: f64,
+    pub taint_secs: f64,
 }
 
 /// Aggregated CFG pass results for discover reporting and archive export.
@@ -39,6 +48,7 @@ pub struct CfgAnalysisBatchResult {
     pub orphans_removed: usize,
     pub archive_records: Vec<CfgPdgRecord>,
     pub archive_unchanged: bool,
+    pub stage_profile: Option<CfgStageProfile>,
 }
 
 #[derive(Default)]
@@ -132,9 +142,10 @@ pub fn run_cfg_analysis_batch(
             .collect()
     });
 
-    if let Some(stage) = stage_ref {
-        emit_stage_profile(stage, flat.iter().filter_map(|w| w.as_ref()).count());
-    }
+    let stage_profile = stage_ref.map(|stage| {
+        let analyzed = flat.iter().filter_map(|w| w.as_ref()).count();
+        emit_stage_profile(stage, analyzed)
+    });
     if let (Some(log), true) = (timing_log, options.verbose) {
         emit_tail_profile(&log);
     }
@@ -182,21 +193,43 @@ pub fn run_cfg_analysis_batch(
         .unwrap_or(0);
     result.archive_unchanged =
         result.skipped_unchanged == result.success_count && result.recomputed == 0;
+    result.stage_profile = stage_profile;
     result
 }
 
-fn emit_stage_profile(stage: &CfgStageTimings, analyzed: usize) {
+fn emit_stage_profile(stage: &CfgStageTimings, analyzed: usize) -> CfgStageProfile {
+    let build_ns = stage.build_cfg_ns.load(Ordering::Relaxed);
+    let dom_ns = stage.dominator_ns.load(Ordering::Relaxed);
+    let pdg_ns = stage.pdg_ns.load(Ordering::Relaxed);
+    let taint_ns = stage.taint_ns.load(Ordering::Relaxed);
+    let profile = CfgStageProfile {
+        build_cfg_secs: build_ns as f64 / 1_000_000_000.0,
+        dominator_secs: dom_ns as f64 / 1_000_000_000.0,
+        pdg_secs: pdg_ns as f64 / 1_000_000_000.0,
+        taint_secs: taint_ns as f64 / 1_000_000_000.0,
+    };
+
     let fns = stage.functions.load(Ordering::Relaxed).max(analyzed as u64);
     let denom = fns.max(1) as f64;
-    debug!(
-        target: "profile",
-        analyzed = analyzed,
-        build_cfg_ms = stage.build_cfg_ns.load(Ordering::Relaxed) as f64 / denom / 1_000_000.0,
-        dominator_ms = stage.dominator_ns.load(Ordering::Relaxed) as f64 / denom / 1_000_000.0,
-        pdg_ms = stage.pdg_ns.load(Ordering::Relaxed) as f64 / denom / 1_000_000.0,
-        taint_ms = stage.taint_ns.load(Ordering::Relaxed) as f64 / denom / 1_000_000.0,
-        "cfg stage profile (avg ms per analyzed function)"
-    );
+    for (stage_name, secs) in [
+        ("cfg_build", profile.build_cfg_secs),
+        ("cfg_dominator", profile.dominator_secs),
+        ("cfg_pdg", profile.pdg_secs),
+        ("cfg_taint", profile.taint_secs),
+    ] {
+        if secs > 0.0 {
+            info!(
+                target: "profile",
+                stage = stage_name,
+                secs,
+                avg_ms_per_fn = secs * 1000.0 / denom,
+                analyzed,
+                "[profile] stage"
+            );
+        }
+    }
+
+    profile
 }
 
 fn emit_tail_profile(log: &Mutex<Vec<CfgFunctionTiming>>) {
@@ -209,19 +242,19 @@ fn emit_tail_profile(log: &Mutex<Vec<CfgFunctionTiming>>) {
     entries.sort_by(|a, b| b.total_ns.cmp(&a.total_ns));
     let p99_idx = ((entries.len() as f64 * 0.99).ceil() as usize).saturating_sub(1);
     let p99 = entries[p99_idx].total_ns as f64 / 1_000_000.0;
-    debug!(
+    info!(
         target: "profile",
         p99_ms = p99,
-        "cfg function tail latency"
+        "[profile] cfg function tail latency"
     );
     for entry in entries.iter().take(10) {
-        debug!(
+        info!(
             target: "profile",
             file = %entry.file_path,
             function = %entry.function_name,
             blocks = entry.blocks,
             total_ms = entry.total_ns as f64 / 1_000_000.0,
-            "cfg slow function"
+            "[profile] cfg slow function"
         );
     }
 }

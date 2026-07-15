@@ -3,6 +3,7 @@
 use super::args::OutputFormat;
 use super::context::CliContext;
 use super::discover_output::build_discover_response;
+use super::stage_profile::{secs, DiscoverStageReport};
 use anyhow::Result;
 use rbuilder_graph::backend::GraphBackend;
 use std::path::Path;
@@ -28,6 +29,9 @@ pub(crate) fn run_full_analysis(
     let json_output = ctx.format == OutputFormat::Json;
     let human_output = !json_output;
     let run_start = Instant::now();
+    let mut profile = DiscoverStageReport::default();
+    profile.cfg_enabled = cfg || all;
+    profile.security_enabled = security || all;
     use crate::analysis::graph_utils::PetGraphView;
     use crate::analysis::{
         CentralityAnalyzer, CommunityDetector, ComplexityAnalyzer, DependencyAnalyzer,
@@ -101,6 +105,7 @@ pub(crate) fn run_full_analysis(
     let files = discoverer.discover(root)?;
 
     // Index the repository
+    let index_start = Instant::now();
     let (graph, index_stats) = {
         let _span = if verbose {
             Some(info_span!("indexing").entered())
@@ -109,6 +114,10 @@ pub(crate) fn run_full_analysis(
         };
         pipeline.process_repository(root)?
     };
+    profile.index_pipeline.secs = secs(index_start.elapsed());
+    profile.index_extract.secs = secs(index_stats.extract_duration);
+    profile.index_graph_build.secs = secs(index_stats.graph_build_duration);
+    profile.nodes = index_stats.nodes_created;
 
     if human_output {
         if verbose {
@@ -154,6 +163,7 @@ pub(crate) fn run_full_analysis(
     let mut analysis_results = AnalysisResults::new(node_ids);
 
     // Build PetGraphView ONCE from prepared snapshot — reused for community, centrality, blast radius
+    let topo_start = Instant::now();
     let petgraph_view = {
         let _span = if verbose {
             Some(info_span!("topology").entered())
@@ -168,8 +178,10 @@ pub(crate) fn run_full_analysis(
         );
         view
     };
+    profile.topology.secs = secs(topo_start.elapsed());
 
     // Community detection - write to columnar table
+    let community_start = Instant::now();
     let community_result = CommunityDetector::new().detect_with_view(&petgraph_view)?;
     {
         // Collect data with compact IDs first
@@ -191,6 +203,7 @@ pub(crate) fn run_full_analysis(
             table.assignments[compact_id as usize] = community_id;
         }
     }
+    profile.community.secs = secs(community_start.elapsed());
 
     if human_output {
         if verbose {
@@ -213,6 +226,7 @@ pub(crate) fn run_full_analysis(
     debug!("{}", mem_monitor.report());
 
     // Complexity analysis - write to columnar table
+    let complexity_start = Instant::now();
     let complexity_report = ComplexityAnalyzer::analyze(graph.backend())?;
     {
         // Collect data with compact IDs first
@@ -235,6 +249,8 @@ pub(crate) fn run_full_analysis(
             table.cognitive[compact_id as usize] = cognitive;
         }
     }
+
+    profile.complexity.secs = secs(complexity_start.elapsed());
 
     if verbose {
         debug!("✓ Complexity analysis:");
@@ -283,6 +299,7 @@ pub(crate) fn run_full_analysis(
     debug!("{}", mem_monitor.report());
 
     // Centrality analysis — exact below 500 nodes; sampled betweenness + HyperBall harmonic above.
+    let centrality_start = Instant::now();
     let centrality_report = CentralityAnalyzer::new().analyze_with_view(&petgraph_view)?;
     {
         // Collect data with compact IDs first
@@ -307,6 +324,8 @@ pub(crate) fn run_full_analysis(
             table.out_degree[idx] = scores.out_degree as u32;
         }
     }
+
+    profile.centrality.secs = secs(centrality_start.elapsed());
 
     // Check if we have betweenness data
     let has_betweenness = centrality_report
@@ -343,8 +362,10 @@ pub(crate) fn run_full_analysis(
     debug!("{}", mem_monitor.report());
 
     // Dependency analysis
+    let dependency_start = Instant::now();
     let cycles =
         DependencyAnalyzer::find_circular_dependencies_with_view(&petgraph_view, graph.backend())?;
+    profile.dependency.secs = secs(dependency_start.elapsed());
     if !cycles.is_empty() && human_output {
         if verbose {
             warn!(
@@ -360,8 +381,11 @@ pub(crate) fn run_full_analysis(
     }
 
     // Security analysis (opt-in with --security or --all)
-    if (security || all) && human_output {
-        println!("\n✓ Security analysis:");
+    if security || all {
+        let security_start = Instant::now();
+        if human_output {
+            println!("\n✓ Security analysis:");
+        }
         let detector = SecretDetector::new();
         let mut total_secrets = 0usize;
 
@@ -384,7 +408,10 @@ pub(crate) fn run_full_analysis(
                 }
             }
         }
-        println!("  Potential secrets found: {total_secrets}");
+        if human_output {
+            println!("  Potential secrets found: {total_secrets}");
+        }
+        profile.security.secs = secs(security_start.elapsed());
     }
 
     // Get backend and functions for later use (blast radius, etc.)
@@ -393,8 +420,11 @@ pub(crate) fn run_full_analysis(
     let functions = backend.collect_nodes_by_type(NodeType::Function)?;
     let output_dir = root.join(".rbuilder/analysis");
 
+    profile.functions = functions.len();
+
     // CFG/PDG/Dominance analysis (opt-in with --cfg or --all)
     if cfg || all {
+        let cfg_start = Instant::now();
         if human_output {
             println!("\n✓ Control flow analysis:");
         }
@@ -415,8 +445,16 @@ pub(crate) fn run_full_analysis(
         );
         let success_count = batch.success_count;
         let error_count = batch.error_count;
+        profile.cfg_total.secs = secs(cfg_start.elapsed());
+        if let Some(sp) = batch.stage_profile {
+            profile.cfg_build.secs = sp.build_cfg_secs;
+            profile.cfg_dominator.secs = sp.dominator_secs;
+            profile.cfg_pdg.secs = sp.pdg_secs;
+            profile.cfg_taint.secs = sp.taint_secs;
+        }
 
         let archive_path = CfgPdgArchive::default_path(root);
+        let archive_start = Instant::now();
         if batch.archive_unchanged {
             if verbose {
                 debug!(
@@ -451,6 +489,7 @@ pub(crate) fn run_full_analysis(
                 }
             }
         }
+        profile.cfg_archive.secs = secs(archive_start.elapsed());
 
         if human_output {
             if success_count > 0 {
@@ -555,7 +594,11 @@ pub(crate) fn run_full_analysis(
     let query_time = query_start.elapsed();
     let blast_updates = blast_results;
 
+    profile.blast_build.secs = secs(build_time);
+    profile.blast_query.secs = secs(query_time);
+
     // Persist SCC engine snapshot for instant blast-radius cache misses
+    let blast_snap_start = Instant::now();
     {
         use crate::analysis::BlastEngineSnapshot;
         let blast_snap = engine.to_engine_snapshot(graph_digest.clone());
@@ -566,8 +609,10 @@ pub(crate) fn run_full_analysis(
             debug!(path = %blast_path.display(), "Blast engine snapshot saved");
         }
     }
+    profile.blast_snapshot.secs = secs(blast_snap_start.elapsed());
 
     // Serialize minimized macro-call index for instant blast-radius lookups
+    let macro_start = Instant::now();
     {
         use crate::analysis::MacroCallIndex;
         let macro_index = MacroCallIndex::from_results(
@@ -618,6 +663,7 @@ pub(crate) fn run_full_analysis(
             );
         }
     }
+    profile.macro_index.secs = secs(macro_start.elapsed());
 
     // Write blast radius results to columnar table
     {
@@ -686,18 +732,24 @@ pub(crate) fn run_full_analysis(
     }
 
     // Save analysis results (columnar format - separate from graph!)
+    let save_analysis_start = Instant::now();
     let analysis_path = root.join(".rbuilder/analysis_results.bin");
     std::fs::create_dir_all(root.join(".rbuilder"))?;
     analysis_results.save(&analysis_path)?;
+    profile.save_analysis.secs = secs(save_analysis_start.elapsed());
 
     // Save graph topology (no analysis properties!)
+    let save_tracker_start = Instant::now();
     let mut tracker = FileTracker::new(root);
     tracker.index_files(&files, &graph)?;
     tracker.save()?;
+    profile.save_tracker.secs = secs(save_tracker_start.elapsed());
 
     std::fs::create_dir_all(root.join(".rbuilder"))?;
+    let save_snapshot_start = Instant::now();
     let snapshot_path = rbuilder_graph::snapshot::MmappedGraphSnapshot::default_path(root);
     prepared.write_to_path(&snapshot_path)?;
+    profile.save_snapshot.secs = secs(save_snapshot_start.elapsed());
     if verbose {
         debug!(path = %snapshot_path.display(), "Graph binary snapshot saved");
     }
@@ -715,6 +767,7 @@ pub(crate) fn run_full_analysis(
     }
 
     // Export static dashboard bundle (Phase 0+1 — see docs/dashboard-design.md)
+    let save_dashboard_start = Instant::now();
     let dashboard_dir = root.join(".rbuilder/dashboard");
     match rbuilder_dashboard::export_dashboard_bundle_if_changed(graph.backend(), root, &snapshot_path) {
         Ok(true) => {
@@ -735,8 +788,10 @@ pub(crate) fn run_full_analysis(
             }
         }
     }
+    profile.save_dashboard.secs = secs(save_dashboard_start.elapsed());
 
     if export_migration_plan {
+        let migration_start = Instant::now();
         let plan_path = ctx
             .output
             .clone()
@@ -774,10 +829,16 @@ pub(crate) fn run_full_analysis(
                 }
             }
         }
+        profile.migration_plan.secs = secs(migration_start.elapsed());
     }
 
     let analysis_size = std::fs::metadata(&analysis_path)?.len() as f64 / (1024.0 * 1024.0);
     let snapshot = mem_monitor.snapshot()?;
+    profile.wall_total.secs = secs(run_start.elapsed());
+    profile.peak_rss_mb = snapshot.peak_mb;
+    if verbose {
+        profile.record();
+    }
 
     if json_output {
         let response =

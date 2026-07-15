@@ -53,6 +53,10 @@ pub struct PipelineStats {
     pub edges_created: usize,
     /// Total processing duration
     pub duration: Duration,
+    /// Time spent in parallel file extraction (tree-sitter)
+    pub extract_duration: Duration,
+    /// Time spent merging extractions into the graph
+    pub graph_build_duration: Duration,
 }
 
 /// End-to-end repository processing pipeline.
@@ -100,6 +104,7 @@ impl ProcessingPipeline {
 
         let extractor = Extractor::new(Arc::clone(&self.registry));
         let progress_ref = progress.as_ref();
+        let extract_start = Instant::now();
         let extractions = par_filter_map(self.config.thread_count, &files, |path| {
             let result = extractor.extract_file(path);
             if let Some(pb) = progress_ref {
@@ -107,6 +112,7 @@ impl ProcessingPipeline {
             }
             result.ok()
         });
+        let extract_duration = extract_start.elapsed();
 
         if let Some(pb) = progress {
             pb.finish_with_message("done");
@@ -115,6 +121,7 @@ impl ProcessingPipeline {
         let files_processed = extractions.len();
         let files_failed = files_discovered.saturating_sub(files_processed);
 
+        let graph_start = Instant::now();
         let mut builder = GraphBuilder::new();
         extractor.populate_graph(&extractions, &mut builder)?;
         let (nodes, edges): (Vec<Node>, Vec<Edge>) = builder.into_graph();
@@ -123,6 +130,7 @@ impl ProcessingPipeline {
         let edges_created = edges.len();
         let mut graph = CodeGraph::new();
         graph.load(nodes, edges)?;
+        let graph_build_duration = graph_start.elapsed();
 
         Ok((
             graph,
@@ -133,6 +141,8 @@ impl ProcessingPipeline {
                 nodes_created,
                 edges_created,
                 duration: start.elapsed(),
+                extract_duration,
+                graph_build_duration,
             },
         ))
     }
