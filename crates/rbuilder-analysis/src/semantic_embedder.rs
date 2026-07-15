@@ -1,4 +1,4 @@
-//! Pluggable semantic embedders (sign-hash default; ONNX optional).
+//! Pluggable semantic embedders (bundled code-daemon default; sign-hash fallback).
 
 use rbuilder_error::{Error, Result};
 use std::path::{Path, PathBuf};
@@ -57,8 +57,9 @@ pub enum EmbedderChoice {
         tokenizer: Option<PathBuf>,
     },
     /// [`faxenoff/code-daemon-embed-v1`](https://huggingface.co/faxenoff/code-daemon-embed-v1).
+    /// When `model` is `None`, loads the embedder bundled in the rBuilder binary.
     CodeDaemon {
-        model: PathBuf,
+        model: Option<PathBuf>,
         tokenizer: Option<PathBuf>,
     },
 }
@@ -78,7 +79,7 @@ pub fn resolve_embedder(choice: &EmbedderChoice, dimensions: usize) -> Result<Bo
             onnx_embedder(model, dimensions, tokenizer.as_deref())
         }
         EmbedderChoice::CodeDaemon { model, tokenizer } => code_daemon_embedder(
-            model,
+            model.as_deref(),
             dimensions,
             tokenizer.as_deref(),
         ),
@@ -96,23 +97,14 @@ pub fn embedder_for_index(
     if index.model_id == crate::semantic_code_daemon::CODE_DAEMON_MODEL_ID {
         let model = reload
             .model_path
-            .clone()
-            .or_else(|| index.model_path.clone().map(PathBuf::from))
-            .ok_or_else(|| {
-                Error::ConfigError(
-                    "code-daemon index requires --model path (or rebuild index with model_path stored)"
-                        .into(),
-                )
-            })?;
+            .as_deref()
+            .or_else(|| index.model_path.as_deref().map(Path::new))
+            .filter(|path| !path.as_os_str().is_empty() && path.is_file());
         let tokenizer = reload
             .tokenizer_path
-            .clone()
-            .or_else(|| index.tokenizer_path.clone().map(PathBuf::from));
-        return code_daemon_embedder(
-            &model,
-            index.dimensions,
-            tokenizer.as_deref(),
-        );
+            .as_deref()
+            .or_else(|| index.tokenizer_path.as_deref().map(Path::new));
+        return code_daemon_embedder(model, index.dimensions, tokenizer);
     }
     if index.model_id.starts_with("onnx:") {
         let model = reload
@@ -164,15 +156,20 @@ fn onnx_embedder(
 }
 
 fn code_daemon_embedder(
-    path: &Path,
+    path: Option<&Path>,
     dimensions: usize,
     tokenizer: Option<&Path>,
 ) -> Result<Box<dyn SemanticEmbedder>> {
     #[cfg(feature = "semantic-onnx")]
     {
-        Ok(Box::new(super::semantic_code_daemon::load_code_daemon_embedder(
-            path, tokenizer, dimensions,
-        )?))
+        Ok(Box::new(match path {
+            Some(model_path) => super::semantic_code_daemon::load_code_daemon_embedder(
+                model_path,
+                tokenizer,
+                dimensions,
+            )?,
+            None => super::semantic_code_daemon::load_embedded_code_daemon_embedder(dimensions)?,
+        }))
     }
     #[cfg(not(feature = "semantic-onnx"))]
     {

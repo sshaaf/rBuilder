@@ -34,14 +34,14 @@ memmap2 = "0.9"
 rayon = { workspace = true }
 
 [features]
-default = []
+default = ["semantic-onnx"]
 semantic-onnx = ["dep:ort", "dep:ndarray", "dep:sentencepiece-rs"]
 
 [dependencies.ort]
 version = "2.0.0-rc.12"
 optional = true
 default-features = false
-features = ["std", "ndarray", "download-binaries", "copy-dylibs", "tls-rustls"]
+features = ["std", "ndarray", "download-binaries", "copy-dylibs", "tls-rustls", "api-18"]
 
 [dependencies.ndarray]
 version = "0.17"

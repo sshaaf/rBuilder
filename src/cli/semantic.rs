@@ -7,7 +7,7 @@ use super::semantic_output::{
     query_response_to_json,
 };
 use crate::analysis::{
-    blast_summary_from_result, build_index, default_model_path, default_tokenizer_path,
+    blast_summary_from_result, build_index, default_tokenizer_path,
     expand_semantic_hits, query_index_with_fusion, resolve_embedder, try_load_engine,
     validate_mrl_dimensions, AnalysisResults, BlastRadiusEngine, BlastSummaryProvider,
     EmbedderChoice, OnnxReloadOptions, SemanticBuildOptions, SemanticExpandConfig,
@@ -277,7 +277,7 @@ pub fn run_query(ctx: &CliContext, args: SemanticQueryArgs) -> Result<()> {
 }
 
 fn resolve_embedder_choice(
-    repo: &Path,
+    _repo: &Path,
     args: &SemanticIndexArgs,
 ) -> Result<(PathBuf, EmbedderChoice)> {
     match args.embedder {
@@ -296,17 +296,11 @@ fn resolve_embedder_choice(
             let model = args
                 .model
                 .clone()
-                .filter(|p| p.is_file())
-                .unwrap_or_else(|| default_model_path(repo));
-            if !model.is_file() {
-                bail!(
-                    "code-daemon model not found at {}.\nDownload with:\n  huggingface-cli download faxenoff/code-daemon-embed-v1 model_int8qdt.onnx sentencepiece.bpe.model --local-dir {}",
-                    model.display(),
-                    default_model_path(repo).parent().unwrap().display()
-                );
-            }
+                .filter(|path| !path.as_os_str().is_empty() && path.is_file());
             Ok((
-                model.clone(),
+                model
+                    .clone()
+                    .unwrap_or_default(),
                 EmbedderChoice::CodeDaemon {
                     model,
                     tokenizer: args.tokenizer.clone(),
@@ -331,22 +325,25 @@ fn store_paths(
                 .or_else(|| explicit_tokenizer.clone())
                 .map(|p| p.display().to_string()),
         ),
-        EmbedderChoice::CodeDaemon { model, .. } => {
-            let tok = explicit_tokenizer
-                .clone()
-                .or_else(|| {
-                    let beside = default_tokenizer_path(model.parent().unwrap_or(repo));
-                    beside.is_file().then_some(beside)
-                })
-                .or_else(|| {
-                    let default = default_tokenizer_path(repo);
-                    default.is_file().then_some(default)
-                });
-            (
-                Some(model.display().to_string()),
-                tok.map(|p| p.display().to_string()),
-            )
-        }
+        EmbedderChoice::CodeDaemon { model, .. } => match model {
+            Some(model_path) => {
+                let tok = explicit_tokenizer
+                    .clone()
+                    .or_else(|| {
+                        let beside = default_tokenizer_path(model_path.parent().unwrap_or(repo));
+                        beside.is_file().then_some(beside)
+                    })
+                    .or_else(|| {
+                        let default = default_tokenizer_path(repo);
+                        default.is_file().then_some(default)
+                    });
+                (
+                    Some(model_path.display().to_string()),
+                    tok.map(|p| p.display().to_string()),
+                )
+            }
+            None => (None, None),
+        },
     }
 }
 

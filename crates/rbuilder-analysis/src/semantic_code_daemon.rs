@@ -1,9 +1,9 @@
 //! [`faxenoff/code-daemon-embed-v1`](https://huggingface.co/faxenoff/code-daemon-embed-v1) embedder.
 
 #[cfg(feature = "semantic-onnx")]
-use crate::semantic_onnx::{Postprocess, SharedOnnxEmbedder};
+use crate::semantic_onnx_tokenizer::{resolve_sentencepiece_path, OnnxTokenizer};
 #[cfg(feature = "semantic-onnx")]
-use crate::semantic_onnx_tokenizer::{OnnxTokenizer, resolve_sentencepiece_path};
+use crate::semantic_onnx::{Postprocess, SharedOnnxEmbedder};
 use rbuilder_error::{Error, Result};
 use std::path::{Path, PathBuf};
 
@@ -67,19 +67,57 @@ pub fn load_code_daemon_embedder(
 ) -> Result<SharedOnnxEmbedder> {
     validate_mrl_dimensions(dimensions)?;
     let sp_path = resolve_sentencepiece_path(model_path, tokenizer_path)?;
+    load_code_daemon_with_tokenizer(&sp_path, dimensions, |tokenizer| {
+        SharedOnnxEmbedder::load_with(
+            model_path,
+            CODE_DAEMON_MODEL_ID,
+            dimensions,
+            CODE_DAEMON_NATIVE_DIMS,
+            tokenizer,
+            Postprocess::CodeDaemonMrl,
+        )
+    })
+}
+
+/// Load the bundled code-daemon embedder compiled into the rBuilder binary.
+#[cfg(feature = "semantic-onnx")]
+pub fn load_embedded_code_daemon_embedder(dimensions: usize) -> Result<SharedOnnxEmbedder> {
+    use crate::semantic_embedded::{
+        EMBEDDED_MODEL_DATA, EMBEDDED_MODEL_DATA_NAME, EMBEDDED_MODEL_ONNX,
+    };
+
+    validate_mrl_dimensions(dimensions)?;
+    let sp_path = crate::semantic_embedded::embedded_tokenizer_path()?;
+    load_code_daemon_with_tokenizer(sp_path, dimensions, |tokenizer| {
+        SharedOnnxEmbedder::load_from_embedded(
+            EMBEDDED_MODEL_ONNX,
+            EMBEDDED_MODEL_DATA_NAME,
+            EMBEDDED_MODEL_DATA,
+            CODE_DAEMON_MODEL_ID,
+            dimensions,
+            CODE_DAEMON_NATIVE_DIMS,
+            tokenizer,
+            Postprocess::CodeDaemonMrl,
+        )
+    })
+}
+
+#[cfg(feature = "semantic-onnx")]
+fn load_code_daemon_with_tokenizer<F>(
+    sp_path: &Path,
+    dimensions: usize,
+    load: F,
+) -> Result<SharedOnnxEmbedder>
+where
+    F: FnOnce(OnnxTokenizer) -> Result<SharedOnnxEmbedder>,
+{
+    validate_mrl_dimensions(dimensions)?;
     let tokenizer = OnnxTokenizer::SentencePiece {
-        path: sp_path,
+        path: sp_path.to_path_buf(),
         max_seq_len: CODE_DAEMON_MAX_SEQ_LEN,
         bos_id: 2,
         eos_id: 3,
         pad_id: 0,
     };
-    SharedOnnxEmbedder::load_with(
-        model_path,
-        CODE_DAEMON_MODEL_ID,
-        dimensions,
-        CODE_DAEMON_NATIVE_DIMS,
-        tokenizer,
-        Postprocess::CodeDaemonMrl,
-    )
+    load(tokenizer)
 }
