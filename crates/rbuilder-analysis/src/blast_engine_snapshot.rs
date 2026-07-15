@@ -73,6 +73,22 @@ impl BlastEngineSnapshot {
         Ok(())
     }
 
+    /// Read the embedded graph digest without deserializing reachability rows.
+    pub fn read_graph_digest(path: &Path) -> Result<Option<String>> {
+        if !path.exists() {
+            return Ok(None);
+        }
+        let file = File::open(path)?;
+        // SAFETY: read-only map for parsing the digest prefix.
+        let mmap = unsafe { memmap2::Mmap::map(&file)? };
+        Ok(parse_graph_digest_from_mmap(&mmap))
+    }
+
+    /// Returns true when an on-disk snapshot matches the expected graph digest.
+    pub fn digest_matches(path: &Path, expected: &str) -> Result<bool> {
+        Ok(Self::read_graph_digest(path)?.as_deref() == Some(expected))
+    }
+
     /// Load snapshot from disk via mmap (avoids an extra full-file buffer copy).
     pub fn load_from_path(path: &Path) -> Result<Self> {
         let file = File::open(path)?;
@@ -272,6 +288,30 @@ fn reachability_from_snapshot_eager_only(snapshot: &BlastEngineSnapshot) -> Resu
     Ok(reachability)
 }
 
+fn parse_graph_digest_from_mmap(mmap: &[u8]) -> Option<String> {
+    if mmap.len() < 16 || mmap[0..4] != BLAST_SNAPSHOT_MAGIC {
+        return None;
+    }
+    let version = u32::from_le_bytes(mmap[4..8].try_into().ok()?);
+    if version != BLAST_SNAPSHOT_VERSION && version != BLAST_SNAPSHOT_VERSION_V1 {
+        return None;
+    }
+    let payload_len = u64::from_le_bytes(mmap[8..16].try_into().ok()?) as usize;
+    let payload = mmap.get(16..16usize.checked_add(payload_len)?)?;
+    parse_bincode_leading_string(payload)
+}
+
+/// First field of [`BlastEngineSnapshot`] is `graph_digest: String` (bincode u64 len + utf8).
+fn parse_bincode_leading_string(payload: &[u8]) -> Option<String> {
+    if payload.len() < 8 {
+        return None;
+    }
+    let len = u64::from_le_bytes(payload[0..8].try_into().ok()?) as usize;
+    let end = 8usize.checked_add(len)?;
+    let bytes = payload.get(8..end)?;
+    std::str::from_utf8(bytes).ok().map(str::to_string)
+}
+
 fn parse_blast_payload(bytes: &[u8]) -> Result<BlastEngineSnapshot> {
     if bytes.len() < 16 {
         return Err(Error::SerdeError("blast snapshot truncated".into()));
@@ -313,6 +353,29 @@ pub fn try_load_engine(repo_root: &Path, graph_digest: &str) -> Result<Option<Bl
 mod tests {
     use super::*;
     use tempfile::TempDir;
+
+    #[test]
+    fn read_graph_digest_without_full_deserialize() {
+        let tmp = TempDir::new().unwrap();
+        let path = tmp.path().join("blast_engine.snapshot.bin");
+        let snap = BlastEngineSnapshot {
+            graph_digest: "abc123digest".into(),
+            scc_count: 2,
+            dag_edges: vec![],
+            scc_members: vec![vec![], vec![]],
+            scc_names: vec!["a".into(), "b".into()],
+            node_to_scc: vec![],
+            reachability_words: vec![],
+            reachability_rows: vec![],
+        };
+        snap.write_to_path(&path).unwrap();
+        assert_eq!(
+            BlastEngineSnapshot::read_graph_digest(&path).unwrap().as_deref(),
+            Some("abc123digest")
+        );
+        assert!(BlastEngineSnapshot::digest_matches(&path, "abc123digest").unwrap());
+        assert!(!BlastEngineSnapshot::digest_matches(&path, "other").unwrap());
+    }
 
     #[test]
     fn compress_round_trip() {
