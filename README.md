@@ -152,6 +152,7 @@ Walkthrough on a real Java repo → **[coolstore example](docs/user-guide.md#3-e
 ```bash
 git clone https://github.com/sshaaf/rBuilder.git
 cd rBuilder
+git lfs pull   # bundled code-daemon ONNX weights (~206 MB)
 cargo build --release
 ```
 

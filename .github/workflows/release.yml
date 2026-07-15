@@ -64,6 +64,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
         with:
+          lfs: true
           ref: ${{ github.event_name == 'push' && github.ref || (inputs.tag != '' && inputs.tag || inputs.ref) }}
 
       - name: Install Rust toolchain
@@ -129,6 +130,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
         with:
+          lfs: true
           ref: ${{ github.event_name == 'push' && github.ref || (inputs.tag != '' && inputs.tag || inputs.ref) }}
 
       - name: Download all platform archives
