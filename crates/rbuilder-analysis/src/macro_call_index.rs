@@ -246,6 +246,28 @@ impl MacroCallIndex {
         self.node_count == backend.node_count() && self.edge_count == backend.edge_count()
     }
 
+    /// Returns true when the index fingerprint matches the given snapshot digest.
+    pub fn is_valid_for_digest(&self, graph_digest: &str) -> bool {
+        self.graph_fingerprint.graph_digest.as_deref() == Some(graph_digest)
+    }
+
+    /// True when bincode index and SQLite lookup DB are still valid for this graph.
+    pub fn caches_are_current(
+        macro_path: &Path,
+        lookup_db_path: &Path,
+        repo_root: &Path,
+        backend: &MemoryBackend,
+        graph_digest: &str,
+    ) -> Result<bool> {
+        let Some(index) = Self::load(macro_path)? else {
+            return Ok(false);
+        };
+        if !index.is_valid_for_digest(graph_digest) || !index.is_valid_for(backend) {
+            return Ok(false);
+        }
+        crate::macro_call_lookup::MacroCallLookupDb::is_valid_for_repo(lookup_db_path, repo_root)
+    }
+
     /// Returns true when the on-disk graph matches the index fingerprint.
     pub fn is_valid_for_graph_file(&self, graph_db_path: &Path) -> Result<bool> {
         if !self.graph_fingerprint.matches_graph_file(graph_db_path)? {

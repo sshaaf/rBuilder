@@ -40,11 +40,13 @@ pub(crate) fn run_full_analysis(
     use crate::discovery::{DiscoveryConfig, FileDiscoverer};
     use crate::incremental::FileTracker;
     use crate::languages::registry::LanguageRegistry;
-    use crate::pipeline::{PipelineConfig, ProcessingPipeline};
+    use crate::pipeline::{PipelineConfig, PipelineStats, ProcessingPipeline};
     use rayon::prelude::*;
+    use rbuilder_graph::code_graph::CodeGraph;
     use rbuilder_graph::PreparedGraphSnapshot;
     use std::path::Path;
     use std::sync::Arc;
+    use std::time::Duration;
 
     let root = Path::new(path);
     let mut discovery = DiscoveryConfig::default();
@@ -104,15 +106,40 @@ pub(crate) fn run_full_analysis(
     let discoverer = FileDiscoverer::with_config(Arc::clone(&registry), discovery_config.clone());
     let files = discoverer.discover(root)?;
 
-    // Index the repository
+    let snapshot_path = rbuilder_graph::snapshot::MmappedGraphSnapshot::default_path(root);
+    let mut file_tracker = FileTracker::load(root).unwrap_or_else(|_| FileTracker::new(root));
+    let file_changes = file_tracker.detect_changes(&files)?;
+
+    // Index the repository (or hydrate from snapshot when sources are unchanged)
     let index_start = Instant::now();
-    let (graph, index_stats) = {
-        let _span = if verbose {
-            Some(info_span!("indexing").entered())
-        } else {
-            None
+    let graph_from_snapshot =
+        file_changes.is_empty() && snapshot_path.is_file();
+    let (graph, index_stats) = if graph_from_snapshot {
+        let load_start = Instant::now();
+        let graph = CodeGraph::open_snapshot(&snapshot_path)?;
+        let load_elapsed = load_start.elapsed();
+        if verbose {
+            debug!(
+                path = %snapshot_path.display(),
+                nodes = graph.node_count(),
+                edges = graph.edge_count(),
+                "No file changes — loaded graph from snapshot"
+            );
+        }
+        let stats = PipelineStats {
+            files_discovered: files.len(),
+            files_processed: files.len(),
+            files_failed: 0,
+            nodes_created: graph.node_count(),
+            edges_created: graph.edge_count(),
+            duration: load_elapsed,
+            extract_duration: Duration::default(),
+            graph_build_duration: load_elapsed,
         };
-        pipeline.process_repository(root)?
+        (graph, stats)
+    } else {
+        let (graph, stats) = pipeline.process_repository(root)?;
+        (graph, stats)
     };
     profile.index_pipeline.secs = secs(index_start.elapsed());
     profile.index_extract.secs = secs(index_stats.extract_duration);
@@ -120,7 +147,15 @@ pub(crate) fn run_full_analysis(
     profile.nodes = index_stats.nodes_created;
 
     if human_output {
-        if verbose {
+        if graph_from_snapshot {
+            info!(
+                "[✓] Loaded {} files from snapshot -> {} nodes, {} edges ({:.1}s)",
+                index_stats.files_discovered,
+                index_stats.nodes_created,
+                index_stats.edges_created,
+                index_stats.duration.as_secs_f64()
+            );
+        } else if verbose {
             info!(
                 files = index_stats.files_processed,
                 nodes = index_stats.nodes_created,
@@ -154,7 +189,13 @@ pub(crate) fn run_full_analysis(
 
     // One prepared snapshot for topology views, digest, and mmap write (Sprint B dedup).
     let prepared = PreparedGraphSnapshot::from_backend(graph.backend())?;
-    let graph_digest = prepared.content_digest.clone();
+    let graph_digest = if graph_from_snapshot {
+        rbuilder_graph::snapshot::MmappedGraphSnapshot::open(&snapshot_path)?
+            .content_digest()?
+            .to_string()
+    } else {
+        prepared.content_digest.clone()
+    };
 
     // Initialize columnar analysis results
     use crate::analysis::AnalysisResults;
@@ -601,12 +642,21 @@ pub(crate) fn run_full_analysis(
     let blast_snap_start = Instant::now();
     {
         use crate::analysis::BlastEngineSnapshot;
-        let blast_snap = engine.to_engine_snapshot(graph_digest.clone());
         let blast_path = BlastEngineSnapshot::default_path(root);
-        if let Err(err) = blast_snap.write_to_path(&blast_path) {
-            warn!(error = %err, "Failed to save blast engine snapshot");
-        } else if verbose {
-            debug!(path = %blast_path.display(), "Blast engine snapshot saved");
+        if BlastEngineSnapshot::digest_matches(&blast_path, &graph_digest)? {
+            if verbose {
+                debug!(
+                    path = %blast_path.display(),
+                    "Blast engine snapshot unchanged — skipping rewrite"
+                );
+            }
+        } else {
+            let blast_snap = engine.to_engine_snapshot(graph_digest.clone());
+            if let Err(err) = blast_snap.write_to_path(&blast_path) {
+                warn!(error = %err, "Failed to save blast engine snapshot");
+            } else if verbose {
+                debug!(path = %blast_path.display(), "Blast engine snapshot saved");
+            }
         }
     }
     profile.blast_snapshot.secs = secs(blast_snap_start.elapsed());
@@ -615,52 +665,68 @@ pub(crate) fn run_full_analysis(
     let macro_start = Instant::now();
     {
         use crate::analysis::MacroCallIndex;
-        let macro_index = MacroCallIndex::from_results(
-            db_path,
-            backend,
-            &blast_updates,
-            Some(graph_digest.clone()),
-        )?;
-        let macro_path = root.join(".rbuilder/macro_call_index.bin");
-        if let Err(err) = macro_index.save(&macro_path) {
-            warn!(error = %err, "Failed to save macro_call_index cache");
-        } else if verbose {
-            debug!(
-                path = %macro_path.display(),
-                entries = macro_index.entries.len(),
-                "Macro call index saved"
-            );
-        }
-
         use crate::analysis::MacroCallLookupDb;
+        let macro_path = root.join(".rbuilder/macro_call_index.bin");
         let lookup_db_path = MacroCallLookupDb::default_path(root);
-        let lookup_rows = macro_index.unique_lookup_rows();
-        let candidate_rows = macro_index.all_candidate_rows();
-        if let Err(err) = MacroCallLookupDb::replace_all(&lookup_db_path, &lookup_rows) {
-            warn!(error = %err, "Failed to save macro_call_index.db");
-        } else if let Err(err) =
-            MacroCallLookupDb::replace_candidates(&lookup_db_path, &candidate_rows)
-        {
-            warn!(error = %err, "Failed to save macro_call_candidates table");
-        } else if let Err(err) = MacroCallLookupDb::write_meta_with_digest(
+
+        if MacroCallIndex::caches_are_current(
+            &macro_path,
             &lookup_db_path,
-            if write_json_graph {
-                std::fs::metadata(db_path).map(|m| m.len()).unwrap_or(0)
-            } else {
-                0
-            },
-            backend.node_count(),
-            backend.edge_count(),
-            Some(graph_digest.as_str()),
-        ) {
-            warn!(error = %err, "Failed to write macro_call_index.db metadata");
-        } else if verbose {
-            debug!(
-                path = %lookup_db_path.display(),
-                rows = lookup_rows.len(),
-                candidates = candidate_rows.len(),
-                "Macro call lookup DB saved"
-            );
+            root,
+            backend,
+            &graph_digest,
+        )? {
+            if verbose {
+                debug!(
+                    path = %macro_path.display(),
+                    "Macro call index unchanged — skipping rebuild"
+                );
+            }
+        } else {
+            let macro_index = MacroCallIndex::from_results(
+                db_path,
+                backend,
+                &blast_updates,
+                Some(graph_digest.clone()),
+            )?;
+            if let Err(err) = macro_index.save(&macro_path) {
+                warn!(error = %err, "Failed to save macro_call_index cache");
+            } else if verbose {
+                debug!(
+                    path = %macro_path.display(),
+                    entries = macro_index.entries.len(),
+                    "Macro call index saved"
+                );
+            }
+
+            let lookup_rows = macro_index.unique_lookup_rows();
+            let candidate_rows = macro_index.all_candidate_rows();
+            if let Err(err) = MacroCallLookupDb::replace_all(&lookup_db_path, &lookup_rows) {
+                warn!(error = %err, "Failed to save macro_call_index.db");
+            } else if let Err(err) =
+                MacroCallLookupDb::replace_candidates(&lookup_db_path, &candidate_rows)
+            {
+                warn!(error = %err, "Failed to save macro_call_candidates table");
+            } else if let Err(err) = MacroCallLookupDb::write_meta_with_digest(
+                &lookup_db_path,
+                if write_json_graph {
+                    std::fs::metadata(db_path).map(|m| m.len()).unwrap_or(0)
+                } else {
+                    0
+                },
+                backend.node_count(),
+                backend.edge_count(),
+                Some(graph_digest.as_str()),
+            ) {
+                warn!(error = %err, "Failed to write macro_call_index.db metadata");
+            } else if verbose {
+                debug!(
+                    path = %lookup_db_path.display(),
+                    rows = lookup_rows.len(),
+                    candidates = candidate_rows.len(),
+                    "Macro call lookup DB saved"
+                );
+            }
         }
     }
     profile.macro_index.secs = secs(macro_start.elapsed());
@@ -740,19 +806,26 @@ pub(crate) fn run_full_analysis(
 
     // Save graph topology (no analysis properties!)
     let save_tracker_start = Instant::now();
-    let mut tracker = FileTracker::new(root);
-    tracker.index_files(&files, &graph)?;
-    tracker.save()?;
+    file_tracker.index_files(&files, &graph)?;
+    file_tracker.save()?;
     profile.save_tracker.secs = secs(save_tracker_start.elapsed());
 
     std::fs::create_dir_all(root.join(".rbuilder"))?;
     let save_snapshot_start = Instant::now();
-    let snapshot_path = rbuilder_graph::snapshot::MmappedGraphSnapshot::default_path(root);
-    prepared.write_to_path(&snapshot_path)?;
-    profile.save_snapshot.secs = secs(save_snapshot_start.elapsed());
-    if verbose {
-        debug!(path = %snapshot_path.display(), "Graph binary snapshot saved");
+    if graph_from_snapshot {
+        if verbose {
+            debug!(
+                path = %snapshot_path.display(),
+                "Graph snapshot unchanged — skipping rewrite"
+            );
+        }
+    } else {
+        prepared.write_to_path(&snapshot_path)?;
+        if verbose {
+            debug!(path = %snapshot_path.display(), "Graph binary snapshot saved");
+        }
     }
+    profile.save_snapshot.secs = secs(save_snapshot_start.elapsed());
 
     if write_json_graph {
         let json = graph.export_json()?;
