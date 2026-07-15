@@ -602,15 +602,28 @@ pub(crate) fn run_full_analysis(
 
     // Analyze all functions in parallel (O(1) lookup per function, read-only engine)
     let query_start = Instant::now();
-    let blast_results: Vec<(uuid::Uuid, crate::analysis::BlastRadiusResult)> = functions
-        .par_iter()
-        .filter_map(|func_node| {
-            engine
-                .analyze(func_node.id)
-                .ok()
-                .map(|result| (func_node.id, result))
-        })
-        .collect();
+    let skip_bulk_blast = engine.uses_on_demand_reachability();
+    if skip_bulk_blast {
+        if verbose {
+            debug!(
+                functions = functions.len(),
+                "Flat graph — skipping bulk blast-radius scan (use `blast-radius` for on-demand queries)"
+            );
+        }
+    }
+    let blast_results: Vec<(uuid::Uuid, crate::analysis::BlastRadiusResult)> = if skip_bulk_blast {
+        Vec::new()
+    } else {
+        functions
+            .par_iter()
+            .filter_map(|func_node| {
+                engine
+                    .analyze(func_node.id)
+                    .ok()
+                    .map(|result| (func_node.id, result))
+            })
+            .collect()
+    };
 
     let mut high_impact_count = 0;
     let mut max_impact_score = 0.0f64;
