@@ -186,7 +186,7 @@ rbuilder-lang-typescript = { workspace = true }
 rbuilder-lang-rust = { workspace = true }
 
 [features]
-default = []
+default = ["semantic-onnx"]
 proc-macros = ["rbuilder-macros"]
 semantic-onnx = ["rbuilder-analysis/semantic-onnx"]
 

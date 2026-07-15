@@ -276,8 +276,8 @@ pub enum SemanticCommands {
         #[arg(long, default_value_t = true)]
         incremental: bool,
 
-        /// Embedder backend: hash (default), onnx (generic `--model`), or code-daemon
-        #[arg(long, value_enum, default_value = "hash")]
+        /// Embedder backend: code-daemon (default, bundled), hash, or onnx (generic `--model`)
+        #[arg(long, value_enum, default_value = "code-daemon")]
         embedder: semantic::CliEmbedderKind,
 
         /// Path to ONNX model (required for `--embedder onnx`; optional for code-daemon)

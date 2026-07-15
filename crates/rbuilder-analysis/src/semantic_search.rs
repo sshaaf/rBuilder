@@ -1,8 +1,8 @@
 //! Opt-in semantic search over function symbols using binary-quantized embeddings.
 //!
 //! Embeddings are stored separately from [`AnalysisResults`] in `.rbuilder/semantic_index.bin`
-//! so the default discover path stays lean. Default embedder is sign-hash; ONNX is available
-//! with the `semantic-onnx` feature.
+//! so the default discover path stays lean. Default semantic embedder is bundled
+//! code-daemon (requires the `semantic-onnx` feature, enabled by default).
 
 use crate::semantic_embedder::{embedder_for_index, OnnxReloadOptions, SemanticEmbedder};
 use crate::semantic_extract::extract_body_tokens_for_node;
@@ -21,7 +21,7 @@ pub const SEMANTIC_INDEX_SCHEMA_VERSION: u32 = 2;
 pub const SEMANTIC_INDEX_FILE: &str = "semantic_index.bin";
 
 /// Default float dimensions before sign quantization (128 bytes per vector).
-pub const DEFAULT_EMBEDDING_DIMENSIONS: usize = 1024;
+pub const DEFAULT_EMBEDDING_DIMENSIONS: usize = 256;
 
 /// Identifier for the built-in deterministic hash embedder.
 pub const SIGN_HASH_MODEL_ID: &str = "sign-hash-v1";

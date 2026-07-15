@@ -4,9 +4,11 @@ use crate::semantic_embedder::SemanticEmbedder;
 use crate::semantic_onnx_tokenizer::OnnxTokenizer;
 use ndarray::{Array2, ArrayD, Axis};
 use ort::session::Session;
+use ort::session::builder::SessionBuilder;
 use ort::value::TensorRef;
 use ort::inputs;
 use rbuilder_error::{Error, Result};
+use std::borrow::Cow;
 use std::path::Path;
 use std::sync::Mutex;
 
@@ -72,7 +74,39 @@ impl SharedOnnxEmbedder {
 
         let mut builder = Session::builder().map_err(map_ort)?;
         let session = builder.commit_from_file(path).map_err(map_ort)?;
+        Self::from_session(model_id, dimensions, native_dims, tokenizer, postprocess, session)
+    }
 
+    /// Load ONNX graph + external weight blob from compiled-in bytes.
+    pub fn load_from_embedded(
+        model_bytes: &'static [u8],
+        external_data_name: &'static str,
+        external_data_bytes: &'static [u8],
+        model_id: &str,
+        dimensions: usize,
+        native_dims: usize,
+        tokenizer: OnnxTokenizer,
+        postprocess: Postprocess,
+    ) -> Result<Self> {
+        let mut builder = Session::builder().map_err(map_ort)?;
+        builder = builder
+            .with_external_initializer_file_in_memory(
+                Path::new(external_data_name),
+                Cow::Borrowed(external_data_bytes),
+            )
+            .map_err(map_builder)?;
+        let session = builder.commit_from_memory(model_bytes).map_err(map_ort)?;
+        Self::from_session(model_id, dimensions, native_dims, tokenizer, postprocess, session)
+    }
+
+    fn from_session(
+        model_id: &str,
+        dimensions: usize,
+        native_dims: usize,
+        tokenizer: OnnxTokenizer,
+        postprocess: Postprocess,
+        session: Session,
+    ) -> Result<Self> {
         let input_ids_name = session
             .inputs()
             .first()
@@ -272,6 +306,10 @@ fn l2_normalize(values: &mut [f32]) {
 
 fn map_ort(err: ort::Error) -> Error {
     Error::ConfigError(format!("ONNX Runtime: {err}"))
+}
+
+fn map_builder(err: ort::Error<SessionBuilder>) -> Error {
+    Error::ConfigError(format!("ONNX session builder: {err}"))
 }
 
 fn map_shape(err: ndarray::ShapeError) -> Error {

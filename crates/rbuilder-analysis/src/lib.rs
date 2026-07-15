@@ -29,6 +29,8 @@ pub mod migration;
 pub mod pdg;
 pub mod policy;
 pub mod results;
+#[cfg(feature = "semantic-onnx")]
+pub mod semantic_embedded;
 pub mod semantic_code_daemon;
 pub mod semantic_embedder;
 pub mod semantic_extract;
@@ -126,7 +128,9 @@ pub use semantic_code_daemon::{
     CODE_DAEMON_ONNX_FILE, CODE_DAEMON_TOKENIZER_FILE,
 };
 #[cfg(feature = "semantic-onnx")]
-pub use semantic_code_daemon::load_code_daemon_embedder;
+pub use semantic_code_daemon::{
+    load_code_daemon_embedder, load_embedded_code_daemon_embedder,
+};
 pub use semantic_embedder::{
     embedder_for_index, resolve_embedder, EmbedderChoice, OnnxReloadOptions, SemanticEmbedder,
     SignHashEmbedder,
