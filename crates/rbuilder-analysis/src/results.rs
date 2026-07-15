@@ -197,6 +197,51 @@ pub struct BlastRadiusMetrics {
     pub scc_size: u32,
 }
 
+/// Columnar 256-bit token bloom sketches (eager structural index at discover time).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StructuralSketchTable {
+    /// Four u64 words per compact node id (`256` bits).
+    pub token_blooms: Vec<u64>,
+}
+
+impl StructuralSketchTable {
+    /// Create an empty table sized for `node_count` graph nodes.
+    pub fn with_capacity(node_count: usize) -> Self {
+        Self {
+            token_blooms: vec![0; node_count * rbuilder_graph::TOKEN_BLOOM_WORDS],
+        }
+    }
+
+    /// Write one bloom sketch for `compact_id`.
+    pub fn set_bloom(&mut self, compact_id: CompactId, bloom: rbuilder_graph::TokenBloom) {
+        let offset = compact_id as usize * rbuilder_graph::TOKEN_BLOOM_WORDS;
+        if offset + rbuilder_graph::TOKEN_BLOOM_WORDS <= self.token_blooms.len() {
+            self.token_blooms[offset..offset + rbuilder_graph::TOKEN_BLOOM_WORDS]
+                .copy_from_slice(&bloom);
+        }
+    }
+
+    /// Read the bloom sketch for `compact_id`.
+    pub fn bloom(&self, compact_id: CompactId) -> Option<rbuilder_graph::TokenBloom> {
+        let offset = compact_id as usize * rbuilder_graph::TOKEN_BLOOM_WORDS;
+        let words = self.token_blooms.get(offset..offset + rbuilder_graph::TOKEN_BLOOM_WORDS)?;
+        Some([words[0], words[1], words[2], words[3]])
+    }
+
+    /// True when every keyword matches via per-keyword bloom probes.
+    pub fn satisfies_keyword_and(&self, compact_id: CompactId, keywords: &[String]) -> bool {
+        self.bloom(compact_id)
+            .is_some_and(|bloom| rbuilder_graph::satisfies_keyword_and(keywords, &bloom))
+    }
+
+    /// Fraction of keywords matched in the stored bloom sketch.
+    pub fn keyword_overlap(&self, compact_id: CompactId, keywords: &[String]) -> f64 {
+        self.bloom(compact_id)
+            .map(|bloom| rbuilder_graph::keyword_overlap_score(keywords, &bloom))
+            .unwrap_or(0.0)
+    }
+}
+
 /// Complete analysis results for a repository.
 ///
 /// This structure holds all analysis results in columnar format, completely
@@ -216,6 +261,9 @@ pub struct AnalysisResults {
     pub centrality: Option<CentralityTable>,
     /// Blast radius analysis results
     pub blast_radius: Option<BlastRadiusTable>,
+    /// Eager token bloom sketches copied from graph nodes at discover time
+    #[serde(default)]
+    pub structural_sketch: Option<StructuralSketchTable>,
 }
 
 impl AnalysisResults {
@@ -239,6 +287,7 @@ impl AnalysisResults {
             complexity: None,
             centrality: None,
             blast_radius: None,
+            structural_sketch: None,
         }
     }
 
@@ -308,6 +357,32 @@ impl AnalysisResults {
     pub fn init_blast_radius(&mut self) -> &mut BlastRadiusTable {
         self.blast_radius = Some(BlastRadiusTable::with_capacity(self.node_count()));
         self.blast_radius.as_mut().unwrap()
+    }
+
+    /// Initialize structural sketch table.
+    pub fn init_structural_sketch(&mut self) -> &mut StructuralSketchTable {
+        self.structural_sketch = Some(StructuralSketchTable::with_capacity(self.node_count()));
+        self.structural_sketch.as_mut().unwrap()
+    }
+
+    /// Copy eager token blooms from graph function nodes into columnar storage.
+    pub fn fill_structural_sketch_from_graph(
+        &mut self,
+        backend: &rbuilder_graph::backend::MemoryBackend,
+    ) -> rbuilder_error::Result<()> {
+        let mut rows = Vec::new();
+        backend.for_each_node(|node| {
+            if let Some(bloom) = node.token_bloom {
+                if let Some(compact_id) = self.get_compact_id(node.id) {
+                    rows.push((compact_id, bloom));
+                }
+            }
+        })?;
+        let table = self.init_structural_sketch();
+        for (compact_id, bloom) in rows {
+            table.set_bloom(compact_id, bloom);
+        }
+        Ok(())
     }
 
     /// Get community ID for a UUID.

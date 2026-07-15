@@ -9,7 +9,7 @@ AI coding agents default to reading files sequentially. That burns context, miss
 
 ## Demo
 
-**~28s** dashboard tour — discover metrics, GQL, graph metrics, CFG/PDG, slicing, blast radius, taint, migration planner, CI policy, and export.
+**~65s** dashboard tour (5 s per feature) — discover metrics, GQL, semantic search, graph metrics, CFG/PDG, slicing, blast radius, taint, migration planner, CI policy, and export. Each segment highlights the active tab and its panel.
 
 https://github.com/user-attachments/assets/547bf5d1-2058-4668-b990-35def9c38636
 
@@ -53,6 +53,7 @@ Most codebase tools stop at **text search**, **file trees**, or a **shallow call
 
 | Feature | What it gives you | Design doc |
 |---------|-------------------|------------|
+| **Semantic search** | **Natural-language and keyword search** over functions — bundled code-daemon embeddings, Hamming retrieval, late fusion with blast/PageRank/sketches | [semantic-search-design.md](docs/design/semantic-search-design.md) |
 | **Blast radius** | Pre-computed **reachability** over the call graph — upstream impact, scores, policy gates, sub-second on large repos | [blast-radius-design.md](docs/design/blast-radius-design.md) |
 | **Program slicing** | **Backward / forward slice** — only the statements that affect (or are affected by) a line and variable | [program-slicing-design.md](docs/design/program-slicing-design.md) |
 | **Taint analysis** | **Source → sink** flows (HTTP params → SQL, shell, render, …) with sanitizer awareness | [taint-analysis-design.md](docs/design/taint-analysis-design.md) |
@@ -64,7 +65,7 @@ Most codebase tools stop at **text search**, **file trees**, or a **shallow call
 | **Migration planner** | **Package-level roadmap** — PageRank + harmonic centrality − blast radius; dependency-aware schedule and priority rank; ForceAtlas2 graph in the dashboard | [migration-planner-design.md](docs/design/migration-planner-design.md) |
 | **CI policy checks** | **`check`** — fail builds when blast-radius rules are violated on touched symbols | [ci-policy-checks-design.md](docs/design/ci-policy-checks-design.md) |
 
-All of the above share one index: run [`discover`](docs/Introduction.md#indexing-the-repository-discover) once (use [`discover --cfg`](docs/Introduction.md#indexing-the-repository-discover) or `--all` for full CFG/PDG/taint archives and migration exports). Explore in the CLI, pipe **JSON** to agents, or open the **[dashboard](docs/Introduction.md#dashboard-visual-exploration)** (including the **Migration** tab).
+All of the above share one index: run [`discover`](docs/Introduction.md#indexing-the-repository-discover) once (use [`discover --cfg`](docs/Introduction.md#indexing-the-repository-discover) or `--all` for full CFG/PDG/taint archives and migration exports). **Semantic search** is opt-in: `rbuilder semantic index` after discover. Explore in the CLI, pipe **JSON** to agents, or open the **[dashboard](docs/Introduction.md#dashboard-visual-exploration)** (including **Search** and **Migration** tabs).
 
 **Deep dive on every feature → [Introduction](docs/Introduction.md) · [Feature designs](docs/design/README.md)**
 
@@ -152,6 +153,7 @@ Walkthrough on a real Java repo → **[coolstore example](docs/user-guide.md#3-e
 ```bash
 git clone https://github.com/sshaaf/rBuilder.git
 cd rBuilder
+git lfs pull   # bundled code-daemon ONNX weights (~206 MB)
 cargo build --release
 ```
 

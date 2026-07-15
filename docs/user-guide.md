@@ -20,12 +20,13 @@ For JSON field reference see [cli-output-schemas.md](cli-output-schemas.md) and 
 8. [Program slicing and taint](#8-program-slicing-and-taint)
 9. [Inspect CFG / PDG / dominance](#9-inspect-cfg--pdg--dominance)
 10. [Graph metrics](#10-graph-metrics)
-11. [Export graph projections](#11-export-graph-projections)
-12. [CI policy check](#12-ci-policy-check)
-13. [HTTP server (`serve`)](#13-http-server-serve)
-14. [Recommended workflow](#14-recommended-workflow)
-15. [Command reference](#15-command-reference)
-16. [Troubleshooting](#16-troubleshooting)
+11. [Semantic search](#11-semantic-search)
+12. [Export graph projections](#12-export-graph-projections)
+13. [CI policy check](#13-ci-policy-check)
+14. [HTTP server (`serve`)](#14-http-server-serve)
+15. [Recommended workflow](#15-recommended-workflow)
+16. [Command reference](#16-command-reference)
+17. [Troubleshooting](#17-troubleshooting)
 
 ---
 
@@ -540,7 +541,41 @@ rbuilder -r "$REPO" -f json metrics --pagerank --iterations 50 | jq .
 
 ---
 
-## 11. Export graph projections
+## 11. Semantic search
+
+Semantic search is **opt-in** — it does not run during `discover`. Build a separate Hamming index over function symbols, then query by natural language or keywords.
+
+**Prerequisites:** `discover` completed; for the default embedder, clone with `git lfs pull` when building rBuilder from source (bundled code-daemon ONNX weights).
+
+```bash
+# Build semantic index (default: code-daemon, 256-d)
+rbuilder -r "$REPO" semantic index
+
+# Incremental rebuild — reuse rows when body hash unchanged
+rbuilder -r "$REPO" semantic index --incremental
+
+# Query (JSON for agents)
+rbuilder -r "$REPO" -f json semantic query "shopping cart checkout" --limit 10
+rbuilder -r "$REPO" -f json semantic query "OrderService" --keyword-and --fusion
+
+# Hash embedder (no ONNX) — e.g. CI or --no-default-features builds
+rbuilder -r "$REPO" semantic index --embedder hash
+```
+
+| Flag | Purpose |
+|------|---------|
+| `--fusion` / `--no-fusion` | Late re-rank with blast, PageRank, name, token-bloom sketch |
+| `--keyword-and` | Every query token must match metadata or body sketch |
+| `--expand neighbors\|blast\|gql\|all` | Hybrid expansion after top hits |
+| `--embedder hash\|onnx\|code-daemon` | Embedding backend |
+
+Dashboard: **`rbuilder serve --open`** → **Search** tab (requires HTTP semantic API).
+
+Design → **[Semantic search design](design/semantic-search-design.md)**
+
+---
+
+## 12. Export graph projections
 
 `export` writes the graph or a **filter-selected** subgraph to a file. The `--query` flag uses **filter syntax**, not GQL `MATCH`:
 
@@ -572,7 +607,7 @@ For GQL pattern matching, use `rbuilder gql` and pipe results — or `rbuilder s
 
 ---
 
-## 12. CI policy check
+## 13. CI policy check
 
 `check` evaluates blast-radius policy rules against functions changed in the current git working tree (or all functions if git is unavailable).
 
@@ -586,7 +621,7 @@ Exit code **1** when violations are found — suitable for CI pipelines.
 
 ---
 
-## 13. HTTP server (`serve`)
+## 14. HTTP server (`serve`)
 
 `serve` starts a local HTTP server with the **dashboard** and **GQL query API** (default `http://127.0.0.1:8080/`).
 
@@ -599,6 +634,8 @@ rbuilder -r "$REPO" serve --open
 |----------|---------|
 | `/` | Dashboard UI |
 | `POST /api/query` | GQL / macros (JSON body) |
+| `GET /api/semantic/status` | Semantic index availability |
+| `POST /api/semantic/query` | Semantic search (JSON body) |
 | `/api/health` | Health check |
 
 Query from another terminal or an agent:
@@ -629,7 +666,7 @@ rbuilder -r "$REPO" serve --daemon --socket /tmp/rbuilder.sock --idle-secs 600
 
 ---
 
-## 14. Recommended workflow
+## 15. Recommended workflow
 
 ```bash
 # 1. Install and clone example
@@ -666,7 +703,7 @@ rbuilder -r "$REPO" export --export-format graphml \
 
 ---
 
-## 15. Command reference
+## 16. Command reference
 
 | Command | Purpose |
 |---------|---------|
@@ -678,7 +715,8 @@ rbuilder -r "$REPO" export --export-format graphml \
 | `metrics` | PageRank, betweenness, communities |
 | `export` | Serialize graph (json, graphml, dot, mermaid) |
 | `check` | CI policy gateway |
-| `serve` | HTTP dashboard + `/api/query` (default); `serve --daemon` for blast socket |
+| `semantic` | Opt-in function semantic index + query |
+| `serve` | HTTP dashboard + `/api/query` + `/api/semantic/*` (default); `serve --daemon` for blast socket |
 
 ### `discover` flags
 
@@ -694,7 +732,7 @@ rbuilder -r "$REPO" export --export-format graphml \
 
 ---
 
-## 16. Troubleshooting
+## 17. Troubleshooting
 
 ### `Graph not found` / `run discover first`
 

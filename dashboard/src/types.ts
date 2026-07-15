@@ -13,6 +13,7 @@ export interface DashboardManifest {
   };
   view?: ViewSection;
   analysis?: AnalysisSection;
+  semantic?: SemanticSection;
   metrics: {
     function_count: number;
     class_count: number;
@@ -67,6 +68,14 @@ export interface BlastFunctionScore {
   score: number;
   direct: number;
   zone: number;
+}
+
+export interface SemanticSection {
+  available: boolean;
+  functions_indexed: number;
+  model_id: string;
+  dimensions: number;
+  graph_digest?: string | null;
 }
 
 export interface AnalysisSection {

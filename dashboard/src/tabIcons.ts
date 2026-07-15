@@ -9,6 +9,7 @@ export interface TabDef {
 /** Tab nav icons — Bootstrap Icons equivalents of the legacy Font Awesome set. */
 export const DASHBOARD_TABS: TabDef[] = [
   { id: "graph", label: "Graph Visualization", icon: "bi-diagram-3" },
+  { id: "search", label: "Search", icon: "bi-search" },
   { id: "functions", label: "Functions", icon: "bi-code-slash" },
   { id: "cfg", label: "CFG / PDG Analysis", icon: "bi-bar-chart-line" },
   { id: "dataflow", label: "Dataflow", icon: "bi-bezier" },

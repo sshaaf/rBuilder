@@ -21,9 +21,15 @@ pub mod query;
 pub mod schema;
 /// Prepared and memory-mapped snapshot I/O.
 pub mod snapshot;
+pub mod structural_sketch;
 
 pub use code_graph::CodeGraph;
 pub use code_index::{hash_code, CodeIndex, CodeLocation};
+pub use structural_sketch::{
+    build_token_bloom, empty_bloom, keyword_in_bloom, keyword_overlap_score,
+    satisfies_keyword_and, tokenize_string_into, TokenBloom, MIN_TOKEN_LEN, TOKEN_BLOOM_BITS,
+    TOKEN_BLOOM_WORDS,
+};
 pub use columnar_snapshot::{ColumnarGraphMmap, COLUMNAR_SNAPSHOT_VERSION};
 pub use export::{export_json, import_json, GraphSnapshot};
 pub use migration::{migrate_snapshot, migrate_v1_to_v2};

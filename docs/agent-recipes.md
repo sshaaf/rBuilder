@@ -57,6 +57,20 @@ rbuilder -r "$REPO" -f json gql \
 
 ---
 
+## Recipe 3b — Natural-language function discovery
+
+```bash
+rbuilder -r "$REPO" semantic index
+rbuilder -r "$REPO" -f json semantic query "shopping cart checkout" --limit 10 \
+  | jq '.hits[] | {name, file_path, score: .fused_score}'
+rbuilder -r "$REPO" -f json semantic query "OrderService validate" --keyword-and --fusion \
+  | jq '.hits[:5]'
+```
+
+**Use when:** the agent knows intent but not exact symbol names; complements GQL `LIKE` patterns.
+
+---
+
 ## Recipe 4 — Call chain neighborhood
 
 ```bash

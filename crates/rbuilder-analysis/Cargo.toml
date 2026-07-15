@@ -1,6 +1,6 @@
 [package]
 name = "rbuilder-analysis"
-version = "0.2.0"
+version = "0.3.0"
 edition = "2021"
 description = "Graph analysis algorithms for rBuilder"
 license = "MIT OR Apache-2.0"
@@ -32,6 +32,25 @@ rusqlite = { version = "0.32", features = ["bundled"] }
 zstd = { workspace = true }
 memmap2 = "0.9"
 rayon = { workspace = true }
+
+[features]
+default = ["semantic-onnx"]
+semantic-onnx = ["dep:ort", "dep:ndarray", "dep:sentencepiece-rs"]
+
+[dependencies.ort]
+version = "2.0.0-rc.12"
+optional = true
+default-features = false
+features = ["std", "ndarray", "download-binaries", "copy-dylibs", "tls-rustls", "api-18"]
+
+[dependencies.ndarray]
+version = "0.17"
+optional = true
+features = ["std"]
+
+[dependencies.sentencepiece-rs]
+version = "0.2"
+optional = true
 
 [dev-dependencies]
 tempfile = "3"

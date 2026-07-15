@@ -1,7 +1,12 @@
 /**
- * Record a 25–30s rBuilder feature montage — card-focused, all features covered.
+ * Record an rBuilder dashboard feature montage — 5 seconds per feature.
+ *
+ * Each segment highlights the active tab in `.rb-main-tabs` and the tab's
+ * main content panel so viewers can see which area belongs to which feature.
  *
  * Prereq:
+ *   rbuilder -r /path/to/gbuilder discover . --all
+ *   rbuilder -r /path/to/gbuilder semantic index   # Search tab
  *   rbuilder -r /path/to/gbuilder serve --port 8080
  *
  * Usage:
@@ -20,13 +25,34 @@ const ROOT = path.resolve(import.meta.dirname, "../..");
 const OUT_DIR = path.join(ROOT, "docs/videos");
 const RAW_WEBM = path.join(OUT_DIR, "rbuilder-feature-demo.raw.webm");
 const OUT_MP4 = path.join(OUT_DIR, "rbuilder-feature-demo.mp4");
-const TARGET_SECS = Number(process.env.DEMO_MAX_SECS ?? "28");
+const SEC_PER_FEATURE = Number(process.env.DEMO_SEC_PER_FEATURE ?? "5");
+const HOLD_MS = Math.round(SEC_PER_FEATURE * 1000);
 
 const FN = process.env.CAPTURE_FN_DATAFLOW ?? "addEmbeddingSimilarityEdges";
 const FN_BLAST = process.env.CAPTURE_FN_BLAST ?? "addEmbeddingSimilarityEdges";
 const FN_TAINT = process.env.CAPTURE_FN_TAINT ?? "clearFileGraph";
+const SEMANTIC_QUERY = process.env.CAPTURE_SEMANTIC_QUERY ?? "embedding similarity graph";
 const SLICE_LINE = process.env.CAPTURE_SLICE_LINE ?? "45";
 const SLICE_VAR = process.env.CAPTURE_SLICE_VAR ?? "threshold";
+
+/** One segment per dashboard feature (order matches README feature list). */
+const FEATURE_SEGMENTS = [
+  { key: "discover", tab: null, panel: ".rb-stats-row", caption: "discover · graph snapshot & index metrics" },
+  { key: "gql", tab: "Graph Visualization", panel: ".graph-panel.h-100", caption: "GQL · package call graph" },
+  { key: "semantic-search", tab: "Search", panel: ".search-view", caption: "Semantic search · code-daemon · fusion ranking" },
+  { key: "graph-metrics", tab: "Functions", panel: ".functions-view, .functions-table", caption: "Graph metrics · PageRank · betweenness · blast" },
+  { key: "cfg", tab: "CFG / PDG Analysis", panel: ".cfg-detail, .cfg-graph-panel", caption: "CFG · control-flow blocks & dominators" },
+  { key: "pdg", tab: "Dataflow", panel: ".dataflow-graph-panel", caption: "PDG · data & control dependencies" },
+  { key: "dominance", tab: "Dataflow", panel: ".dataflow-graph-panel", caption: "Dominance · dominator tree & frontiers" },
+  { key: "program-slicing", tab: "Program Slicing", panel: ".slice-view", caption: "Program slicing · criterion & highlighted lines" },
+  { key: "blast-radius", tab: "Blast Radius", panel: ".blast-view", caption: "Blast radius · impact score & caller table" },
+  { key: "taint", tab: "Taint Analysis", panel: ".taint-view", caption: "Taint analysis · source → sink flows" },
+  { key: "migration", tab: "Migration", panel: ".migration-view, .migration-tuning", caption: "Migration planner · presets & package roadmap" },
+  { key: "ci-policy", tab: "Query Guide", panel: ".guide-view", caption: "CI policy · check · blast-radius gates" },
+  { key: "export", tab: "Query Guide", panel: ".guide-view", caption: "Export · GraphML · Mermaid · JSON subgraphs" },
+];
+
+const TARGET_SECS = FEATURE_SEGMENTS.length * SEC_PER_FEATURE;
 
 fs.mkdirSync(OUT_DIR, { recursive: true });
 
@@ -35,23 +61,33 @@ function sleep(ms) {
 }
 
 async function clickTab(page, label) {
-  await page.getByRole("button", { name: label, exact: true }).click();
-  await sleep(400);
+  const tab = page.locator(".rb-main-tabs").getByRole("button", { name: label, exact: true });
+  await tab.scrollIntoViewIfNeeded();
+  await tab.click();
+  await sleep(350);
 }
 
 async function selectFunction(page, name) {
   const search = page.locator('.function-list-sidebar input[type="search"]');
   if (await search.count()) {
     await search.fill("");
-    await sleep(150);
+    await sleep(120);
     await search.fill(name);
-    await sleep(450);
+    await sleep(400);
   }
   const item = page.locator(".function-list-item", {
     has: page.locator(".function-list-item-name", { hasText: name }),
   });
-  await item.first().click();
-  await sleep(550);
+  if ((await item.count()) > 0) {
+    await item.first().click();
+    await sleep(450);
+    return;
+  }
+  const fallback = page.locator(".function-list-item").first();
+  if (await fallback.count()) {
+    await fallback.click();
+    await sleep(450);
+  }
 }
 
 async function waitWasm(page) {
@@ -65,7 +101,7 @@ async function waitWasm(page) {
     },
     { timeout: 90000 },
   );
-  await sleep(1800);
+  await sleep(1200);
 }
 
 async function waitForBlastResults(page) {
@@ -77,7 +113,7 @@ async function waitForBlastResults(page) {
     },
     { timeout: 25000 },
   );
-  await sleep(600);
+  await sleep(400);
 }
 
 async function setCaption(page, text) {
@@ -120,46 +156,151 @@ async function clearHighlights(page) {
   });
 }
 
-/** Highlight one dashboard stat card by label text. */
-async function focusStatCard(page, label, ms, caption) {
+/** Highlight active tab button + main panel for HOLD_MS. */
+async function focusTabAndPanel(page, tabLabel, panelSelector, caption) {
   await setCaption(page, caption);
-  await page.evaluate((lbl) => {
-    for (const card of document.querySelectorAll(".stat-card")) {
-      if (!card.textContent?.includes(lbl)) continue;
-      card.scrollIntoView({ block: "center", behavior: "instant" });
-      card.setAttribute("data-rb-demo-highlight", "1");
-      card.style.outline = "3px solid #0d6efd";
-      card.style.outlineOffset = "3px";
-      card.style.boxShadow = "0 0 0 6px rgba(13, 110, 253, 0.15)";
-    }
-  }, label);
-  await sleep(ms);
-  await clearHighlights(page);
-}
 
-/** Scroll cards into view, highlight, hold with caption. */
-async function focusCards(page, selector, ms, label) {
-  await setCaption(page, label);
-  const loc = page.locator(selector);
-  if ((await loc.count()) > 0) {
-    await loc.first().scrollIntoViewIfNeeded();
-    await sleep(300);
-    await page.evaluate((sel) => {
-      document.querySelectorAll(sel).forEach((el) => {
+  if (tabLabel) {
+    await clickTab(page, tabLabel);
+  }
+
+  await page.evaluate(
+    ({ tabLabel, panelSelector }) => {
+      const styleHighlight = (el) => {
         el.setAttribute("data-rb-demo-highlight", "1");
         el.style.outline = "3px solid #0d6efd";
         el.style.outlineOffset = "3px";
         el.style.boxShadow = "0 0 0 6px rgba(13, 110, 253, 0.15)";
-      });
-    }, selector);
-  }
-  await sleep(ms);
+      };
+
+      const tabBar = document.querySelector(".rb-main-tabs");
+      if (tabBar) {
+        styleHighlight(tabBar);
+        tabBar.scrollIntoView({ block: "nearest", behavior: "instant" });
+      }
+
+      if (tabLabel) {
+        for (const btn of document.querySelectorAll(".rb-main-tabs .nav-link")) {
+          const label = btn.querySelector("span")?.textContent?.trim() ?? btn.textContent?.trim();
+          if (label === tabLabel) {
+            styleHighlight(btn);
+          }
+        }
+      }
+
+      const workspace = document.querySelector(".rb-tab-workspace");
+      if (workspace) styleHighlight(workspace);
+
+      const panelCard = document.querySelector(".rb-tab-panel-card");
+      if (panelCard) styleHighlight(panelCard);
+
+      for (const sel of panelSelector.split(",").map((s) => s.trim())) {
+        const panel = document.querySelector(sel);
+        if (panel) {
+          panel.scrollIntoView({ block: "nearest", behavior: "instant" });
+          styleHighlight(panel);
+          break;
+        }
+      }
+    },
+    { tabLabel, panelSelector },
+  );
+
+  await sleep(HOLD_MS);
   await clearHighlights(page);
 }
 
-async function hold(page, ms, label) {
-  await setCaption(page, label);
-  await sleep(ms);
+async function prepareSegment(page, key) {
+  try {
+    switch (key) {
+      case "graph-metrics": {
+        const prBtn = page.getByRole("button", { name: /Sort by PR/i });
+        if (await prBtn.count()) await prBtn.click();
+        await sleep(300);
+        break;
+      }
+      case "cfg": {
+        await selectFunction(page, FN);
+        const loadCfg = page.getByRole("button", { name: /Load CFG graph/i });
+        if (await loadCfg.count()) await loadCfg.click();
+        await page.locator(".cfg-detail").first().waitFor({ state: "visible", timeout: 25000 }).catch(() => {});
+        await sleep(600);
+        break;
+      }
+      case "pdg": {
+        await selectFunction(page, FN);
+        const dfView = page.locator("#df-view");
+        if (await dfView.count()) {
+          await dfView.selectOption("dataflow");
+          await page.locator(".dataflow-graph-panel").waitFor({ state: "visible", timeout: 20000 }).catch(() => {});
+        }
+        await sleep(500);
+        break;
+      }
+      case "dominance": {
+        const dfView = page.locator("#df-view");
+        if (await dfView.count()) {
+          await dfView.selectOption("dominator");
+          await sleep(700);
+        }
+        break;
+      }
+      case "program-slicing": {
+        await selectFunction(page, FN);
+        await page.locator("#slice-line").fill(String(SLICE_LINE));
+        await page.locator("#slice-var").fill(SLICE_VAR);
+        await page.getByRole("button", { name: "Compute slice" }).click();
+        await page.getByText(/slice:/i).waitFor({ state: "visible", timeout: 15000 }).catch(() => {});
+        await sleep(400);
+        break;
+      }
+      case "blast-radius": {
+        await waitWasm(page);
+        await selectFunction(page, FN_BLAST);
+        await waitForBlastResults(page);
+        break;
+      }
+      case "taint": {
+        await selectFunction(page, FN_TAINT);
+        await page.locator(".taint-view table tbody tr").first().waitFor({ state: "visible", timeout: 15000 }).catch(() => {});
+        await page.locator(".taint-view table tbody tr").first().click().catch(() => {});
+        await sleep(350);
+        break;
+      }
+      case "migration": {
+        await page.waitForSelector(".migration-tuning, .migration-view", { timeout: 20000 }).catch(() => {});
+        await sleep(400);
+        break;
+      }
+      case "semantic-search": {
+        const input = page.locator('.search-view input[type="search"]');
+        await input.waitFor({ state: "visible", timeout: 15000 });
+        if (await input.isEnabled()) {
+          await input.fill(SEMANTIC_QUERY);
+          await page.locator('.search-view button[type="submit"]').click();
+          await page.locator(".search-results tbody tr").first().waitFor({ state: "visible", timeout: 30000 }).catch(() => {});
+          await sleep(400);
+        }
+        break;
+      }
+      case "ci-policy": {
+        const section = page.locator(".guide-view section", { hasText: "Blast radius" });
+        if (await section.count()) await section.first().scrollIntoViewIfNeeded();
+        await sleep(300);
+        break;
+      }
+      case "export": {
+        const section = page.locator(".guide-view section", { hasText: "Graph visualization" });
+        if (await section.count()) await section.first().scrollIntoViewIfNeeded();
+        await sleep(300);
+        break;
+      }
+      default:
+        break;
+    }
+  } catch (err) {
+    console.warn(`prepareSegment(${key}) skipped:`, err.message ?? err);
+  }
 }
 
 const browser = await chromium.launch({ headless: true });
@@ -172,112 +313,13 @@ const page = await context.newPage();
 await page.goto(BASE, { waitUntil: "networkidle", timeout: 120000 });
 await waitWasm(page);
 
-// 1. discover — dashboard stat cards + blast summary
-await focusCards(page, ".rb-stats-row .stat-card", 2200, "discover · graph snapshot & index metrics");
-await focusStatCard(page, "High Blast Radius", 2000, "discover · pre-computed blast scores at index time");
-
-// 2. GQL — graph metagraph
-await clickTab(page, "Graph Visualization");
-await page.waitForSelector(".graph-panel.h-100", { timeout: 20000 });
-await focusCards(page, ".graph-legend, .graph-toolbar", 2400, "GQL · explore package call graph");
-
-// 3. Graph metrics — Functions table metric columns
-await clickTab(page, "Functions");
-await page.waitForSelector(".functions-view table thead, .functions-table thead", { timeout: 15000 });
-const prBtn = page.getByRole("button", { name: /Sort by PR/i });
-if (await prBtn.count()) await prBtn.click();
-await sleep(400);
-await focusCards(page, ".functions-view table thead, .functions-table thead", 2600, "Graph metrics · PageRank · betweenness · harmonic · blast");
-
-// 4. CFG
-await clickTab(page, "CFG / PDG Analysis");
-await selectFunction(page, FN);
-const loadCfg = page.getByRole("button", { name: /Load CFG graph/i });
-if (await loadCfg.count()) await loadCfg.click();
-await page.locator(".cfg-detail").first().waitFor({ state: "visible", timeout: 25000 }).catch(() => {});
-await sleep(1000);
-await focusCards(page, ".cfg-dom-col table, .dominance-panel", 2400, "CFG · control-flow blocks & dominators");
-
-// 5. PDG
-await clickTab(page, "Dataflow");
-await selectFunction(page, FN);
-await page.locator("#df-view").selectOption("dataflow");
-await page.locator(".dataflow-graph-panel").waitFor({ state: "visible", timeout: 20000 }).catch(() => {});
-await sleep(800);
-await focusCards(page, ".dataflow-graph-panel .border-bottom, .view-legend", 2300, "PDG · data & control dependencies");
-
-// 6. Dominance
-await page.locator("#df-view").selectOption("dominator");
-await sleep(1200);
-await focusCards(page, ".dataflow-graph-panel", 2200, "Dominance · dominator tree & frontiers");
-
-// 7. Program slicing — stats + editor
-await clickTab(page, "Program Slicing");
-await selectFunction(page, FN);
-await page.locator("#slice-line").fill(String(SLICE_LINE));
-await page.locator("#slice-var").fill(SLICE_VAR);
-await page.getByRole("button", { name: "Compute slice" }).click();
-await page.getByText(/slice:/i).waitFor({ state: "visible", timeout: 15000 }).catch(() => {});
-await sleep(500);
-await focusCards(page, ".slice-view .small.text-muted, .slice-view .btn-primary", 2400, "Program slicing · criterion & highlighted lines");
-
-// 8. Blast radius — impact score cards (main focus)
-await clickTab(page, "Blast Radius");
-await page.waitForSelector(".blast-view", { timeout: 20000 });
-await waitWasm(page);
-await selectFunction(page, FN_BLAST);
-await waitForBlastResults(page);
-await page.locator(".blast-view .row.g-2").first().scrollIntoViewIfNeeded();
-await focusCards(
-  page,
-  ".blast-view .row.g-2 .card",
-  3800,
-  "Blast radius · impact score · direct callers · impact zone",
-);
-await focusCards(
-  page,
-  ".blast-view .card .table-responsive",
-  2400,
-  "Blast radius · transitive caller table",
-);
-
-// 9. Taint — flows table + detail card
-await clickTab(page, "Taint Analysis");
-await selectFunction(page, FN_TAINT);
-await page.locator(".taint-view table tbody tr").first().waitFor({ state: "visible", timeout: 15000 }).catch(() => {});
-await page.locator(".taint-view table tbody tr").first().click();
-await sleep(500);
-await focusCards(page, ".taint-view .col-lg-5 .border.rounded, .taint-view table", 2600, "Taint analysis · source → sink flows & severity");
-
-// 10. Migration planner — tuning cards + package table
-await clickTab(page, "Migration");
-await page.waitForSelector(".migration-tuning", { timeout: 20000 }).catch(() => {});
-await focusCards(page, ".migration-tuning", 2600, "Migration planner · α/β/γ presets & roadmap sort");
-await page.locator(".migration-table-section").scrollIntoViewIfNeeded();
-await sleep(400);
-await focusCards(page, ".migration-table-section table thead", 2400, "Migration planner · scheduled steps & package priority");
-
-// 11. CI policy — Query Guide check workflow
-await clickTab(page, "Query Guide");
-await page.waitForSelector(".guide-view", { timeout: 15000 });
-const checkSection = page.locator(".guide-view section", { hasText: "Blast radius" });
-if (await checkSection.count()) {
-  await checkSection.first().scrollIntoViewIfNeeded();
-  await sleep(400);
+for (const segment of FEATURE_SEGMENTS) {
+  if (segment.tab) {
+    await clickTab(page, segment.tab);
+  }
+  await prepareSegment(page, segment.key);
+  await focusTabAndPanel(page, segment.tab, segment.panel, segment.caption);
 }
-await focusCards(page, ".guide-view pre.guide-cli-pre, .guide-view .card", 2400, "CI policy · check · blast-radius gates");
-
-// 12. Export — Query Guide graph export block
-const graphGuide = page.locator(".guide-view section", { hasText: "Graph visualization" });
-if (await graphGuide.count()) {
-  await graphGuide.first().scrollIntoViewIfNeeded();
-  await sleep(400);
-}
-await focusCards(page, "#cli-graph pre, .guide-view section#cli-graph", 2200, "Export · GraphML · Mermaid · JSON subgraphs");
-
-// Outro — stat cards again
-await page.locator(".rb-stats-row").first().scrollIntoViewIfNeeded();
-await focusCards(page, ".rb-stats-row .stat-card", 2000, "rBuilder · one index · every structural question");
 
 await page.evaluate(() => {
   document.getElementById("rb-demo-caption")?.remove();
@@ -299,16 +341,13 @@ const probe = spawnSync(
   { encoding: "utf8" },
 );
 const rawDur = parseFloat(probe.stdout.trim() || "0");
-// Fit 25–30s: use native length when already in range; otherwise speed-compress
-// (never truncate — that dropped blast radius and later tabs from prior runs).
+
 let vf = "fps=30,scale=1280:720:flags=lanczos";
 let encodeMode = "native";
-if (rawDur > TARGET_SECS + 0.5) {
+if (rawDur > TARGET_SECS + 1) {
   const factor = rawDur / TARGET_SECS;
   vf = `setpts=PTS/${factor},fps=30,scale=1280:720:flags=lanczos`;
   encodeMode = `speedup_${factor.toFixed(2)}x`;
-} else if (rawDur < 25) {
-  encodeMode = "short_native";
 }
 
 const ffArgs = [
@@ -328,14 +367,11 @@ const ffArgs = [
   "-movflags",
   "+faststart",
 ];
-if (rawDur > TARGET_SECS + 0.5) {
+if (rawDur > TARGET_SECS + 1) {
   ffArgs.push("-t", String(TARGET_SECS));
-} else if (rawDur >= 25 && rawDur <= 30) {
-  ffArgs.push("-t", String(rawDur));
 }
 
 const ff = spawnSync("ffmpeg", [...ffArgs, OUT_MP4], { encoding: "utf8" });
-
 if (ff.status !== 0) {
   console.error(ff.stderr);
   throw new Error("ffmpeg encode failed");
@@ -354,23 +390,10 @@ console.log(
       output: OUT_MP4,
       raw_duration_s: rawDur,
       final_duration_s: parseFloat(finalProbe.stdout.trim() || "0"),
+      sec_per_feature: SEC_PER_FEATURE,
       target_secs: TARGET_SECS,
       encode_mode: encodeMode,
-      functions: { FN, FN_BLAST, FN_TAINT },
-      features: [
-        "discover (stat cards + High Blast Radius)",
-        "GQL",
-        "graph metrics",
-        "CFG",
-        "PDG",
-        "dominance",
-        "program slicing",
-        "blast radius (metric cards)",
-        "taint analysis",
-        "migration planner",
-        "CI policy (check)",
-        "export",
-      ],
+      features: FEATURE_SEGMENTS.map((s) => s.key),
     },
     null,
     2,

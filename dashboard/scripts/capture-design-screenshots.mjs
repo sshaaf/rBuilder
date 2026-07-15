@@ -29,7 +29,10 @@ const FN_BLAST = process.env.CAPTURE_FN_BLAST ?? "addEmbeddingSimilarityEdges";
 const SLICE_LINE = Number(process.env.CAPTURE_SLICE_LINE ?? "45");
 const SLICE_VAR = process.env.CAPTURE_SLICE_VAR ?? "threshold";
 
+const SEMANTIC_QUERY = process.env.CAPTURE_SEMANTIC_QUERY ?? "embedding similarity graph";
+
 const FEATURES = [
+  "semantic-search",
   "blast-radius",
   "program-slicing",
   "taint-analysis",
@@ -55,7 +58,7 @@ function sleep(ms) {
 }
 
 async function clickTab(page, label) {
-  await page.getByRole("button", { name: label, exact: true }).click();
+  await page.locator(".rb-main-tabs").getByRole("button", { name: label, exact: true }).click();
   await sleep(600);
 }
 
@@ -152,6 +155,18 @@ await page.goto(BASE, { waitUntil: "networkidle", timeout: 120000 });
 await page.waitForSelector(".rb-app", { timeout: 60000 });
 await sleep(2500);
 await waitForWasm(page);
+
+// --- Semantic search ---
+await clickTab(page, "Search");
+await page.waitForSelector(".search-view", { timeout: 30000 });
+const searchInput = page.locator('.search-view input[type="search"]');
+if (await searchInput.isEnabled()) {
+  await searchInput.fill(SEMANTIC_QUERY);
+  await page.locator('.search-view button[type="submit"]').click();
+  await page.locator(".search-results tbody tr").first().waitFor({ state: "visible", timeout: 30000 }).catch(() => {});
+  await sleep(800);
+}
+await screenshotMainPanel(page, "semantic-search", "semantic-search-results.png");
 
 // --- Graph / GQL ---
 await clickTab(page, "Graph Visualization");

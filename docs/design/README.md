@@ -6,6 +6,7 @@ Engineering designs for rBuilder capabilities listed in [README § Where most to
 
 | Feature | Design doc | Dashboard tab |
 |---------|------------|---------------|
+| Semantic search | [semantic-search-design.md](semantic-search-design.md) | Search |
 | Blast radius | [blast-radius-design.md](blast-radius-design.md) | Blast Radius |
 | Program slicing | [program-slicing-design.md](program-slicing-design.md) | Program Slicing |
 | Taint analysis | [taint-analysis-design.md](taint-analysis-design.md) | Taint Analysis |

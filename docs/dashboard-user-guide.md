@@ -37,7 +37,7 @@ Do **not** open `index.html` via `file://` — the graph worker cannot load `gra
 | Area | Description |
 |------|-------------|
 | **Stat cards** | Node/edge/function counts from `manifest.json` |
-| **Tab bar** | Graph, Functions, CFG, Dataflow, Slice, Blast, Taint, Migration, Query Guide |
+| **Tab bar** | Graph, Search, Functions, CFG, Dataflow, Slice, Blast, Taint, Migration, Query Guide |
 | **Tab panels** | Collapsible help text per tab (click header to expand) |
 | **Notification menu** | Engine/WASM status, manifest errors |
 
@@ -49,6 +49,13 @@ Screenshot placeholders (capture with `dashboard/scripts/capture-migration-scree
 ---
 
 ## Tab guide
+
+### Search
+
+- Natural-language and keyword search over indexed functions (code-daemon embeddings by default).
+- **Late fusion** blends Hamming similarity with blast score, PageRank, name overlap, and token-bloom sketches.
+- Requires `rbuilder semantic index` and **`rbuilder serve`** (HTTP API at `/api/semantic/*` — not static-only hosting).
+- **CLI:** `semantic index`, `semantic query "…"`, `--keyword-and`, `--expand neighbors`
 
 ### Graph
 
@@ -123,6 +130,7 @@ Screenshot placeholders (capture with `dashboard/scripts/capture-migration-scree
 | “Graph not found” / empty stats | Run `rbuilder discover .` in repo root |
 | WASM engine error in notifications | Rebuild dashboard (`npm run build` in `dashboard/`) and re-run `discover` |
 | Stale data after git pull | Re-run `discover` |
+| Semantic search empty / warning | Index not built or served without API | `rbuilder semantic index` then `rbuilder serve --open` |
 | Migration tab empty | `discover . --all --export-migration-plan` |
 
 ---

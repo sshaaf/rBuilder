@@ -19,6 +19,8 @@ rbuilder -r "$REPO" serve
 | `http://127.0.0.1:8080/api/query` | GQL / macro queries (POST JSON) |
 | `http://127.0.0.1:8080/graphql` | Alias for `/api/query` |
 | `http://127.0.0.1:8080/api/health` | Health check (GET) |
+| `http://127.0.0.1:8080/api/semantic/status` | Semantic index status (GET) |
+| `http://127.0.0.1:8080/api/semantic/query` | Semantic search (POST JSON) |
 
 Open browser automatically:
 
@@ -82,6 +84,38 @@ curl -sS -X POST http://127.0.0.1:8080/api/query \
 Same JSON shape as `rbuilder -f json gql` on the CLI. See [json-api.md](json-api.md) §5.
 
 Errors return HTTP 400 with a plain-text message body.
+
+---
+
+## Semantic search API
+
+Requires `rbuilder semantic index` before `serve`. Same origin as the dashboard.
+
+### `GET /api/semantic/status`
+
+Returns JSON: `{ "available": true, "model_id": "...", "functions_indexed": N }` when the index loaded.
+
+### `POST /api/semantic/query`
+
+`Content-Type: application/json`
+
+```json
+{
+  "query": "shopping cart checkout",
+  "limit": 20,
+  "fusion": true,
+  "keyword_and": false
+}
+```
+
+Response matches `rbuilder -f json semantic query`. Errors return HTTP 503 when the index is missing.
+
+```bash
+curl -sS http://127.0.0.1:8080/api/semantic/status | jq .
+curl -sS -X POST http://127.0.0.1:8080/api/semantic/query \
+  -H 'Content-Type: application/json' \
+  -d '{"query":"OrderService","limit":5}' | jq '.hits[:3]'
+```
 
 ---
 

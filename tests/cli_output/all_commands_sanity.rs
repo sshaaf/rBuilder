@@ -468,6 +468,47 @@ fn test_all_cli_commands_json_schema_sanity() {
     assert!(pdg_doc["edges"].is_array());
     assert!(!pdg_doc["nodes"].as_array().unwrap().is_empty());
 
+    // --- semantic index + query (opt-in, separate artifact) ---
+    let semantic_index = sandbox.run(&["-f", "json", "semantic", "index"]);
+    assert_success(&semantic_index, "semantic index");
+    let index_doc = sandbox.parse_stdout_json(&semantic_index);
+    assert_schema_version(&index_doc, 2);
+    assert_keys_present(
+        &index_doc,
+        &["model_id", "dimensions", "functions_indexed", "path", "build_stats"],
+    );
+    assert!(
+        index_doc["functions_indexed"].as_u64().unwrap() > 0,
+        "semantic index should cover functions"
+    );
+
+    let semantic_query = sandbox.run(&[
+        "-f",
+        "json",
+        "semantic",
+        "query",
+        "process order",
+        "--limit",
+        "5",
+        "--expand",
+        "neighbors",
+    ]);
+    assert_success(&semantic_query, "semantic query");
+    let query_doc = sandbox.parse_stdout_json(&semantic_query);
+    assert_schema_version(&query_doc, 3);
+    assert_keys_present(&query_doc, &["query", "model_id", "dimensions", "hits"]);
+    assert!(query_doc["hits"].as_array().unwrap().len() <= 5);
+    assert!(query_doc.get("expansion").is_some());
+
+    let semantic_incremental = sandbox.run(&["-f", "json", "semantic", "index"]);
+    assert_success(&semantic_incremental, "semantic index incremental");
+    let inc_doc = sandbox.parse_stdout_json(&semantic_incremental);
+    let stats = inc_doc["build_stats"].as_object().expect("build_stats");
+    assert!(
+        stats["reused"].as_u64().unwrap_or(0) >= stats["embedded"].as_u64().unwrap_or(0),
+        "second index pass should reuse embeddings: {stats:?}"
+    );
+
     // --- blast-radius policy violation → exit 1, JSON still valid ---
     let strict_policy = sandbox.repo.join("strict_policy.json");
     fs::write(&strict_policy, r#"{"max_impact_nodes": 0}"#).expect("write policy");

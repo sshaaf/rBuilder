@@ -24,7 +24,8 @@ pub use export_context::DashboardExportContext;
 pub use communities::{CommunitiesPayload, COMMUNITIES_FILE, COMMUNITIES_SCHEMA_VERSION};
 pub use dataflow_export::{DataflowExportSummary, DATAFLOW_INDEX_FILE};
 pub use manifest::{
-    AnalysisSection, DashboardManifest, MetricsSection, ViewSection, MANIFEST_SCHEMA_VERSION,
+    AnalysisSection, DashboardManifest, MetricsSection, SemanticSection, ViewSection,
+    MANIFEST_SCHEMA_VERSION,
 };
 pub use metagraph::{
     MetagraphExport, MetagraphPayload, COMMUNITY_ONLY_THRESHOLD, METAGRAPH_FILE,
@@ -199,6 +200,7 @@ fn export_dashboard_bundle_inner(
             migration_export::export_default_migration_plan(graph, &out_dir)
         })?;
     }
+    let semantic_summary = semantic_section(repo_root);
     let manifest = Manifest::with_phases(
         node_count,
         edge_count,
@@ -212,6 +214,7 @@ fn export_dashboard_bundle_inner(
         &dataflow_summary,
         &taint_summary,
         &migration_summary,
+        semantic_summary,
     );
     let (manifest_json, manifest_serialize_secs) = profile_stage("manifest_serialize", || {
         let start = std::time::Instant::now();
@@ -314,6 +317,19 @@ fn compute_export_fingerprint(backend: &MemoryBackend, repo_root: &Path) -> Stri
         }
     }
 
+    let semantic_path = rbuilder_analysis::SemanticIndex::default_path(repo_root);
+    if semantic_path.is_file() {
+        hasher.update(b"semantic_index_v1");
+        if let Ok(meta) = std::fs::metadata(&semantic_path) {
+            hasher.update(&meta.len().to_le_bytes());
+            if let Ok(modified) = meta.modified() {
+                if let Ok(secs) = modified.duration_since(std::time::UNIX_EPOCH) {
+                    hasher.update(&secs.as_secs().to_le_bytes());
+                }
+            }
+        }
+    }
+
     hasher.finalize().to_hex().to_string()
 }
 
@@ -357,4 +373,24 @@ fn collect_metrics(backend: &MemoryBackend) -> MetricsSection {
         avg_complexity: complexity_sum / function_count.max(1) as f64,
         high_blast_radius_count,
     }
+}
+
+fn semantic_section(repo_root: &Path) -> Option<manifest::SemanticSection> {
+    use rbuilder_analysis::SemanticIndex;
+
+    let path = SemanticIndex::default_path(repo_root);
+    if !path.is_file() {
+        return None;
+    }
+    let index = SemanticIndex::load(&path).ok()?;
+    if index.is_empty() {
+        return None;
+    }
+    Some(manifest::SemanticSection {
+        available: true,
+        functions_indexed: index.len(),
+        model_id: index.model_id,
+        dimensions: index.dimensions,
+        graph_digest: index.graph_digest,
+    })
 }
