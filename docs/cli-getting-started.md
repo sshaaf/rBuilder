@@ -78,10 +78,11 @@ Filter languages or paths:
 rbuilder discover . -l java,typescript -e node_modules,target
 ```
 
-Verbose logging:
+Verbose logging and stage profiling:
 
 ```bash
 rbuilder discover . -v
+RUST_LOG=info,profile=info rbuilder discover . -v   # + centrality sub-phase timings
 ```
 
 ### What discover creates
@@ -356,7 +357,7 @@ Tune PageRank iterations:
 rbuilder -r "$REPO" -f json metrics --pagerank --iterations 50 | jq .
 ```
 
-> Discover already computes complexity, communities, and centrality during indexing. Use `metrics` when you want on-demand JSON output without re-running the full pipeline.
+> Discover already computes complexity, communities, and centrality during indexing (columnar path on large graphs). Use `metrics` when you want on-demand JSON output without re-running the full pipeline. On graphs above 500k nodes, discover applies adaptive PageRank and HyperBall caps automatically; `metrics --pagerank --iterations N` overrides iteration count on demand.
 
 ---
 
@@ -487,6 +488,14 @@ Pass `--language java` and `--function <ExactClassName>` explicitly.
 **Slow discover**
 
 Use the default mode first. Add `--cfg` or `--all` only when you need slicing, taint, or inspect overlays.
+
+On kernel-scale graphs (500k+ nodes), discover uses adaptive centrality gating, parallel HyperBall, on-demand blast reachability, and sparse dashboard export. Profile bottlenecks with:
+
+```bash
+RUST_LOG=info,profile=info rbuilder discover . -v
+```
+
+See [internal/temp.md](internal/temp.md) for measured Linux kernel timings.
 
 ---
 

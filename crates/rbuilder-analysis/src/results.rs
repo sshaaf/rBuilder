@@ -24,6 +24,8 @@ use std::collections::HashMap;
 use std::path::Path;
 use uuid::Uuid;
 
+use crate::graph_utils::PetGraphView;
+
 /// Compact node ID for dense array indexing.
 /// Internal representation - not exposed outside this module.
 type CompactId = u32;
@@ -271,6 +273,35 @@ impl AnalysisResults {
     pub fn init_centrality(&mut self) -> &mut CentralityTable {
         self.centrality = Some(CentralityTable::with_capacity(self.node_count()));
         self.centrality.as_mut().unwrap()
+    }
+
+    /// Write flat centrality arrays into the columnar table without intermediate mappings.
+    pub fn fill_centrality_from_flat(
+        &mut self,
+        view: &PetGraphView,
+        pagerank: &[f64],
+        betweenness: &[f64],
+        harmonic: &[f64],
+        in_degree: &[usize],
+        out_degree: &[usize],
+    ) {
+        let compact_to_uuid = &self.compact_to_uuid;
+        let node_count = compact_to_uuid.len();
+        let table = self
+            .centrality
+            .get_or_insert_with(|| CentralityTable::with_capacity(node_count));
+        for slot in 0..node_count {
+            let uuid = compact_to_uuid[slot];
+            let Some(node_idx) = view.uuid_to_index.get(&uuid) else {
+                continue;
+            };
+            let flat_id = node_idx.index();
+            table.pagerank[slot] = pagerank[flat_id] as f32;
+            table.betweenness[slot] = betweenness[flat_id] as f32;
+            table.harmonic[slot] = harmonic[flat_id] as f32;
+            table.in_degree[slot] = in_degree[flat_id] as u32;
+            table.out_degree[slot] = out_degree[flat_id] as u32;
+        }
     }
 
     /// Initialize blast radius table.

@@ -1,6 +1,7 @@
 //! Manual profile: dashboard export on example/linux (requires prior discover).
 
-use rbuilder_dashboard::export_dashboard_bundle;
+use rbuilder_dashboard::export_dashboard_bundle_with_context;
+use rbuilder_dashboard::DashboardExportContext;
 use rbuilder_graph::snapshot::MmappedGraphSnapshot;
 use std::path::Path;
 use std::time::Instant;
@@ -34,5 +35,14 @@ fn profile_linux_dashboard_export() {
         std::fs::remove_dir_all(&dashboard).expect("remove dashboard");
     }
 
-    export_dashboard_bundle(&backend, &root, &snapshot_path).expect("export dashboard");
+    let analysis_path = root.join(".rbuilder/analysis_results.bin");
+    let analysis = rbuilder_analysis::AnalysisResults::load(&analysis_path).expect("load analysis");
+
+    export_dashboard_bundle_with_context(
+        &backend,
+        &root,
+        &snapshot_path,
+        DashboardExportContext::with_analysis(&analysis),
+    )
+    .expect("export dashboard");
 }

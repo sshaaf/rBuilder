@@ -7,6 +7,7 @@ mod cfg_export;
 mod cfg_record_pack;
 mod communities;
 mod dataflow_export;
+mod export_context;
 mod export_util;
 mod function_meta;
 mod function_metrics_export;
@@ -19,6 +20,7 @@ mod source_catalog;
 mod taint_export;
 
 pub use bundle::{default_dashboard_path, dist_embedded, DASHBOARD_DIR_NAME};
+pub use export_context::DashboardExportContext;
 pub use communities::{CommunitiesPayload, COMMUNITIES_FILE, COMMUNITIES_SCHEMA_VERSION};
 pub use dataflow_export::{DataflowExportSummary, DATAFLOW_INDEX_FILE};
 pub use manifest::{
@@ -29,14 +31,14 @@ pub use metagraph::{
 };
 pub use migration_export::{
     export_default_migration_plan, export_migration_graph, write_migration_plan,
-    write_migration_plan_from_repo, MigrationExportSummary, MIGRATION_GRAPH_FILE,
-    MIGRATION_PLAN_FILE,
+    write_migration_plan_from_repo, write_migration_plan_from_repo_with_context,
+    MigrationExportSummary, MIGRATION_GRAPH_FILE, MIGRATION_PLAN_FILE,
 };
 pub use slice_export::{SliceExportSummary, SLICE_INDEX_FILE};
 pub use taint_export::{TaintExportSummary, TAINT_INDEX_FILE};
 
 use profile::profile_stage;
-use blast_export::export_blast_bundle;
+use blast_export::{export_blast_bundle, load_columnar_uuid_indices};
 use function_metrics_export::export_function_metrics;
 use bundle::{extract_static_assets, inject_manifest_bootstrap};
 use dataflow_export::export_dataflow_index;
@@ -44,6 +46,7 @@ use manifest::DashboardManifest as Manifest;
 use metagraph::write_metagraph;
 use rbuilder_graph::backend::MemoryBackend;
 use rbuilder_graph::schema::{EdgeType, NodeType};
+use std::collections::HashMap;
 use std::fs;
 use std::path::Path;
 use taint_export::export_taint_bundle;
@@ -55,8 +58,22 @@ pub fn export_dashboard_bundle(
     repo_root: &Path,
     snapshot_path: &Path,
 ) -> Result<(), String> {
-    export_dashboard_bundle_inner(backend, repo_root, snapshot_path, false)?;
-    Ok(())
+    export_dashboard_bundle_with_context(
+        backend,
+        repo_root,
+        snapshot_path,
+        DashboardExportContext::default(),
+    )
+}
+
+/// Write dashboard bundle using in-memory analysis from discover (avoids reloading results).
+pub fn export_dashboard_bundle_with_context(
+    backend: &MemoryBackend,
+    repo_root: &Path,
+    snapshot_path: &Path,
+    ctx: DashboardExportContext<'_>,
+) -> Result<(), String> {
+    export_dashboard_bundle_inner(backend, repo_root, snapshot_path, false, ctx)
 }
 
 /// Export dashboard only when semantic content fingerprint is unchanged.
@@ -64,6 +81,21 @@ pub fn export_dashboard_bundle_if_changed(
     backend: &MemoryBackend,
     repo_root: &Path,
     snapshot_path: &Path,
+) -> Result<bool, String> {
+    export_dashboard_bundle_if_changed_with_context(
+        backend,
+        repo_root,
+        snapshot_path,
+        DashboardExportContext::default(),
+    )
+}
+
+/// Export dashboard when fingerprint changed, with optional in-memory analysis.
+pub fn export_dashboard_bundle_if_changed_with_context(
+    backend: &MemoryBackend,
+    repo_root: &Path,
+    snapshot_path: &Path,
+    ctx: DashboardExportContext<'_>,
 ) -> Result<bool, String> {
     let out_dir = bundle::default_dashboard_path(repo_root);
     let manifest_path = out_dir.join("manifest.json");
@@ -77,8 +109,7 @@ pub fn export_dashboard_bundle_if_changed(
             }
         }
     }
-    let _ = snapshot_path;
-    export_dashboard_bundle_inner(backend, repo_root, snapshot_path, true)?;
+    export_dashboard_bundle_inner(backend, repo_root, snapshot_path, true, ctx)?;
     Ok(true)
 }
 
@@ -87,6 +118,7 @@ fn export_dashboard_bundle_inner(
     repo_root: &Path,
     snapshot_path: &Path,
     replace_out_dir: bool,
+    ctx: DashboardExportContext<'_>,
 ) -> Result<(), String> {
     let out_dir = bundle::default_dashboard_path(repo_root);
     if replace_out_dir && out_dir.exists() {
@@ -119,8 +151,23 @@ fn export_dashboard_bundle_inner(
         profile_stage("export_fingerprint", || compute_export_fingerprint(backend, repo_root));
     let metrics = profile_stage("collect_metrics", || collect_metrics(backend));
 
+    let uuid_to_index = profile_stage("load_uuid_index", || {
+        if snapshot_path.is_file() {
+            load_columnar_uuid_indices(snapshot_path)
+        } else {
+            Ok(HashMap::new())
+        }
+    })?;
+
     let export = profile_stage("write_metagraph", || {
-        write_metagraph(backend, snapshot_path, &out_dir, node_count)
+        write_metagraph(
+            backend,
+            snapshot_path,
+            &out_dir,
+            node_count,
+            ctx.analysis,
+            &uuid_to_index,
+        )
     })?;
     let streamed = profile_stage("export_cfg_slice", || {
         analysis_stream_export::export_cfg_slice_from_storage(backend, repo_root, &out_dir)
@@ -132,13 +179,20 @@ fn export_dashboard_bundle_inner(
     })?;
     let taint_summary =
         profile_stage("export_taint", || export_taint_bundle(repo_root, &out_dir))?;
-    let blast_summary =
-        profile_stage("export_blast", || export_blast_bundle(repo_root, &out_dir))?;
+    let blast_summary = profile_stage("export_blast", || {
+        export_blast_bundle(repo_root, snapshot_path, &out_dir, ctx, &uuid_to_index)
+    })?;
     profile_stage("export_function_metrics", || {
-        export_function_metrics(repo_root, snapshot_path, &out_dir)
+        export_function_metrics(
+            snapshot_path,
+            &out_dir,
+            node_count,
+            ctx,
+            &uuid_to_index,
+        )
     })?;
     let (migration_summary, migration_graph) = profile_stage("export_migration", || {
-        migration_export::export_migration_graph(backend, repo_root, &out_dir)
+        migration_export::export_migration_graph(backend, repo_root, &out_dir, ctx)
     })?;
     if let Some(ref graph) = migration_graph {
         profile_stage("export_migration_plan", || {

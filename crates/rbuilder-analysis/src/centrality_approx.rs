@@ -3,6 +3,7 @@
 use crate::centrality::FlatGraphIndex;
 use crate::graph_utils::PetGraphView;
 use rbuilder_graph::schema::EdgeType;
+use rayon::prelude::*;
 use std::collections::{HashMap, HashSet, VecDeque};
 use uuid::Uuid;
 
@@ -17,6 +18,12 @@ pub const HYPERBALL_EXACT_THRESHOLD: usize = 8_192;
 
 /// HyperBall propagation rounds (software graphs typically saturate within 8–16).
 pub const DEFAULT_HYPERBALL_ROUNDS: usize = 16;
+
+/// Node count above which HyperBall propagation rounds are capped.
+pub const LARGE_GRAPH_HYPERBALL_NODE_LIMIT: usize = 500_000;
+
+/// HyperBall round cap for graphs above [`LARGE_GRAPH_HYPERBALL_NODE_LIMIT`].
+pub const LARGE_GRAPH_HYPERBALL_ROUNDS: usize = 8;
 
 /// HyperLogLog precision (p=14 → m=16384 registers, ~1.6% typical error).
 pub const HYPERLOGLOG_PRECISION: u8 = 14;
@@ -52,10 +59,73 @@ pub struct CentralityApproxStats {
     pub betweenness_mode: Option<BetweennessMode>,
     /// Harmonic algorithm used.
     pub harmonic_mode: Option<HarmonicMode>,
+    /// Wall time to build the flat edge index (ms).
+    pub flat_index_ms: u64,
+    /// Wall time to compute filtered in/out degrees (ms).
+    pub degrees_ms: u64,
+    /// Wall time for PageRank power iteration (ms).
+    pub pagerank_ms: u64,
     /// Wall time for betweenness (ms).
     pub betweenness_ms: u64,
-    /// Wall time for harmonic (ms).
+    /// Wall time for harmonic centrality (ms).
     pub harmonic_ms: u64,
+    /// Wall time to copy flat scores into columnar table (ms).
+    pub columnar_fill_ms: u64,
+    /// Wall time to scan for top-k PageRank nodes (ms).
+    pub top_k_ms: u64,
+}
+
+impl CentralityApproxStats {
+    /// Sum of all recorded sub-phase timings (ms).
+    pub fn timed_total_ms(&self) -> u64 {
+        self.flat_index_ms
+            + self.degrees_ms
+            + self.pagerank_ms
+            + self.betweenness_ms
+            + self.harmonic_ms
+            + self.columnar_fill_ms
+            + self.top_k_ms
+    }
+
+    /// Emit `[profile] centrality sub-phase` lines (grep with `RUST_LOG=profile=info`).
+    pub fn log_profile(&self) {
+        let total_ms = self.timed_total_ms().max(1);
+        let total_secs = total_ms as f64 / 1000.0;
+
+        tracing::info!(
+            target: "profile",
+            total_secs,
+            flat_index_secs = self.flat_index_ms as f64 / 1000.0,
+            degrees_secs = self.degrees_ms as f64 / 1000.0,
+            pagerank_secs = self.pagerank_ms as f64 / 1000.0,
+            betweenness_secs = self.betweenness_ms as f64 / 1000.0,
+            harmonic_secs = self.harmonic_ms as f64 / 1000.0,
+            columnar_fill_secs = self.columnar_fill_ms as f64 / 1000.0,
+            top_k_secs = self.top_k_ms as f64 / 1000.0,
+            "[profile] centrality breakdown"
+        );
+
+        for (name, ms) in [
+            ("flat_index", self.flat_index_ms),
+            ("degrees", self.degrees_ms),
+            ("pagerank", self.pagerank_ms),
+            ("betweenness", self.betweenness_ms),
+            ("harmonic", self.harmonic_ms),
+            ("columnar_fill", self.columnar_fill_ms),
+            ("top_k", self.top_k_ms),
+        ] {
+            if ms == 0 {
+                continue;
+            }
+            tracing::info!(
+                target: "profile",
+                subphase = name,
+                secs = ms as f64 / 1000.0,
+                pct_centrality = 100.0 * ms as f64 / total_ms as f64,
+                "[profile] centrality sub-phase"
+            );
+        }
+    }
 }
 
 /// Sampled betweenness via `k` random Brandes single-source passes (RANDES).
@@ -130,7 +200,21 @@ impl HyperBallHarmonic {
         if n <= HYPERBALL_EXACT_THRESHOLD {
             return hyperball_exact(index, max_rounds);
         }
-        hyperball_hll(index, max_rounds)
+
+        let rounds = adaptive_hyperball_rounds(n, max_rounds);
+        if n > LARGE_GRAPH_HYPERBALL_NODE_LIMIT {
+            tracing::info!(
+                node_count = n,
+                rounds,
+                "Graph exceeds 500K nodes: adaptive HyperBall gating active"
+            );
+        }
+        hyperball_hll_parallel(index, rounds)
+    }
+
+    /// Effective HyperBall rounds for a graph size (after adaptive gating).
+    pub fn effective_rounds(node_count: usize, max_rounds: usize) -> usize {
+        adaptive_hyperball_rounds(node_count, max_rounds)
     }
 
     /// Map flat harmonic scores back to UUIDs.
@@ -281,10 +365,17 @@ fn hll_precision_for(node_count: usize) -> u8 {
     }
 }
 
-fn hyperball_hll(index: &FlatGraphIndex, max_rounds: usize) -> Vec<f64> {
+fn adaptive_hyperball_rounds(node_count: usize, max_rounds: usize) -> usize {
+    if node_count > LARGE_GRAPH_HYPERBALL_NODE_LIMIT {
+        LARGE_GRAPH_HYPERBALL_ROUNDS.min(max_rounds.max(1))
+    } else {
+        max_rounds.max(1)
+    }
+}
+
+fn hyperball_hll_parallel(index: &FlatGraphIndex, rounds: usize) -> Vec<f64> {
     let n = index.node_count;
     let out_adj = build_out_adjacency(index);
-    let rounds = max_rounds.max(1);
     let norm = 1.0 / (n as f64 - 1.0);
     let precision = hll_precision_for(n);
 
@@ -303,13 +394,15 @@ fn hyperball_hll(index: &FlatGraphIndex, max_rounds: usize) -> Vec<f64> {
     let mut prev_count: Vec<f64> = vec![1.0; n];
 
     for distance in 1..=rounds {
-        for node in 0..n {
-            next[node].reset();
-            next[node].add(hash_node_id(node));
-            for &neighbor in &out_adj[node] {
-                next[node].merge(&current[neighbor]);
-            }
-        }
+        next.par_iter_mut()
+            .enumerate()
+            .for_each(|(node, hll)| {
+                hll.reset();
+                hll.add(hash_node_id(node));
+                for &neighbor in &out_adj[node] {
+                    hll.merge(&current[neighbor]);
+                }
+            });
 
         let mut grew = false;
         for node in 0..n {
@@ -328,7 +421,7 @@ fn hyperball_hll(index: &FlatGraphIndex, max_rounds: usize) -> Vec<f64> {
         }
     }
 
-    harmonic.iter_mut().for_each(|score| *score *= norm);
+    harmonic.par_iter_mut().for_each(|score| *score *= norm);
     harmonic
 }
 
@@ -441,6 +534,16 @@ mod tests {
             PetGraphView::from_backend(&backend).unwrap(),
             nodes.into_iter().map(|n| n.id).collect(),
         )
+    }
+
+    #[test]
+    fn adaptive_hyperball_rounds_gating() {
+        assert_eq!(adaptive_hyperball_rounds(100, 16), 16);
+        assert_eq!(adaptive_hyperball_rounds(600_000, 16), LARGE_GRAPH_HYPERBALL_ROUNDS);
+        assert_eq!(
+            HyperBallHarmonic::effective_rounds(600_000, 16),
+            LARGE_GRAPH_HYPERBALL_ROUNDS
+        );
     }
 
     #[test]

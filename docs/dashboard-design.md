@@ -207,7 +207,7 @@ Shared assertions: `tests/dashboard_harness.rs` → `assert_dashboard_bundle_wit
 | `metagraph.json` | Package-level metanodes + aggregated call edges |
 | `manifest.view` | Metagraph path, counts, `mode`, `community_only` flag |
 
-UI loads `./metagraph.json` in the Graph tab (Sigma.js). At ≥50k source nodes, `community_only` is set; Phase 3 enables WASM drill-down into package members via `member_indices`.
+UI loads `./metagraph.json` in the Graph tab (Sigma.js). At ≥50k source nodes, `community_only` is set: `function_metrics.json` carries schema metadata only (no per-function rows); use the metagraph and WASM node list for hotspots. `member_indices` are omitted from `metagraph.json` at this scale to keep export fast.
 
 ### Phase 3 — LOD + filters
 

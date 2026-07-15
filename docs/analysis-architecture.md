@@ -23,9 +23,9 @@ Nodes represent symbols (functions, types, modules). Edges carry `EdgeType` sema
 
 | Analysis | Primary graph | Algorithm |
 |----------|---------------|-----------|
-| Centrality | `PetGraphView` → `FlatGraphIndex` | PageRank, Brandes betweenness, HyperBall harmonic |
+| Centrality | `PetGraphView` → `FlatGraphIndex` | PageRank, sampled Brandes betweenness, HyperBall harmonic |
 | Community | `PetGraphView` (undirected filter) | Label propagation + modularity ([naming note](design/graph-metrics-design.md#31-community-detection-naming)) |
-| Blast radius (engine) | Call-only DiGraph | Kosaraju SCC → bitset reachability |
+| Blast radius (engine) | Call-only DiGraph | Kosaraju SCC → on-demand reachability (flat graphs) or bitset rows |
 | Blast radius (analyzer) | `PetGraphView` Calls filter | Reverse BFS |
 | Dependencies | `PetGraphView` directed | Kosaraju SCC, reverse BFS impact |
 | Complexity | Backend node properties | Aggregation |
@@ -55,7 +55,23 @@ Graph BFS traversals (blast radius analyzer, dependency impact) share `Traversal
 
 - **`FlowCache`** / **`CfgPdgArchive`** — per-function CFG/PDG cache
 - **`BlastEngineSnapshot`** — persisted SCC reachability bitsets
-- **`AnalysisResults`** — columnar metrics decoupled from graph topology
+- **`AnalysisResults`** — columnar metrics decoupled from graph topology (`CentralityTable`, community, blast tables)
+
+### Centrality pipeline (discover)
+
+Discover uses **`CentralityAnalyzer::analyze_columnar`**: flat scores from `FlatGraphIndex` are written directly into `AnalysisResults` without intermediate `HashMap<Uuid, _>` handoffs.
+
+| Graph size | PageRank | Betweenness | Harmonic |
+|------------|----------|-------------|----------|
+| V ≤ 500 | Exact (20 iter, ε=1e-6) | Exact Brandes | Exact BFS |
+| 500 < V ≤ 500,000 | Exact (20 iter) | Sampled Brandes (k=512) | HyperBall (h=16, parallel HLL) |
+| V > 500,000 | Gated (8 iter, ε=1e-4) | Sampled Brandes (k=512) | HyperBall (h=8, parallel HLL) |
+
+Constants: `LARGE_GRAPH_PAGERANK_*`, `LARGE_GRAPH_HYPERBALL_*` in `centrality.rs` / `centrality_approx.rs`.
+
+**Profiling:** `discover -v` with `RUST_LOG=profile=info` emits `[profile] stage` and `[profile] centrality sub-phase` lines (PageRank, betweenness, harmonic, columnar fill timings).
+
+See [internal/temp.md](internal/temp.md) for algorithm detail and kernel-scale measurements.
 
 ## Further reading
 

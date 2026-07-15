@@ -61,7 +61,26 @@ flowchart TB
 | **Communities** | Label-propagation clusters | Graph colors, migration Louvain vote |
 | **Blast score** | Precomputed impact (per function) | Functions tab, migration γ term |
 
-Background: [harmonic-centrality.md](../harmonic-centrality.md), [migration-algorithms.md](../migration-algorithms.md).
+Background: [harmonic-centrality.md](../harmonic-centrality.md), [migration-algorithms.md](../migration-algorithms.md), [internal/temp.md](../internal/temp.md) (approximate algorithms + kernel-scale timings).
+
+---
+
+## 3.2 Large-graph behavior (≥ 50k nodes)
+
+Discover applies **adaptive centrality gating** and a **columnar write path** so kernel-scale repos stay within memory and time budgets.
+
+| Concern | Behavior |
+|---------|----------|
+| Centrality storage | Flat `Vec` → `AnalysisResults::CentralityTable` (no UUID `HashMap` on discover) |
+| PageRank (V > 500k) | 8 iterations, ε=1e-4 |
+| HyperBall harmonic (V > 500k) | 8 rounds, **Rayon-parallel** node scatter |
+| `function_metrics.json` | **`sparse_mode: "community_only"`** — empty rows; use WASM + metagraph |
+| `metagraph.json` | Package-level aggregates only (`member_indices` omitted at scale) |
+| Dashboard export | In-memory `AnalysisResults` via `DashboardExportContext` (no reload per stage) |
+
+**Profiling:** `RUST_LOG=profile=info rbuilder discover . -v` → `[profile] centrality sub-phase` lines.
+
+**CLI precision:** `rbuilder metrics --pagerank --iterations N` still honors explicit iteration counts on demand.
 
 ---
 
@@ -83,12 +102,12 @@ Implementation: [`crates/rbuilder-analysis/src/community.rs`](../../crates/rbuil
 
 | Component | Path |
 |-----------|------|
-| Centrality | `crates/rbuilder-analysis/src/centrality.rs` |
+| Centrality | `crates/rbuilder-analysis/src/centrality.rs`, `centrality_approx.rs` |
 | Communities | `crates/rbuilder-analysis/src/community.rs` |
-| Harmonic | `crates/rbuilder-analysis/src/harmonic.rs` |
-| Persist | `crates/rbuilder-analysis/src/analysis_results.rs` |
+| Harmonic | `crates/rbuilder-analysis/src/centrality_approx.rs` (`HyperBallHarmonic`) |
+| Persist | `crates/rbuilder-analysis/src/results.rs` |
 | CLI | `src/cli/metrics.rs` |
-| Dashboard export | `crates/rbuilder-dashboard/src/function_metrics_export.rs` |
+| Dashboard export | `crates/rbuilder-dashboard/src/export_context.rs`, `function_metrics_export.rs` |
 
 ---
 

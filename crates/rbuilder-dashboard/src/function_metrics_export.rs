@@ -1,11 +1,12 @@
 //! Export per-node analysis scores for the Functions dashboard tab.
 
-use crate::blast_export::scan_columnar_uuid_indices;
-use rbuilder_analysis::AnalysisResults;
+use crate::export_context::{resolve_analysis, DashboardExportContext};
+use crate::metagraph::COMMUNITY_ONLY_THRESHOLD;
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::fs;
 use std::path::Path;
-use std::time::Instant;
+use uuid::Uuid;
 
 pub const FUNCTION_METRICS_FILE: &str = "function_metrics.json";
 
@@ -23,23 +24,35 @@ pub struct FunctionMetricRow {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FunctionMetricsPayload {
     pub schema_version: u32,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub rows: Vec<FunctionMetricRow>,
+    /// When set, per-function rows were omitted for large graphs (WASM/metagraph only).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sparse_mode: Option<String>,
 }
 
 pub fn export_function_metrics(
-    repo_root: &Path,
     snapshot_path: &Path,
     out_dir: &Path,
+    source_node_count: u64,
+    ctx: DashboardExportContext<'_>,
+    uuid_to_index: &HashMap<Uuid, u32>,
 ) -> Result<(), String> {
-    let analysis_path = repo_root.join(".rbuilder/analysis_results.bin");
-    if !analysis_path.is_file() || !snapshot_path.is_file() {
+    if !snapshot_path.is_file() {
         write_empty(out_dir)?;
         return Ok(());
     }
 
-    let results = AnalysisResults::load(&analysis_path).map_err(|e| e.to_string())?;
-    let bytes = fs::read(snapshot_path).map_err(|e| e.to_string())?;
-    let uuid_to_index = scan_columnar_uuid_indices(&bytes)?;
+    if source_node_count >= COMMUNITY_ONLY_THRESHOLD {
+        write_community_only(out_dir)?;
+        return Ok(());
+    }
+
+    let repo_root = snapshot_path
+        .parent()
+        .and_then(|p| p.parent())
+        .ok_or_else(|| "invalid snapshot path".to_string())?;
+    let results = resolve_analysis(&ctx, repo_root)?;
 
     let centrality = results.centrality.as_ref();
     let blast = results.blast_radius.as_ref();
@@ -91,10 +104,18 @@ pub fn export_function_metrics(
     }
 
     rows.sort_by_key(|a| a.index);
+    write_payload(out_dir, rows, None)
+}
 
+fn write_payload(
+    out_dir: &Path,
+    rows: Vec<FunctionMetricRow>,
+    sparse_mode: Option<String>,
+) -> Result<(), String> {
     let payload = FunctionMetricsPayload {
-        schema_version: 2,
-        rows: rows.clone(),
+        schema_version: if sparse_mode.is_some() { 3 } else { 2 },
+        rows,
+        sparse_mode,
     };
     let json = {
         let start = std::time::Instant::now();
@@ -104,7 +125,7 @@ pub fn export_function_metrics(
             file = FUNCTION_METRICS_FILE,
             serialize_secs = start.elapsed().as_secs_f64(),
             json_bytes = json.len(),
-            rows = rows.len(),
+            rows = payload.rows.len(),
             "[profile] save_dashboard json serialize"
         );
         json
@@ -117,15 +138,17 @@ pub fn export_function_metrics(
         write_secs = write_start.elapsed().as_secs_f64(),
         "[profile] save_dashboard json write"
     );
-
     Ok(())
 }
 
 fn write_empty(out_dir: &Path) -> Result<(), String> {
-    let payload = FunctionMetricsPayload {
-        schema_version: 2,
-        rows: Vec::new(),
-    };
-    let json = serde_json::to_string_pretty(&payload).map_err(|e| e.to_string())?;
-    fs::write(out_dir.join(FUNCTION_METRICS_FILE), json).map_err(|e| e.to_string())
+    write_payload(out_dir, Vec::new(), None)
+}
+
+fn write_community_only(out_dir: &Path) -> Result<(), String> {
+    write_payload(
+        out_dir,
+        Vec::new(),
+        Some("community_only".into()),
+    )
 }

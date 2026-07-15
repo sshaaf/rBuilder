@@ -341,51 +341,28 @@ pub(crate) fn run_full_analysis(
 
     // Centrality analysis — exact below 500 nodes; sampled betweenness + HyperBall harmonic above.
     let centrality_start = Instant::now();
-    let centrality_report = CentralityAnalyzer::new().analyze_with_view(&petgraph_view)?;
-    {
-        // Collect data with compact IDs first
-        let centrality_data: Vec<_> = centrality_report
-            .scores
-            .iter()
-            .filter_map(|(node_id, scores)| {
-                analysis_results
-                    .get_compact_id(*node_id)
-                    .map(|compact_id| (compact_id, scores))
-            })
-            .collect();
-
-        // Now update table
-        let table = analysis_results.init_centrality();
-        for (compact_id, scores) in centrality_data {
-            let idx = compact_id as usize;
-            table.pagerank[idx] = scores.pagerank as f32;
-            table.betweenness[idx] = scores.betweenness as f32;
-            table.harmonic[idx] = scores.harmonic as f32;
-            table.in_degree[idx] = scores.in_degree as u32;
-            table.out_degree[idx] = scores.out_degree as u32;
-        }
-    }
-
+    let centrality_summary =
+        CentralityAnalyzer::new().analyze_columnar(&petgraph_view, &mut analysis_results)?;
     profile.centrality.secs = secs(centrality_start.elapsed());
 
-    // Check if we have betweenness data
-    let has_betweenness = centrality_report
-        .scores
-        .values()
-        .any(|s| s.betweenness > 0.0);
+    let has_betweenness = centrality_summary.has_betweenness;
 
     if human_output {
-        if let Some((top_id, top_score)) = centrality_report.top_pagerank.first() {
+        if let Some((top_id, top_score)) = centrality_summary.top_pagerank.first() {
             if let Ok(Some(node)) = graph.backend().get_node(*top_id) {
                 let short_name = node.name.split('/').next_back().unwrap_or(&node.name);
+                let (in_degree, out_degree) = analysis_results
+                    .get_centrality(*top_id)
+                    .map(|m| (m.in_degree, m.out_degree))
+                    .unwrap_or((0, 0));
 
                 if verbose {
                     info!(
                         hotspot = short_name,
                         pagerank = %format!("{:.4}", top_score),
                         betweenness_enabled = has_betweenness,
-                        in_degree = centrality_report.scores.get(top_id).map(|s| s.in_degree).unwrap_or(0),
-                        out_degree = centrality_report.scores.get(top_id).map(|s| s.out_degree).unwrap_or(0),
+                        in_degree,
+                        out_degree,
                         "[*] Top hotspot: {} (PageRank: {:.4})",
                         short_name,
                         top_score
@@ -855,7 +832,12 @@ pub(crate) fn run_full_analysis(
     // Export static dashboard bundle (Phase 0+1 — see docs/dashboard-design.md)
     let save_dashboard_start = Instant::now();
     let dashboard_dir = root.join(".rbuilder/dashboard");
-    match rbuilder_dashboard::export_dashboard_bundle_if_changed(graph.backend(), root, &snapshot_path) {
+    match rbuilder_dashboard::export_dashboard_bundle_if_changed_with_context(
+        graph.backend(),
+        root,
+        &snapshot_path,
+        rbuilder_dashboard::DashboardExportContext::with_analysis(&analysis_results),
+    ) {
         Ok(true) => {
             if human_output {
                 info!("[✓] Dashboard: {}/index.html", dashboard_dir.display());
