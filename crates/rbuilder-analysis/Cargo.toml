@@ -33,6 +33,25 @@ zstd = { workspace = true }
 memmap2 = "0.9"
 rayon = { workspace = true }
 
+[features]
+default = []
+semantic-onnx = ["dep:ort", "dep:ndarray", "dep:sentencepiece-rs"]
+
+[dependencies.ort]
+version = "2.0.0-rc.12"
+optional = true
+default-features = false
+features = ["std", "ndarray", "download-binaries", "copy-dylibs", "tls-rustls"]
+
+[dependencies.ndarray]
+version = "0.17"
+optional = true
+features = ["std"]
+
+[dependencies.sentencepiece-rs]
+version = "0.2"
+optional = true
+
 [dev-dependencies]
 tempfile = "3"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }

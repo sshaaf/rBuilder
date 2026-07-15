@@ -32,9 +32,39 @@ struct NodeExtension {
     qualified_name: Option<String>,
     return_type: Option<String>,
     code_hash: Option<String>,
+    #[serde(default)]
+    token_bloom: Option<[u64; 4]>,
     parameters: Vec<GraphParameter>,
     properties: HashMap<String, String>,
     labels: Vec<String>,
+}
+
+/// Pre-`token_bloom` extension layout for columnar snapshot backward compatibility.
+#[derive(Debug, Clone, Deserialize)]
+struct NodeExtensionV1 {
+    qualified_name: Option<String>,
+    return_type: Option<String>,
+    code_hash: Option<String>,
+    parameters: Vec<GraphParameter>,
+    properties: HashMap<String, String>,
+    labels: Vec<String>,
+}
+
+fn decode_node_extension(bytes: &[u8]) -> Result<NodeExtension> {
+    if let Ok(ext) = bincode::deserialize::<NodeExtension>(bytes) {
+        return Ok(ext);
+    }
+    let legacy = bincode::deserialize::<NodeExtensionV1>(bytes)
+        .map_err(|err| Error::SerdeError(format!("node extension: {err}")))?;
+    Ok(NodeExtension {
+        qualified_name: legacy.qualified_name,
+        return_type: legacy.return_type,
+        code_hash: legacy.code_hash,
+        token_bloom: None,
+        parameters: legacy.parameters,
+        properties: legacy.properties,
+        labels: legacy.labels,
+    })
 }
 
 /// Fixed-width node column (64 bytes).
@@ -257,8 +287,7 @@ impl ColumnarGraphMmap {
             if end > self.mmap.len() {
                 return Err(Error::SerdeError("node extension out of range".into()));
             }
-            bincode::deserialize::<NodeExtension>(&self.mmap[start..end])
-                .map_err(|e| Error::SerdeError(format!("node extension: {e}")))?
+            decode_node_extension(&self.mmap[start..end])?
         } else {
             NodeExtension::default()
         };
@@ -272,6 +301,7 @@ impl ColumnarGraphMmap {
             return_type: extension.return_type,
             parameters: extension.parameters,
             code_hash: extension.code_hash,
+            token_bloom: extension.token_bloom,
             file_path,
             start_line: (row.start_line > 0).then_some(row.start_line as usize),
             end_line: (row.end_line > 0).then_some(row.end_line as usize),
@@ -324,6 +354,7 @@ impl PreparedGraphSnapshot {
                 qualified_name: node.qualified_name.clone(),
                 return_type: node.return_type.clone(),
                 code_hash: node.code_hash.clone(),
+                token_bloom: node.token_bloom,
                 parameters: node.parameters.clone(),
                 properties: node.properties.clone(),
                 labels: node.labels.clone(),

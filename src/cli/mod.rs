@@ -21,11 +21,14 @@ mod metrics;
 pub mod metrics_output;
 mod policy_file;
 mod query_daemon;
+mod semantic;
+pub mod semantic_output;
 mod slice;
 pub mod slice_output;
 
 pub use args::OutputFormat;
 
+use crate::analysis::{DEFAULT_CANDIDATE_POOL, DEFAULT_EMBEDDING_DIMENSIONS};
 use crate::BUILD_INFO;
 use args::{ExportFormat, InspectLayer, SliceDirection, SliceView};
 use clap::{Parser, Subcommand};
@@ -194,6 +197,12 @@ pub enum Commands {
         iterations: Option<usize>,
     },
 
+    /// Opt-in semantic search over function symbols (separate index artifact)
+    Semantic {
+        #[command(subcommand)]
+        action: SemanticCommands,
+    },
+
     /// CI policy gateway
     Check {
         #[arg(long)]
@@ -252,6 +261,71 @@ pub enum Commands {
         /// Daemon idle exit in seconds [default: 300]
         #[arg(long, default_value_t = 300)]
         idle_secs: u64,
+    },
+}
+
+#[derive(Subcommand)]
+pub enum SemanticCommands {
+    /// Build `.rbuilder/semantic_index.bin` from function symbols (not run by default discover)
+    Index {
+        /// Embedding dimensions before sign quantization (multiple of 8) [default: 1024]
+        #[arg(long, default_value_t = DEFAULT_EMBEDDING_DIMENSIONS)]
+        dimensions: usize,
+
+        /// Reuse embeddings for unchanged `code_hash` values [default: true]
+        #[arg(long, default_value_t = true)]
+        incremental: bool,
+
+        /// Embedder backend: hash (default), onnx (generic `--model`), or code-daemon
+        #[arg(long, value_enum, default_value = "hash")]
+        embedder: semantic::CliEmbedderKind,
+
+        /// Path to ONNX model (required for `--embedder onnx`; optional for code-daemon)
+        #[arg(long, value_name = "PATH")]
+        model: Option<std::path::PathBuf>,
+
+        /// SentencePiece tokenizer for ONNX embedders (auto-detected beside `--model` when omitted)
+        #[arg(long, value_name = "PATH")]
+        tokenizer: Option<std::path::PathBuf>,
+    },
+
+    /// Hamming nearest-neighbor search over the semantic index
+    Query {
+        /// Natural-language or keyword query
+        #[arg(value_name = "TEXT")]
+        query: String,
+
+        /// Maximum hits to return [default: 20]
+        #[arg(long, default_value_t = 20)]
+        limit: usize,
+
+        /// Expand top hits into graph context: neighbors, blast, gql, or all
+        #[arg(long, value_enum, value_name = "MODE")]
+        expand: Option<semantic::CliExpandMode>,
+
+        /// CALLS hop depth for neighbor/gql expansion [default: 1]
+        #[arg(long, default_value_t = 1)]
+        expand_depth: usize,
+
+        /// ONNX model path (when index was built with onnx/code-daemon)
+        #[arg(long, value_name = "PATH")]
+        model: Option<std::path::PathBuf>,
+
+        /// SentencePiece tokenizer path (ONNX/code-daemon indexes)
+        #[arg(long, value_name = "PATH")]
+        tokenizer: Option<std::path::PathBuf>,
+
+        /// Disable late fusion re-ranking (pure Hamming top-k)
+        #[arg(long)]
+        no_fusion: bool,
+
+        /// Hamming candidate pool size before late fusion [default: 256]
+        #[arg(long, default_value_t = DEFAULT_CANDIDATE_POOL)]
+        candidate_pool: usize,
+
+        /// Require all query keywords to match entry metadata (AND filter)
+        #[arg(long)]
+        keyword_and: bool,
     },
 }
 
@@ -369,6 +443,48 @@ impl Cli {
                     iterations,
                 },
             ),
+            Commands::Semantic { action } => match action {
+                SemanticCommands::Index {
+                    dimensions,
+                    incremental,
+                    embedder,
+                    model,
+                    tokenizer,
+                } => semantic::run_index(
+                    &ctx,
+                    semantic::SemanticIndexArgs {
+                        dimensions,
+                        incremental,
+                        embedder,
+                        model,
+                        tokenizer,
+                    },
+                ),
+                SemanticCommands::Query {
+                    query,
+                    limit,
+                    expand,
+                    expand_depth,
+                    model,
+                    tokenizer,
+                    no_fusion,
+                    candidate_pool,
+                    keyword_and,
+                } => semantic::run_query(
+                    &ctx,
+                    semantic::SemanticQueryArgs {
+                        query,
+                        limit,
+                        expand,
+                        expand_depth,
+                        model,
+                        tokenizer,
+                        fusion: !no_fusion,
+                        candidate_pool,
+                        keyword_and,
+                    },
+                ),
+            },
             Commands::Check { policy_file } => check::run(&ctx, check::CheckArgs { policy_file }),
             Commands::Export {
                 export_format,

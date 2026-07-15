@@ -787,6 +787,8 @@ pub(crate) fn run_full_analysis(
         info!("[✓] Analysis complete");
     }
 
+    analysis_results.fill_structural_sketch_from_graph(graph.backend())?;
+
     // Save analysis results (columnar format - separate from graph!)
     let save_analysis_start = Instant::now();
     let analysis_path = root.join(".rbuilder/analysis_results.bin");

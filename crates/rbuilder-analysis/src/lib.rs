@@ -29,6 +29,15 @@ pub mod migration;
 pub mod pdg;
 pub mod policy;
 pub mod results;
+pub mod semantic_code_daemon;
+pub mod semantic_embedder;
+pub mod semantic_extract;
+pub mod semantic_fusion;
+pub mod semantic_hybrid;
+pub mod semantic_onnx_tokenizer;
+#[cfg(feature = "semantic-onnx")]
+pub mod semantic_onnx;
+pub mod semantic_search;
 pub mod slicing;
 pub mod storage;
 pub mod taint;
@@ -109,7 +118,39 @@ pub use pdg::{
 pub use policy::{check_policies, evaluate_policies, DomainId, PolicyRegistry, PolicyViolation};
 pub use results::{
     AnalysisResults, BlastRadiusMetrics, BlastRadiusTable, CentralityMetrics, CentralityTable,
-    CommunityTable, ComplexityTable,
+    CommunityTable, ComplexityTable, StructuralSketchTable,
+};
+pub use semantic_code_daemon::{
+    default_model_dir, default_model_path, default_tokenizer_path, validate_mrl_dimensions,
+    CODE_DAEMON_MAX_SEQ_LEN, CODE_DAEMON_MODEL_ID, CODE_DAEMON_MRL_DIMS, CODE_DAEMON_NATIVE_DIMS,
+    CODE_DAEMON_ONNX_FILE, CODE_DAEMON_TOKENIZER_FILE,
+};
+#[cfg(feature = "semantic-onnx")]
+pub use semantic_code_daemon::load_code_daemon_embedder;
+pub use semantic_embedder::{
+    embedder_for_index, resolve_embedder, EmbedderChoice, OnnxReloadOptions, SemanticEmbedder,
+    SignHashEmbedder,
+};
+pub use semantic_extract::{
+    extract_body_tokens_for_node, extract_body_tokens_from_slice, resolve_source_path,
+    FunctionTokenSketch, MIN_TOKEN_LEN,
+};
+pub use semantic_fusion::{
+    entry_metadata_tokens, fuse_candidates, hamming_similarity, keyword_and_matches,
+    name_overlap_score, query_index_with_fusion, query_keywords, FusionCandidate,
+    SemanticFusionConfig, DEFAULT_CANDIDATE_POOL,
+};
+pub use semantic_hybrid::{
+    blast_summary_from_result, expand_call_neighbors, expand_semantic_hits, BlastSummaryProvider,
+    SemanticBlastSummary, SemanticExpandConfig, SemanticExpandMode, SemanticExpandedNode,
+    SemanticExpansion,
+};
+pub use semantic_search::{
+    build_from_backend, build_index, embed_text_for_function, embed_text_for_node, hamming_distance,
+    hamming_top_k, query_index, query_index_with_embedder, quantize_binary, sign_hash_embed,
+    SemanticBuildOptions, SemanticBuildStats, SemanticEntry, SemanticHit, SemanticIndex,
+    DEFAULT_EMBEDDING_DIMENSIONS, SEMANTIC_INDEX_FILE, SEMANTIC_INDEX_SCHEMA_VERSION,
+    SIGN_HASH_MODEL_ID,
 };
 pub use slicing::{BackwardSlicer, CodeSlice, SliceCriterion};
 pub use storage::{AnalysisIndexEntry, AnalysisStorage, FunctionAnalysis, FunctionIdSyncEntry};

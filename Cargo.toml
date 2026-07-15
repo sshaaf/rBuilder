@@ -187,8 +187,8 @@ rbuilder-lang-rust = { workspace = true }
 
 [features]
 default = []
-
 proc-macros = ["rbuilder-macros"]
+semantic-onnx = ["rbuilder-analysis/semantic-onnx"]
 
 [profile.release]
 opt-level = 3

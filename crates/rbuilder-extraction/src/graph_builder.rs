@@ -4,6 +4,7 @@ use rbuilder_error::Result;
 use rbuilder_graph::code_index::{hash_code, CodeIndex};
 use rbuilder_graph::migration::graph_parameter_from_plugin;
 use rbuilder_graph::schema::{Edge, EdgeType, Node, NodeType};
+use rbuilder_graph::structural_sketch::build_token_bloom;
 use rbuilder_plugin_api::{
     ComplexityMetrics, ConfigKey, Relation, RelationType, Symbol, SymbolType,
 };
@@ -138,6 +139,16 @@ impl GraphBuilder {
                 hash_code(body)
             };
             node = node.with_code_hash(code_hash);
+        }
+
+        if should_sketch_symbol(symbol.symbol_type) {
+            let bloom = build_token_bloom(
+                &symbol.name,
+                symbol.qualified_name.as_deref(),
+                symbol.signature.as_deref(),
+                body,
+            );
+            node = node.with_token_bloom(bloom);
         }
         if !symbol.modifiers.is_empty() {
             node = node.with_property("modifiers".to_string(), symbol.modifiers.join(" "));
@@ -591,6 +602,10 @@ fn symbol_key(file: &str, name: &str, qualified: Option<&str>) -> String {
     format!("{file}::{}", qualified.unwrap_or(name))
 }
 
+fn should_sketch_symbol(symbol_type: SymbolType) -> bool {
+    matches!(symbol_type, SymbolType::Function)
+}
+
 fn symbol_type_to_node_type(symbol_type: SymbolType) -> NodeType {
     match symbol_type {
         SymbolType::Function => NodeType::Function,
@@ -686,6 +701,21 @@ mod tests {
             documentation: None,
             metadata: serde_json::json!({}),
         }
+    }
+
+    #[test]
+    fn add_symbol_with_body_sets_token_bloom() {
+        let mut builder = GraphBuilder::new();
+        let file_id = builder.ensure_file_node(Path::new("src/main.rs"));
+        let mut symbol = sample_symbol();
+        builder.add_symbol_with_body(&symbol, file_id, Some("let port = ntohs(raw);"));
+        let node = builder
+            .nodes()
+            .iter()
+            .find(|n| n.name == symbol.name)
+            .unwrap();
+        let bloom = node.token_bloom.expect("token bloom");
+        assert!(rbuilder_graph::keyword_in_bloom("ntohs", &bloom));
     }
 
     #[test]

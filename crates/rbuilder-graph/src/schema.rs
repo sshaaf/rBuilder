@@ -6,6 +6,8 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use uuid::Uuid;
 
+use crate::structural_sketch::TokenBloom;
+
 /// Current graph schema version (Phase 12.0 enrichment).
 pub const GRAPH_SCHEMA_VERSION: u32 = 2;
 
@@ -221,6 +223,10 @@ pub struct Node {
     #[serde(default)]
     pub code_hash: Option<String>,
 
+    /// 256-bit token bloom sketch (eager structural index at extract time).
+    #[serde(default)]
+    pub token_bloom: Option<TokenBloom>,
+
     /// Source file path
     pub file_path: Option<String>,
 
@@ -249,6 +255,7 @@ impl Node {
             return_type: None,
             parameters: Vec::new(),
             code_hash: None,
+            token_bloom: None,
             file_path: None,
             start_line: None,
             end_line: None,
@@ -297,6 +304,12 @@ impl Node {
     /// Set the code body hash for change detection.
     pub fn with_code_hash(mut self, code_hash: impl Into<String>) -> Self {
         self.code_hash = Some(code_hash.into());
+        self
+    }
+
+    /// Set the eager 256-bit token bloom sketch for this symbol.
+    pub fn with_token_bloom(mut self, token_bloom: TokenBloom) -> Self {
+        self.token_bloom = Some(token_bloom);
         self
     }
 
