@@ -7,22 +7,22 @@ use rbuilder_error::{Error, Result};
 use rbuilder_graph::backend::{GraphBackend, MemoryBackend};
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet, VecDeque};
-use std::rc::Rc;
+use std::sync::Arc;
 use uuid::Uuid;
 
 /// Lazy per-function PDG cache used during interprocedural slicing.
-struct PdgCache(RefCell<HashMap<Uuid, Rc<ProgramDependenceGraph>>>);
+struct PdgCache(RefCell<HashMap<Uuid, Arc<ProgramDependenceGraph>>>);
 
 impl PdgCache {
     fn new() -> Self {
         Self(RefCell::new(HashMap::new()))
     }
 
-    fn borrow_map(&self) -> std::cell::Ref<'_, HashMap<Uuid, Rc<ProgramDependenceGraph>>> {
+    fn borrow_map(&self) -> std::cell::Ref<'_, HashMap<Uuid, Arc<ProgramDependenceGraph>>> {
         self.0.borrow()
     }
 
-    fn borrow_map_mut(&self) -> std::cell::RefMut<'_, HashMap<Uuid, Rc<ProgramDependenceGraph>>> {
+    fn borrow_map_mut(&self) -> std::cell::RefMut<'_, HashMap<Uuid, Arc<ProgramDependenceGraph>>> {
         self.0.borrow_mut()
     }
 }
@@ -73,11 +73,11 @@ impl<'a, C: InterproceduralCfgAccess + ?Sized> InterproceduralSlicer<'a, C> {
         })
     }
 
-    /// Pre-populate PDGs from a discover-time archive (skips lazy rebuild when present).
+    /// Pre-populate PDG cache with refcount shares (no deep PDG clone).
     pub fn preload_pdgs(&self, archive: &crate::cfg_pdg_archive::CfgPdgArchive) {
         let mut pdgs = self.pdg_cache.borrow_map_mut();
         for (function_id, record) in &archive.records {
-            pdgs.insert(*function_id, Rc::new(record.pdg.clone()));
+            pdgs.insert(*function_id, Arc::clone(&record.pdg));
         }
     }
 
@@ -150,7 +150,7 @@ impl<'a, C: InterproceduralCfgAccess + ?Sized> InterproceduralSlicer<'a, C> {
         })
     }
 
-    fn pdg_for(&self, function: Uuid) -> Result<Rc<ProgramDependenceGraph>> {
+    fn pdg_for(&self, function: Uuid) -> Result<Arc<ProgramDependenceGraph>> {
         if let Some(pdg) = self.pdg_cache.borrow_map().get(&function).cloned() {
             return Ok(pdg);
         }
@@ -174,8 +174,10 @@ impl<'a, C: InterproceduralCfgAccess + ?Sized> InterproceduralSlicer<'a, C> {
                     .map(|(_, v)| v)
             })
             .ok_or_else(|| Error::NotFound(format!("source for {file_path}")))?;
-        let pdg = Rc::new(ProgramDependenceGraph::build(cfg, source.as_bytes())?);
-        self.pdg_cache.borrow_map_mut().insert(function, Rc::clone(&pdg));
+        let pdg = Arc::new(ProgramDependenceGraph::build(cfg, source.as_bytes())?);
+        self.pdg_cache
+            .borrow_map_mut()
+            .insert(function, Arc::clone(&pdg));
         Ok(pdg)
     }
 
@@ -217,12 +219,11 @@ impl<'a, C: InterproceduralCfgAccess + ?Sized> InterproceduralSlicer<'a, C> {
             .filter(|line| *line > 0)
             .collect();
         if !lines.is_empty() {
-            return caller_pdg
-                .nodes
-                .iter()
-                .filter(|(_, node)| lines.contains(&node.statement.line))
-                .map(|(id, _)| *id)
-                .collect();
+            let mut nodes = Vec::new();
+            for line in lines {
+                nodes.extend_from_slice(caller_pdg.nodes_at_line(line));
+            }
+            return nodes;
         }
 
         if let Some(callee_name) = self.function_names.get(&callee_id) {

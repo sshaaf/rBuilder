@@ -27,6 +27,9 @@ pub struct ProgramDependenceGraph {
     /// Outgoing data-dependence adjacency (rebuilt on load when empty).
     #[serde(default)]
     data_succ: HashMap<PdgNodeId, Vec<PdgNodeId>>,
+    /// Statement line → PDG node ids (rebuilt on load when empty).
+    #[serde(default)]
+    line_nodes: HashMap<usize, Vec<PdgNodeId>>,
     #[serde(skip)]
     seen_data_edges: HashSet<(PdgNodeId, PdgNodeId, String, u8)>,
 }
@@ -44,6 +47,8 @@ impl<'de> Deserialize<'de> for ProgramDependenceGraph {
             block_nodes: HashMap<BlockId, Vec<PdgNodeId>>,
             #[serde(default)]
             data_succ: HashMap<PdgNodeId, Vec<PdgNodeId>>,
+            #[serde(default)]
+            line_nodes: HashMap<usize, Vec<PdgNodeId>>,
         }
         let stored = Stored::deserialize(deserializer)?;
         Ok(Self::from_parts(
@@ -52,6 +57,7 @@ impl<'de> Deserialize<'de> for ProgramDependenceGraph {
             stored.control_deps,
             stored.block_nodes,
             stored.data_succ,
+            stored.line_nodes,
         ))
     }
 }
@@ -111,6 +117,7 @@ impl ProgramDependenceGraph {
         control_deps: Vec<ControlDependency>,
         block_nodes: HashMap<BlockId, Vec<PdgNodeId>>,
         data_succ: HashMap<PdgNodeId, Vec<PdgNodeId>>,
+        line_nodes: HashMap<usize, Vec<PdgNodeId>>,
     ) -> Self {
         Self {
             nodes,
@@ -118,6 +125,7 @@ impl ProgramDependenceGraph {
             control_deps,
             block_nodes,
             data_succ,
+            line_nodes,
             seen_data_edges: HashSet::new(),
         }
     }
@@ -136,6 +144,7 @@ impl ProgramDependenceGraph {
     ) -> Result<Self> {
         let mut pdg = Self::default();
         pdg.create_nodes_from_cfg(cfg);
+        pdg.rebuild_line_nodes();
         let _ = source;
         let reaching = compute_reaching_definitions(cfg, &pdg);
         pdg.build_data_dependencies(cfg, &reaching);
@@ -155,6 +164,7 @@ impl ProgramDependenceGraph {
     pub fn restore_derived_indexes(&mut self) {
         self.rebuild_block_nodes();
         self.rebuild_data_succ();
+        self.rebuild_line_nodes();
         self.seen_data_edges.clear();
     }
 
@@ -163,6 +173,24 @@ impl ProgramDependenceGraph {
         for node in self.nodes.values() {
             self.block_nodes.entry(node.block).or_default().push(node.id);
         }
+    }
+
+    fn rebuild_line_nodes(&mut self) {
+        self.line_nodes.clear();
+        for node in self.nodes.values() {
+            self.line_nodes
+                .entry(node.statement.line)
+                .or_default()
+                .push(node.id);
+        }
+    }
+
+    /// PDG nodes whose statement is on `line`.
+    pub fn nodes_at_line(&self, line: usize) -> &[PdgNodeId] {
+        self.line_nodes
+            .get(&line)
+            .map(|v| v.as_slice())
+            .unwrap_or(&[])
     }
 
     fn rebuild_data_succ(&mut self) {

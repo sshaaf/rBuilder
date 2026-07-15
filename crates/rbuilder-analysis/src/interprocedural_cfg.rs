@@ -231,6 +231,7 @@ fn helper() -> i32 {
     fn from_cfg_archive_reuses_stored_cfgs() {
         use crate::cfg_pdg_archive::{CfgPdgArchive, CfgPdgRecord};
         use rbuilder_graph::code_index::hash_code;
+        use std::sync::Arc;
 
         let mut backend = MemoryBackend::new();
         let main = Node::new(NodeType::Function, "main".into()).with_file_path("main.rs".into());
@@ -260,7 +261,7 @@ fn helper() -> i32 { 42 }
                 function_name: String::new(),
                 file_path: None,
                 cfg,
-                pdg: pdg.clone(),
+                pdg: Arc::new(pdg.clone()),
             });
         }
 

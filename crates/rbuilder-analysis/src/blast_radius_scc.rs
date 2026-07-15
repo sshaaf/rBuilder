@@ -365,25 +365,27 @@ impl BlastRadiusEngine {
         use crate::blast_engine_snapshot::{
             bitset_to_words, compress_words, words_popcount, ReachabilityRow,
         };
+        use rayon::prelude::*;
 
         let eager = self
             .reachability
             .eager_slice()
             .expect("to_engine_snapshot requires an eagerly-built engine");
 
-        let mut reachability_rows = Vec::new();
-        for (idx, bs) in eager.iter().enumerate() {
-            let words = bitset_to_words(bs, self.scc_count);
-            if words_popcount(&words) <= 1 {
-                continue;
-            }
-            if let Ok(compressed) = compress_words(&words) {
-                reachability_rows.push(ReachabilityRow {
+        let reachability_rows: Vec<ReachabilityRow> = eager
+            .par_iter()
+            .enumerate()
+            .filter_map(|(idx, bs)| {
+                let words = bitset_to_words(bs, self.scc_count);
+                if words_popcount(&words) <= 1 {
+                    return None;
+                }
+                compress_words(&words).ok().map(|compressed| ReachabilityRow {
                     scc_idx: idx as u32,
                     compressed,
-                });
-            }
-        }
+                })
+            })
+            .collect();
 
         crate::blast_engine_snapshot::BlastEngineSnapshot {
             graph_digest,

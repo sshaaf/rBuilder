@@ -255,17 +255,19 @@ impl MacroCallIndex {
     pub fn caches_are_current(
         macro_path: &Path,
         lookup_db_path: &Path,
-        repo_root: &Path,
+        _repo_root: &Path,
         backend: &MemoryBackend,
         graph_digest: &str,
     ) -> Result<bool> {
-        let Some(index) = Self::load(macro_path)? else {
-            return Ok(false);
-        };
-        if !index.is_valid_for_digest(graph_digest) || !index.is_valid_for(backend) {
+        if !macro_path.exists() {
             return Ok(false);
         }
-        crate::macro_call_lookup::MacroCallLookupDb::is_valid_for_repo(lookup_db_path, repo_root)
+        crate::macro_call_lookup::MacroCallLookupDb::matches_digest_and_counts(
+            lookup_db_path,
+            graph_digest,
+            backend.node_count(),
+            backend.edge_count(),
+        )
     }
 
     /// Returns true when the on-disk graph matches the index fingerprint.

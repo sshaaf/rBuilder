@@ -13,6 +13,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs::File;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use uuid::Uuid;
 
 /// Magic bytes for CFG/PDG archive files (`RBCP`).
@@ -38,8 +39,29 @@ pub struct CfgPdgRecord {
     pub file_path: Option<String>,
     /// Control-flow graph.
     pub cfg: ControlFlowGraph,
-    /// Program dependence graph.
-    pub pdg: ProgramDependenceGraph,
+    /// Program dependence graph (shared across slice handoffs).
+    #[serde(
+        serialize_with = "serialize_arc_pdg",
+        deserialize_with = "deserialize_arc_pdg"
+    )]
+    pub pdg: Arc<ProgramDependenceGraph>,
+}
+
+fn serialize_arc_pdg<S>(
+    pdg: &Arc<ProgramDependenceGraph>,
+    serializer: S,
+) -> std::result::Result<S::Ok, S::Error>
+where
+    S: serde::Serializer,
+{
+    pdg.as_ref().serialize(serializer)
+}
+
+fn deserialize_arc_pdg<'de, D>(deserializer: D) -> std::result::Result<Arc<ProgramDependenceGraph>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    ProgramDependenceGraph::deserialize(deserializer).map(Arc::new)
 }
 
 /// On-disk bundle of CFG/PDG records keyed by function id.
@@ -67,7 +89,7 @@ impl CfgPdgArchive {
 
     /// Lookup PDG for a function (hot path for slice handoffs).
     pub fn get_pdg(&self, function_id: Uuid) -> Option<&ProgramDependenceGraph> {
-        self.records.get(&function_id).map(|r| &r.pdg)
+        self.records.get(&function_id).map(|r| r.pdg.as_ref())
     }
 
     /// Lookup CFG for a function.
@@ -183,7 +205,7 @@ fn parse_payload(mmap: &[u8]) -> Result<CfgPdgArchive> {
     }
     let mut archive: CfgPdgArchive = bincode::deserialize(&mmap[16..16 + payload_len]).map_err(serde_err)?;
     for record in archive.records.values_mut() {
-        record.pdg.restore_derived_indexes();
+        Arc::make_mut(&mut record.pdg).restore_derived_indexes();
     }
     Ok(archive)
 }
@@ -214,7 +236,7 @@ mod tests {
             function_name: "add".into(),
             file_path: None,
             cfg,
-            pdg,
+            pdg: Arc::new(pdg),
         });
 
         let tmp = TempDir::new().unwrap();

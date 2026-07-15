@@ -594,7 +594,7 @@ fn archive_record_from_analysis(
             function_name: func_node.name.clone(),
             file_path: Some(file_path.to_string()),
             cfg: cfg.clone(),
-            pdg: pdg.clone(),
+            pdg: Arc::new(pdg.clone()),
         }),
         _ => None,
     }
