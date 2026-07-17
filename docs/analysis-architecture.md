@@ -69,7 +69,7 @@ Discover uses **`CentralityAnalyzer::analyze_columnar`**: flat scores from `Flat
 
 Constants: `LARGE_GRAPH_PAGERANK_*`, `LARGE_GRAPH_HYPERBALL_*` in `centrality.rs` / `centrality_approx.rs`.
 
-**Profiling:** `discover -v` with `RUST_LOG=profile=info` emits `[profile] stage` and `[profile] centrality sub-phase` lines (PageRank, betweenness, harmonic, columnar fill timings).
+**Profiling:** `discover -v` with `RUST_LOG=profile=info` emits `[profile] stage` and `[profile] centrality sub-phase` lines (PageRank, betweenness, harmonic, columnar fill timings). Harmonic runs only with `discover --with-harmonic`.
 
 See [internal/temp.md](internal/temp.md) for algorithm detail and kernel-scale measurements.
 

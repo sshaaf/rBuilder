@@ -441,6 +441,7 @@ rbuilder -r . slice src/main/java/com/redhat/coolstore/service/ShoppingCartServi
 | `-v, --verbose` | Debug logging |
 | `--security` | Secret scanning |
 | `--cfg` | CFG / PDG / taint analysis |
+| `--with-harmonic` | Harmonic centrality (HyperBall on large graphs); off by default — use for migration ranking |
 | `--all` | Security + CFG analysis |
 
 ### GQL WHERE clauses

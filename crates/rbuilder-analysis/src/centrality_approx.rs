@@ -50,6 +50,8 @@ pub enum HarmonicMode {
         /// Propagation rounds executed.
         rounds: usize,
     },
+    /// Harmonic skipped (e.g. discover without `--with-harmonic`).
+    Skipped,
 }
 
 /// Timing and mode metadata for a centrality pass.

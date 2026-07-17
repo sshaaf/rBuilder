@@ -11,7 +11,7 @@ The migration planner helps teams produce a **step-by-step extraction roadmap** 
 | Input | Role |
 |-------|------|
 | **PageRank** | Architectural importance / centrality |
-| **Harmonic centrality** | Reachability / “closeness” in the call graph |
+| **Harmonic centrality** | Reachability / “closeness” in the call graph (**requires `discover --with-harmonic`**; otherwise harmonic terms are zero) |
 | **Blast radius** | Downstream impact risk if a node changes |
 | **Call-graph dependencies** | Ordering constraints (callees before callers) |
 
@@ -369,14 +369,14 @@ Top → bottom:
 # Full analysis + dashboard bundle (includes migration_graph.json + default plan)
 rbuilder discover . --all
 
-# Export plan to file
-rbuilder discover . --export-migration-plan \
+# Export plan to file (harmonic required for β term in ranking)
+rbuilder discover . --with-harmonic --export-migration-plan \
   --migration-preset risk_mitigation \
   --migration-order priority \
   -o migration_plan.json
 
 # JSON to stdout (with discover JSON envelope)
-rbuilder discover . --export-migration-plan -f json
+rbuilder discover . --with-harmonic --export-migration-plan -f json
 
 # Serve dashboard
 rbuilder serve -r /path/to/repo --open
@@ -386,6 +386,7 @@ Flags:
 
 | Flag | Default | Description |
 |------|---------|-------------|
+| `--with-harmonic` | off | Compute harmonic centrality (needed for migration β / dense_cluster) |
 | `--export-migration-plan` | off | Write plan JSON |
 | `--migration-preset` | `hybrid_default` | Strategy preset |
 | `--migration-order` | `scheduled` | `scheduled` or `priority` |

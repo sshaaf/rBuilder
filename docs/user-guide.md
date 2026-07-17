@@ -214,9 +214,11 @@ With `-v`, discover emits a **`[profile] discover summary`** line (wall time, pe
 For centrality sub-phase breakdown (PageRank, betweenness, harmonic, columnar fill):
 
 ```bash
-RUST_LOG=info,profile=info rbuilder discover . -v 2>&1 | tee discover-profile.log
+RUST_LOG=info,profile=info rbuilder discover . --with-harmonic -v 2>&1 | tee discover-profile.log
 grep '\[profile\]' discover-profile.log
 ```
+
+Harmonic centrality (exact / HyperBall) is **off by default** — pass `--with-harmonic` when you need it for migration ranking. On kernel-scale graphs it adds ~30s wall and multi‑GB peak RSS.
 
 See [analysis-architecture.md](analysis-architecture.md) and [internal/temp.md](internal/temp.md) for large-graph adaptive gating (PageRank / HyperBall caps at 500k+ nodes).
 

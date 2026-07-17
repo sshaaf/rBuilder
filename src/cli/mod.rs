@@ -93,6 +93,11 @@ pub enum Commands {
         #[arg(long = "export-migration-plan")]
         export_migration_plan: bool,
 
+        /// Compute harmonic centrality (exact or HyperBall). Off by default — needed for
+        /// migration ranking; adds ~30s and multi‑GB peak RSS on kernel-scale graphs.
+        #[arg(long = "with-harmonic")]
+        with_harmonic: bool,
+
         /// Strategy preset for migration plan export.
         #[arg(
             long = "migration-preset",
@@ -356,6 +361,7 @@ impl Cli {
                 all,
                 write_json_graph,
                 export_migration_plan,
+                with_harmonic,
                 migration_preset,
                 migration_order,
             } => discover::run(
@@ -369,6 +375,7 @@ impl Cli {
                     all,
                     write_json_graph,
                     export_migration_plan,
+                    with_harmonic,
                     migration_preset,
                     migration_order,
                 },

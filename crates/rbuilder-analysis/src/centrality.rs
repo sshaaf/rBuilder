@@ -549,6 +549,8 @@ pub struct CentralityAnalyzer {
     sample_pivots: usize,
     sample_seed: u64,
     hyperball_rounds: usize,
+    /// When false, skip exact / HyperBall harmonic (scores stay 0).
+    compute_harmonic: bool,
 }
 
 impl Default for CentralityAnalyzer {
@@ -561,6 +563,8 @@ impl Default for CentralityAnalyzer {
             sample_pivots: crate::centrality_approx::DEFAULT_SAMPLE_PIVOTS,
             sample_seed: 0xA5A5_5A5A_C3C3_3C3C,
             hyperball_rounds: crate::centrality_approx::DEFAULT_HYPERBALL_ROUNDS,
+            // Library / metrics / tests keep harmonic on; discover opts out via CLI.
+            compute_harmonic: true,
         }
     }
 }
@@ -605,6 +609,15 @@ impl CentralityAnalyzer {
     /// HyperBall propagation rounds for approximate harmonic centrality.
     pub fn with_hyperball_rounds(mut self, rounds: usize) -> Self {
         self.hyperball_rounds = rounds.max(1);
+        self
+    }
+
+    /// Enable or disable harmonic centrality (exact BFS or HyperBall).
+    ///
+    /// When disabled, harmonic columns remain zero and no HyperBall sketches are allocated.
+    /// Discover defaults this to off (`--with-harmonic` to enable).
+    pub fn with_harmonic(mut self, enabled: bool) -> Self {
+        self.compute_harmonic = enabled;
         self
     }
 
@@ -717,7 +730,11 @@ impl CentralityAnalyzer {
             flat
         };
 
-        let harmonic = if n <= self.exact_limit {
+        let harmonic = if !self.compute_harmonic {
+            approx_stats.harmonic_mode = Some(HarmonicMode::Skipped);
+            approx_stats.harmonic_ms = 0;
+            vec![0.0; n]
+        } else if n <= self.exact_limit {
             approx_stats.harmonic_mode = Some(HarmonicMode::Exact);
             let start = Instant::now();
             let exact_map = HarmonicCentrality::compute(view, allowed, self.exact_limit);
@@ -927,6 +944,39 @@ mod tests {
         let scores = HarmonicCentrality::compute(&view, &[EdgeType::Calls], 500);
         assert!(scores.get(&id_hub).copied().unwrap_or(0.0) > 0.0);
         assert_eq!(scores.get(&id_leaf).copied().unwrap_or(0.0), 0.0);
+    }
+
+    #[test]
+    fn test_with_harmonic_false_skips_hyperball() {
+        let mut backend = MemoryBackend::new();
+        let hub = Node::new(NodeType::Function, "hub".to_string());
+        let leaf = Node::new(NodeType::Function, "leaf".to_string());
+        let id_hub = hub.id;
+        backend.insert_node(hub).unwrap();
+        backend.insert_node(leaf.clone()).unwrap();
+        backend
+            .insert_edge(Edge::new(id_hub, leaf.id, EdgeType::Calls))
+            .unwrap();
+
+        let view = PetGraphView::from_backend(&backend).unwrap();
+        let report = CentralityAnalyzer::new()
+            .with_harmonic(false)
+            .analyze_with_view(&view)
+            .unwrap();
+
+        assert_eq!(
+            report.approx_stats.harmonic_mode,
+            Some(crate::centrality_approx::HarmonicMode::Skipped)
+        );
+        assert_eq!(report.approx_stats.harmonic_ms, 0);
+        assert!(
+            report.scores.values().all(|s| s.harmonic == 0.0),
+            "harmonic must stay zero when disabled"
+        );
+        assert!(
+            report.scores.values().any(|s| s.pagerank > 0.0),
+            "PageRank must still run"
+        );
     }
 
     #[test]

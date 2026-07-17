@@ -21,6 +21,7 @@ pub(crate) fn run_full_analysis(
     all: bool,
     write_json_graph: bool,
     export_migration_plan: bool,
+    with_harmonic: bool,
     migration_preset: &str,
     migration_order: &str,
     db_path: &Path,
@@ -339,12 +340,16 @@ pub(crate) fn run_full_analysis(
 
     debug!("{}", mem_monitor.report());
 
-    // Centrality analysis — exact below 500 nodes; sampled betweenness + HyperBall harmonic above.
+    // Centrality: PageRank + betweenness always; harmonic only with --with-harmonic
+    // (HyperBall dominates wall/RSS on flat kernel-scale graphs — #29).
     let centrality_start = Instant::now();
-    let centrality_summary =
-        CentralityAnalyzer::new().analyze_columnar(&petgraph_view, &mut analysis_results)?;
+    let centrality_summary = CentralityAnalyzer::new()
+        .with_harmonic(with_harmonic)
+        .analyze_columnar(&petgraph_view, &mut analysis_results)?;
     profile.centrality.secs = secs(centrality_start.elapsed());
-
+    if verbose && !with_harmonic {
+        debug!("Harmonic centrality skipped (pass --with-harmonic to enable)");
+    }
     let has_betweenness = centrality_summary.has_betweenness;
 
     if human_output {
