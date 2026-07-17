@@ -442,6 +442,8 @@ rbuilder -r . slice src/main/java/com/redhat/coolstore/service/ShoppingCartServi
 | `--security` | Secret scanning |
 | `--cfg` | CFG / PDG / taint analysis |
 | `--with-harmonic` | Harmonic centrality (HyperBall on large graphs); off by default — use for migration ranking |
+| `--with-dashboard` | Write `.rbuilder/dashboard/` static bundle; off by default |
+| `--export-migration-hints` | Write migration roadmap JSON (alias: `--export-migration-plan`) |
 | `--all` | Security + CFG analysis |
 
 ### GQL WHERE clauses

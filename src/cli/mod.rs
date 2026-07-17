@@ -89,9 +89,17 @@ pub enum Commands {
         #[arg(long = "write-json-graph")]
         write_json_graph: bool,
 
+        /// Export the static dashboard bundle under `.rbuilder/dashboard/`. Off by default.
+        #[arg(long = "with-dashboard")]
+        with_dashboard: bool,
+
         /// Write a migration roadmap JSON after analysis (default: `.rbuilder/migration_plan.json`).
-        #[arg(long = "export-migration-plan")]
-        export_migration_plan: bool,
+        /// Alias: `--export-migration-plan` (deprecated name).
+        #[arg(
+            long = "export-migration-hints",
+            visible_alias = "export-migration-plan"
+        )]
+        export_migration_hints: bool,
 
         /// Compute harmonic centrality (exact or HyperBall). Off by default — needed for
         /// migration ranking; adds ~30s and multi‑GB peak RSS on kernel-scale graphs.
@@ -360,7 +368,8 @@ impl Cli {
                 cfg,
                 all,
                 write_json_graph,
-                export_migration_plan,
+                with_dashboard,
+                export_migration_hints,
                 with_harmonic,
                 migration_preset,
                 migration_order,
@@ -374,7 +383,8 @@ impl Cli {
                     cfg,
                     all,
                     write_json_graph,
-                    export_migration_plan,
+                    with_dashboard,
+                    export_migration_hints,
                     with_harmonic,
                     migration_preset,
                     migration_order,

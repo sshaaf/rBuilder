@@ -160,9 +160,9 @@ Currently hard-coded via `DEFAULT_*` and `LARGE_GRAPH_*` constants.
 
 ### Linux kernel (`example/linux`, 2.65M nodes, 8.56M edges)
 
-> **Note (Jul 2026 / #29):** `discover` defaults to **no** HyperBall harmonic (`--with-harmonic` to enable).
-> Default cold wall is expected ~**140s** (prior ~169–172s minus ~30s harmonic); peak RSS without harmonic should be well below the ~17GB HyperBall spike.
-> Table rows below still describe the **`--with-harmonic`** path unless marked otherwise.
+> **Note (Jul 2026 / #29 + #31):** default `discover` skips HyperBall harmonic and dashboard export.
+> Expected cold wall ≈ **~130–135s** (r3 no-harmonic ~142s minus ~8–9s `save_dashboard`).
+> Use `--with-harmonic` / `--with-dashboard` to restore those stages.
 
 Sub-phase profile (`RUST_LOG=profile=info discover -v`):
 

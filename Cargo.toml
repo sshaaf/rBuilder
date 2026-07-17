@@ -247,6 +247,14 @@ name = "cross_feature_qe"
 path = "tests/cross_feature_qe.rs"
 
 [[test]]
+name = "with_harmonic_cli"
+path = "tests/with_harmonic_cli.rs"
+
+[[test]]
+name = "with_dashboard_cli"
+path = "tests/with_dashboard_cli.rs"
+
+[[test]]
 name = "dashboard_ecommerce_go"
 path = "tests/dashboard_ecommerce_go.rs"
 

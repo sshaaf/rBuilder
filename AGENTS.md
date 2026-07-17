@@ -34,7 +34,7 @@ rbuilder -r "$REPO" -f json gql 'MATCH (n:Function) RETURN n LIMIT 20'
 | Impact before editing | `rbuilder -f json blast-radius <Symbol> [--depth N]` |
 | Architectural hotspots | `rbuilder -f json metrics --pagerank` |
 | Call neighborhood | `rbuilder -f json gql "MATCH (a:Function)-[:CALLS*1..3]->(b:Function) RETURN a,b LIMIT 50"` |
-| Migration plan | `rbuilder discover . --all --export-migration-plan` then read `.rbuilder/dashboard/migration_plan.json` |
+| Migration plan | `rbuilder discover . --all --with-dashboard --with-harmonic --export-migration-hints` then read `.rbuilder/migration_plan.json` (or dashboard copy) |
 | CI gate on changes | `rbuilder -f json check --policy-file policy.json` (exit 1 = violations) |
 
 ---
@@ -80,7 +80,7 @@ After `discover`:
 |------|---------|
 | `.rbuilder/graph.snapshot.bin` | Graph snapshot |
 | `.rbuilder/dashboard/manifest.json` | Counts, feature flags |
-| `.rbuilder/dashboard/migration_plan.json` | Migration export (with `--export-migration-plan`) |
+| `.rbuilder/dashboard/migration_plan.json` | Migration export (with `--with-dashboard` and/or `--export-migration-hints`) |
 | `.rbuilder/dashboard/graph_payload.bin` | Columnar graph for dashboard WASM |
 | `.rbuilder/semantic_index.bin` | Opt-in semantic search index (`semantic index`) |
 

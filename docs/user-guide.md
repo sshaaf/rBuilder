@@ -244,7 +244,7 @@ coolstore/.rbuilder/
 ├── file_hashes.json            # Incremental file tracker
 ├── analysis/                   # Per-function CFG/PDG/taint (with --cfg or --all)
 │   └── cfg_pdg.archive.bin     # CFG/PDG archive (with --cfg or --all)
-└── dashboard/                  # Static HTML dashboard (if embedded in your build)
+└── dashboard/                  # Static HTML dashboard (only with --with-dashboard)
     ├── index.html
     ├── manifest.json
     └── graph_payload.bin

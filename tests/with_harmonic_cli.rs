@@ -61,6 +61,7 @@ fn discover_default_skips_harmonic_columns() {
     let tmp = tempfile::tempdir().expect("tempdir");
     let repo = tmp.path().join("repo");
     copy_dir_all(&fixture, &repo).expect("copy fixture");
+    let _ = std::fs::remove_dir_all(repo.join(".rbuilder"));
 
     let output = run_discover(&repo, &[]);
     assert_ok(&output, "discover default");
@@ -87,6 +88,7 @@ fn discover_with_harmonic_fills_nonzero_scores() {
     let tmp = tempfile::tempdir().expect("tempdir");
     let repo = tmp.path().join("repo");
     copy_dir_all(&fixture, &repo).expect("copy fixture");
+    let _ = std::fs::remove_dir_all(repo.join(".rbuilder"));
 
     let output = run_discover(&repo, &["--with-harmonic"]);
     assert_ok(&output, "discover --with-harmonic");

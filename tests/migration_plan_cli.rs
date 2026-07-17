@@ -10,7 +10,14 @@ use std::process::Command;
 fn run_discover_migration(repo: &Path, extra_args: &[&str]) -> std::process::Output {
     let bin = rbuilder_bin();
     let mut cmd = Command::new(&bin);
-    cmd.args(["-r", repo.to_str().unwrap(), "discover", ".", "--languages", "java,rust"]);
+    cmd.args([
+        "-r",
+        repo.to_str().unwrap(),
+        "discover",
+        ".",
+        "--languages",
+        "java,rust",
+    ]);
     cmd.args(extra_args);
     cmd.output().expect("spawn rbuilder discover")
 }
@@ -26,7 +33,7 @@ fn export_migration_plan_writes_json_file() {
     let output = run_discover_migration(
         &repo,
         &[
-            "--export-migration-plan",
+            "--export-migration-hints",
             "-o",
             plan_path.to_str().unwrap(),
         ],
@@ -56,7 +63,7 @@ fn export_migration_plan_json_stdout() {
 
     let output = run_discover_migration(
         &repo,
-        &["--export-migration-plan", "-f", "json"],
+        &["--export-migration-hints", "-f", "json"],
     );
     assert!(
         output.status.success(),
@@ -82,7 +89,7 @@ fn migration_preset_foundational_first() {
     let output = run_discover_migration(
         &repo,
         &[
-            "--export-migration-plan",
+            "--export-migration-hints",
             "--migration-preset",
             "foundational_first",
             "-o",
@@ -107,7 +114,7 @@ fn export_migration_plan_priority_order() {
     let output = run_discover_migration(
         &repo,
         &[
-            "--export-migration-plan",
+            "--export-migration-hints",
             "--migration-order",
             "priority",
             "-o",

@@ -12,9 +12,9 @@ Interactive browser UI for exploring a repository after `discover`. This guide i
 
 ```bash
 cd /path/to/your/repo
-rbuilder discover .          # fast graph + dashboard
+rbuilder discover . --with-dashboard          # graph + dashboard bundle
 # or
-rbuilder discover . --all    # CFG, PDG, taint, migration export
+rbuilder discover . --all --with-dashboard    # CFG, PDG, taint + dashboard
 ```
 
 2. Open the dashboard over **HTTP** (required for WASM):
@@ -101,9 +101,9 @@ Screenshot placeholders (capture with `dashboard/scripts/capture-migration-scree
 ### Migration
 
 - Tune α/β/γ weights and presets; package graph + ordered table.
-- Requires `discover --all --export-migration-plan`.
+- Requires `discover --all --with-dashboard --with-harmonic --export-migration-hints`.
 - Screenshots: [design/README.md](design/README.md) (figures under `docs/images/design/`).
-- **CLI:** `discover . --all --export-migration-plan`
+- **CLI:** `discover . --all --with-dashboard --with-harmonic --export-migration-hints`
 
 ### Query Guide
 
@@ -127,11 +127,11 @@ Screenshot placeholders (capture with `dashboard/scripts/capture-migration-scree
 
 | Problem | Fix |
 |---------|-----|
-| “Graph not found” / empty stats | Run `rbuilder discover .` in repo root |
+| “Graph not found” / empty stats | Run `rbuilder discover . --with-dashboard` in repo root |
 | WASM engine error in notifications | Rebuild dashboard (`npm run build` in `dashboard/`) and re-run `discover` |
 | Stale data after git pull | Re-run `discover` |
 | Semantic search empty / warning | Index not built or served without API | `rbuilder semantic index` then `rbuilder serve --open` |
-| Migration tab empty | `discover . --all --export-migration-plan` |
+| Migration tab empty | `discover . --all --with-dashboard --with-harmonic --export-migration-hints` |
 
 ---
 

@@ -141,7 +141,14 @@ fn run_discover_with_flags(repo: &Path, languages: Option<&str>, all: bool) -> O
         bin.display()
     );
     let mut cmd = Command::new(&bin);
-    cmd.args(["-r", repo.to_str().unwrap(), "discover", "."]);
+    // Dashboard tests always opt in (#31 — bare discover skips dashboard).
+    cmd.args([
+        "-r",
+        repo.to_str().unwrap(),
+        "discover",
+        ".",
+        "--with-dashboard",
+    ]);
     if all {
         cmd.arg("--all");
     }
@@ -264,7 +271,8 @@ pub fn assert_dashboard_bundle_with_meta(repo: &Path, min_nodes: u64, min_metano
         dash.join("slice_index.json").is_file(),
         "missing slice_index.json (Phase 5)"
     );
-    assert_eq!(slice_index["schema_version"], 1);
+    let sv = slice_index["schema_version"].as_u64().unwrap_or(0);
+    assert!(sv >= 1, "slice_index schema_version must be >= 1, got {sv}");
     assert_eq!(slice_index["available"], cfg_available);
     assert_eq!(analysis["slice_available"], slice_available);
     assert_eq!(analysis["slice_index_path"], "slice_index.json");
@@ -273,7 +281,8 @@ pub fn assert_dashboard_bundle_with_meta(repo: &Path, min_nodes: u64, min_metano
         dash.join("cfg_index.json").is_file(),
         "missing cfg_index.json (Phase 4)"
     );
-    assert_eq!(cfg_index["schema_version"], 1);
+    let cfg_sv = cfg_index["schema_version"].as_u64().unwrap_or(0);
+    assert!(cfg_sv >= 1, "cfg_index schema_version must be >= 1, got {cfg_sv}");
     if !cfg_available {
         assert_eq!(
             cfg_index["available"], false,

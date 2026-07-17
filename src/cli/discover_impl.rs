@@ -20,7 +20,8 @@ pub(crate) fn run_full_analysis(
     cfg: bool,
     all: bool,
     write_json_graph: bool,
-    export_migration_plan: bool,
+    with_dashboard: bool,
+    export_migration_hints: bool,
     with_harmonic: bool,
     migration_preset: &str,
     migration_order: &str,
@@ -840,36 +841,40 @@ pub(crate) fn run_full_analysis(
         }
     }
 
-    // Export static dashboard bundle (Phase 0+1 — see docs/dashboard-design.md)
+    // Export static dashboard bundle only when requested (#31).
     let save_dashboard_start = Instant::now();
     let dashboard_dir = root.join(".rbuilder/dashboard");
-    match rbuilder_dashboard::export_dashboard_bundle_if_changed_with_context(
-        graph.backend(),
-        root,
-        &snapshot_path,
-        rbuilder_dashboard::DashboardExportContext::with_analysis(&analysis_results),
-    ) {
-        Ok(true) => {
-            if human_output {
-                info!("[✓] Dashboard: {}/index.html", dashboard_dir.display());
+    if with_dashboard {
+        match rbuilder_dashboard::export_dashboard_bundle_if_changed_with_context(
+            graph.backend(),
+            root,
+            &snapshot_path,
+            rbuilder_dashboard::DashboardExportContext::with_analysis(&analysis_results),
+        ) {
+            Ok(true) => {
+                if human_output {
+                    info!("[✓] Dashboard: {}/index.html", dashboard_dir.display());
+                }
+            }
+            Ok(false) => {
+                if verbose {
+                    debug!("Dashboard bundle unchanged — skipped re-export");
+                }
+            }
+            Err(e) => {
+                if human_output {
+                    warn!("[!] Dashboard export failed: {e}");
+                } else if verbose {
+                    debug!(error = %e, "Dashboard bundle export failed");
+                }
             }
         }
-        Ok(false) => {
-            if verbose {
-                debug!("Dashboard bundle unchanged — skipped re-export");
-            }
-        }
-        Err(e) => {
-            if human_output {
-                warn!("[!] Dashboard export failed: {e}");
-            } else if verbose {
-                debug!(error = %e, "Dashboard bundle export failed");
-            }
-        }
+    } else if verbose {
+        debug!("Dashboard export skipped (pass --with-dashboard to enable)");
     }
     profile.save_dashboard.secs = secs(save_dashboard_start.elapsed());
 
-    if export_migration_plan {
+    if export_migration_hints {
         let migration_start = Instant::now();
         let plan_path = ctx
             .output

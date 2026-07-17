@@ -118,10 +118,10 @@ After `discover --all`, open the dashboard **Migration** tab or export a machine
 - **Package macro graph** — aggregates functions into path-derived package labels (Java package paths, Rust/C `/src/` modules)
 - **Dual ordering** — **scheduled step** (Kahn topological sort, callee before caller) and **priority rank** (score-only)
 - **Scoring** — `Priority = α·PageRank + β·Harmonic − γ·Blast`; presets include Hybrid Default, Foundational First, Dense Cluster Extraction, Risk Mitigation
-- **CLI export** — every `discover` writes `migration_graph.json` and a default `migration_plan.json` under `.rbuilder/dashboard/`; use `--export-migration-plan` to write a preset-tuned plan (default `.rbuilder/migration_plan.json`, override with `-o`)
+- **CLI export** — pass `--with-dashboard` to write `migration_graph.json` / default plan under `.rbuilder/dashboard/`; use `--export-migration-hints` (alias `--export-migration-plan`) for a preset-tuned plan (default `.rbuilder/migration_plan.json`, override with `-o`)
 
 ```bash
-rbuilder discover . --all --export-migration-plan
+rbuilder discover . --all --with-dashboard --with-harmonic --export-migration-hints
 rbuilder serve   # http://127.0.0.1:8080/ → Migration tab
 ```
 
@@ -180,7 +180,7 @@ rbuilder -f json blast-radius ShoppingCartService
 rbuilder -f json metrics --pagerank --communities
 
 # Package migration roadmap (graph + plan JSON for agents)
-rbuilder discover . --all --export-migration-plan
+rbuilder discover . --all --with-dashboard --with-harmonic --export-migration-hints
 ```
 
 Concepts → **[Introduction](docs/Introduction.md)** · Commands → **[User Guide](docs/user-guide.md)**
@@ -211,8 +211,8 @@ Quick links into **[Introduction](docs/Introduction.md)** — see [Where most to
 | `check` | [CI policy](docs/Introduction.md#ci-policy-checks) |
 | `serve` | [HTTP server](docs/Introduction.md#http-server-serve) |
 
-**Dashboard** — visual exploration after `discover` (`.rbuilder/dashboard/`). See **[Feature designs](docs/design/README.md)** for per-tab engineering docs.  
-**Migration export** — `discover --export-migration-plan` (optional `--migration-preset`, `--migration-order scheduled|priority`).  
+**Dashboard** — visual exploration after `discover --with-dashboard` (`.rbuilder/dashboard/`). See **[Feature designs](docs/design/README.md)** for per-tab engineering docs.  
+**Migration export** — `discover --export-migration-hints` (alias `--export-migration-plan`; optional `--migration-preset`, `--migration-order scheduled|priority`).  
 **Languages** — nine Tier 1 languages (Rust, Python, Java, Go, TypeScript, JavaScript, C#, C, C++) plus config/IaC plugins. See [Language guide](docs/LANGUAGE_GUIDE.md).
 
 ---

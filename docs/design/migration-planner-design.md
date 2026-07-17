@@ -370,15 +370,15 @@ Top → bottom:
 rbuilder discover . --all
 
 # Export plan to file (harmonic required for β term in ranking)
-rbuilder discover . --with-harmonic --export-migration-plan \
+rbuilder discover . --with-harmonic --export-migration-hints \
   --migration-preset risk_mitigation \
   --migration-order priority \
   -o migration_plan.json
 
 # JSON to stdout (with discover JSON envelope)
-rbuilder discover . --with-harmonic --export-migration-plan -f json
+rbuilder discover . --with-harmonic --export-migration-hints -f json
 
-# Serve dashboard
+# Serve dashboard (requires prior --with-dashboard discover)
 rbuilder serve -r /path/to/repo --open
 ```
 
@@ -387,10 +387,11 @@ Flags:
 | Flag | Default | Description |
 |------|---------|-------------|
 | `--with-harmonic` | off | Compute harmonic centrality (needed for migration β / dense_cluster) |
-| `--export-migration-plan` | off | Write plan JSON |
+| `--with-dashboard` | off | Write `.rbuilder/dashboard/` bundle |
+| `--export-migration-hints` | off | Write plan JSON (alias: `--export-migration-plan`) |
 | `--migration-preset` | `hybrid_default` | Strategy preset |
 | `--migration-order` | `scheduled` | `scheduled` or `priority` |
-| `-o` | `.rbuilder/migration_plan.json` | Output path (`--export-migration-plan`) |
+| `-o` | `.rbuilder/migration_plan.json` | Output path (`--export-migration-hints`) |
 
 ---
 

@@ -980,6 +980,107 @@ mod tests {
     }
 
     #[test]
+    fn test_with_harmonic_false_columnar_leaves_zeros() {
+        let mut backend = MemoryBackend::new();
+        let hub = Node::new(NodeType::Function, "hub".to_string());
+        let leaf = Node::new(NodeType::Function, "leaf".to_string());
+        let id_hub = hub.id;
+        let id_leaf = leaf.id;
+        backend.insert_node(hub).unwrap();
+        backend.insert_node(leaf).unwrap();
+        backend
+            .insert_edge(Edge::new(id_hub, id_leaf, EdgeType::Calls))
+            .unwrap();
+
+        let view = PetGraphView::from_backend(&backend).unwrap();
+        let mut results = crate::results::AnalysisResults::new(vec![id_hub, id_leaf]);
+        let summary = CentralityAnalyzer::new()
+            .with_harmonic(false)
+            .analyze_columnar(&view, &mut results)
+            .unwrap();
+
+        assert_eq!(
+            summary.approx_stats.harmonic_mode,
+            Some(crate::centrality_approx::HarmonicMode::Skipped)
+        );
+        let table = results.centrality.as_ref().unwrap();
+        assert!(table.harmonic.iter().all(|&h| h == 0.0));
+        assert!(table.pagerank.iter().any(|&p| p > 0.0));
+    }
+
+    #[test]
+    fn test_with_harmonic_true_exact_nonzero() {
+        let mut backend = MemoryBackend::new();
+        let hub = Node::new(NodeType::Function, "hub".to_string());
+        let leaf = Node::new(NodeType::Function, "leaf".to_string());
+        let id_hub = hub.id;
+        backend.insert_node(hub).unwrap();
+        backend.insert_node(leaf.clone()).unwrap();
+        backend
+            .insert_edge(Edge::new(id_hub, leaf.id, EdgeType::Calls))
+            .unwrap();
+
+        let view = PetGraphView::from_backend(&backend).unwrap();
+        let report = CentralityAnalyzer::new()
+            .with_harmonic(true)
+            .analyze_with_view(&view)
+            .unwrap();
+
+        assert_eq!(
+            report.approx_stats.harmonic_mode,
+            Some(crate::centrality_approx::HarmonicMode::Exact)
+        );
+        assert!(
+            report.scores[&id_hub].harmonic > 0.0,
+            "hub must have positive out-harmonic when enabled"
+        );
+    }
+
+    #[test]
+    fn test_with_harmonic_false_skips_even_when_hyperball_would_run() {
+        // Force HyperBall path (n > exact_limit) then disable harmonic.
+        let mut backend = MemoryBackend::new();
+        let nodes: Vec<_> = (0..8)
+            .map(|i| {
+                let n = Node::new(NodeType::Function, format!("n{i}"));
+                backend.insert_node(n.clone()).unwrap();
+                n
+            })
+            .collect();
+        for w in nodes.windows(2) {
+            backend
+                .insert_edge(Edge::new(w[0].id, w[1].id, EdgeType::Calls))
+                .unwrap();
+        }
+
+        let view = PetGraphView::from_backend(&backend).unwrap();
+        let on = CentralityAnalyzer::new()
+            .with_exact_limit(2)
+            .with_harmonic(true)
+            .analyze_with_view(&view)
+            .unwrap();
+        assert!(
+            matches!(
+                on.approx_stats.harmonic_mode,
+                Some(crate::centrality_approx::HarmonicMode::HyperBall { .. })
+            ),
+            "sanity: HyperBall path active when harmonic on"
+        );
+
+        let off = CentralityAnalyzer::new()
+            .with_exact_limit(2)
+            .with_harmonic(false)
+            .analyze_with_view(&view)
+            .unwrap();
+        assert_eq!(
+            off.approx_stats.harmonic_mode,
+            Some(crate::centrality_approx::HarmonicMode::Skipped)
+        );
+        assert_eq!(off.approx_stats.harmonic_ms, 0);
+        assert!(off.scores.values().all(|s| s.harmonic == 0.0));
+    }
+
+    #[test]
     fn test_module_isolated_from_contains_edges() {
         let mut backend = MemoryBackend::new();
         let module = Node::new(NodeType::Module, "mod".into());
