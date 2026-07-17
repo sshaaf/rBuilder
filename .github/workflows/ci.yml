@@ -79,6 +79,9 @@ jobs:
       - name: QE semantic search
         run: cargo test --features "${{ env.FEATURES }}" --test semantic_search_qe
 
+      - name: QE cross-feature consistency
+        run: cargo test --features "${{ env.FEATURES }}" --test cross_feature_qe
+
       - name: CLI JSON contract (unit)
         run: cargo test --features "${{ env.FEATURES }}" --test cli_output
 

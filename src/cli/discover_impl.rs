@@ -577,14 +577,18 @@ pub(crate) fn run_full_analysis(
         "Blast radius engine built"
     );
 
-    // Analyze all functions in parallel (O(1) lookup per function, read-only engine)
+    // Analyze all functions in parallel (O(1) lookup per function, read-only engine).
+    // Flat graphs use on-demand reachability: skip bulk fill so discover does not
+    // serialize ~O(functions) blast rows into macro_call_index / analysis_results
+    // (linux cold: ~976s macro_index, multi‑GB artifacts). Live `blast-radius` still
+    // works via the engine snapshot. See sshaaf/rBuilder#28 (won't fix).
     let query_start = Instant::now();
     let skip_bulk_blast = engine.uses_on_demand_reachability();
     if skip_bulk_blast {
         if verbose {
             debug!(
                 functions = functions.len(),
-                "Flat graph — skipping bulk blast-radius scan (use `blast-radius` for on-demand queries)"
+                "Flat graph — skipping bulk blast-radius scan (use `blast-radius` for on-demand queries; #28)"
             );
         }
     }

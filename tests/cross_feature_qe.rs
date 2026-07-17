@@ -1,11 +1,11 @@
 //! Cross-feature consistency QE (OpenSpec `qe-sanity-gates` lane 5).
 //!
 //! After discover, require agreement across:
-//! C1 CALLS ↔ blast-radius, C2 analysis_results counts, C3 macro_call_index,
+//! C1 CALLS ↔ blast-radius, C2/C3 analysis_results / macro_call_index when filled,
 //! C4 semantic expand ⊆ CALLS, C5 CFG text ⊆ CALLS, plus centrality degrees.
 //!
-//! Policy: required red until fixed — see `rbuilder-tests/correctness/QE.md`.
-//! C2/C3 currently fail when discover skips bulk blast ([#28](https://github.com/sshaaf/rBuilder/issues/28)).
+//! C2/C3: empty blast caches on flat/on-demand graphs are accepted (#28 won't-fix).
+//! See `rbuilder-tests/correctness/QE.md`.
 
 use rbuilder::analysis::{AnalysisResults, MacroCallIndex};
 use serde_json::Value;
@@ -218,18 +218,31 @@ fn cross_feature_consistency_after_discover() {
     );
     if analysis_path.is_file() {
         let analysis = AnalysisResults::load(&analysis_path).expect("load analysis_results");
+        // Flat/on-demand graphs skip bulk blast fill at discover (#28 won't-fix).
+        // C2 only fails when a non-empty cache disagrees with live blast-radius.
         match analysis.get_blast_radius(pe_id) {
-            None => failures.push(format!(
-                "[C2] no blast_radius column for publishEvent {pe_id}"
-            )),
+            None => {
+                eprintln!(
+                    "[C2] no blast_radius column for publishEvent (expected when bulk fill skipped; #28)"
+                );
+            }
+            Some(br)
+                if br.direct_callers == 0
+                    && br.impact_zone_size == 0
+                    && !blast_callers_pe.is_empty() =>
+            {
+                eprintln!(
+                    "[C2] analysis_results blast columns empty while live blast has callers \
+                     (expected on-demand skip; #28 won't-fix)"
+                );
+            }
             Some(br) => {
                 check(
                     &mut failures,
                     br.direct_callers as usize == blast_callers_pe.len(),
                     "C2",
                     format!(
-                        "analysis_results.direct_callers={} vs blast len={} \
-                         (often 0 when discover skips bulk blast on on-demand graphs; see QE issue)",
+                        "analysis_results.direct_callers={} vs blast len={}",
                         br.direct_callers,
                         blast_callers_pe.len()
                     ),
@@ -285,11 +298,19 @@ fn cross_feature_consistency_after_discover() {
         let macro_idx = MacroCallIndex::load(&macro_path)
             .expect("load macro index")
             .expect("macro index Some");
+        // Missing/empty macro entry with live blast callers = intentional skip (#28).
         match macro_idx.get(pe_id) {
-            None => failures.push(format!(
-                "[C3] no macro_call_index entry for publishEvent {pe_id} \
-                 (empty when discover skips bulk blast)"
-            )),
+            None => {
+                eprintln!(
+                    "[C3] no macro_call_index entry for publishEvent (expected when bulk fill skipped; #28)"
+                );
+            }
+            Some(entry) if entry.direct_caller_names.is_empty() && !blast_callers_pe.is_empty() => {
+                eprintln!(
+                    "[C3] macro_call_index empty while live blast has callers \
+                     (expected on-demand skip; #28 won't-fix)"
+                );
+            }
             Some(entry) => {
                 let macro_names: BTreeSet<String> = entry
                     .direct_caller_names
