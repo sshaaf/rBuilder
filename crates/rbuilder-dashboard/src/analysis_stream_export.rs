@@ -2,22 +2,21 @@
 
 use crate::cfg_export::{
     cfg_detail_light, write_empty_cfg_index, CfgDetailPayload, CfgExportSummary, CfgFunctionEntry,
-    CfgIndexPayload, CFG_ARCHIVE_BUNDLE_NAME, CFG_DETAIL_DIR, CFG_DETAIL_INLINE_LIMIT, CFG_INDEX_FILE,
+    CfgIndexPayload, CFG_ARCHIVE_BUNDLE_NAME, CFG_DETAIL_DIR, CFG_DETAIL_INLINE_LIMIT,
+    CFG_INDEX_FILE,
 };
-use crate::cfg_record_pack::{
-    CfgRecordPackWriter, CFG_RECORD_DATA_FILE, CFG_RECORD_INDEX_FILE,
-};
+use crate::cfg_record_pack::{CfgRecordPackWriter, CFG_RECORD_DATA_FILE, CFG_RECORD_INDEX_FILE};
 use crate::export_util::{link_or_copy, write_json_compact};
 use crate::function_meta::{function_meta_map, resolve_function_meta};
 use crate::slice_export::{
-    export_pdg, function_line_span, write_empty_slice_index, SliceExportSummary,
-    SliceBundlePayload, SliceFunctionEntry, SLICE_DETAIL_DIR, SLICE_INDEX_FILE,
+    export_pdg, function_line_span, write_empty_slice_index, SliceBundlePayload,
+    SliceExportSummary, SliceFunctionEntry, SLICE_DETAIL_DIR, SLICE_INDEX_FILE,
 };
 use crate::source_catalog::{ensure_source_file, write_source_index, SourceFileEntry};
+use rayon::prelude::*;
 use rbuilder_analysis::cfg_pdg_archive::CfgPdgArchive;
 use rbuilder_analysis::storage::{AnalysisIndexEntry, AnalysisStorage};
 use rbuilder_graph::backend::MemoryBackend;
-use rayon::prelude::*;
 use std::collections::HashMap;
 use std::fs;
 use std::path::Path;
@@ -107,7 +106,7 @@ pub fn export_cfg_slice_from_storage(
 
     let record_pack_written = if !write_cfg_details && !cfg_pack_details.is_empty() {
         let mut pack = CfgRecordPackWriter::create(out_dir)?;
-        cfg_pack_details.sort_by(|a, b| a.0.cmp(&b.0));
+        cfg_pack_details.sort_by_key(|(id, _)| *id);
         for (id, detail) in &cfg_pack_details {
             pack.append(*id, detail)?;
         }
@@ -191,6 +190,7 @@ pub fn export_cfg_slice_from_storage(
     })
 }
 
+#[allow(clippy::too_many_arguments)]
 fn export_one(
     entry: &AnalysisIndexEntry,
     storage: &AnalysisStorage,
@@ -228,23 +228,17 @@ fn export_one(
         meta_map,
     );
 
-    let (source_id, total_lines, start_line, end_line) =
-        if let Some(ref path) = file_path {
-            let mut cache = source_cache.lock().ok()?;
-            if let Some(src) = ensure_source_file(out_dir, path, &mut cache) {
-                let (start, end) = function_line_span(cfg);
-                (
-                    Some(src.source_id),
-                    src.total_lines,
-                    Some(start),
-                    Some(end),
-                )
-            } else {
-                (None, 1, None, None)
-            }
+    let (source_id, total_lines, start_line, end_line) = if let Some(ref path) = file_path {
+        let mut cache = source_cache.lock().ok()?;
+        if let Some(src) = ensure_source_file(out_dir, path, &mut cache) {
+            let (start, end) = function_line_span(cfg);
+            (Some(src.source_id), src.total_lines, Some(start), Some(end))
         } else {
             (None, 1, None, None)
-        };
+        }
+    } else {
+        (None, 1, None, None)
+    };
 
     let pdg_export = export_pdg(pdg, cfg);
     let bundle = SliceBundlePayload {
@@ -316,15 +310,15 @@ mod tests {
 
     #[test]
     fn streams_slice_and_cfg_from_metasfresh_cache() {
-        let repo = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../example/metasfresh-4.9.8b");
+        let repo = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../example/metasfresh-4.9.8b");
         let analysis_dir = repo.join(".rbuilder/analysis");
         if !analysis_dir.is_dir() {
             return;
         }
         let out = tempfile::TempDir::new().unwrap();
         let backend = MemoryBackend::new();
-        let result =
-            export_cfg_slice_from_storage(&backend, &repo, out.path()).unwrap();
+        let result = export_cfg_slice_from_storage(&backend, &repo, out.path()).unwrap();
         assert!(result.slice.available, "slice export should succeed");
         assert!(result.cfg.available, "cfg export should succeed");
         assert!(
@@ -365,8 +359,7 @@ mod tests {
             .unwrap();
 
         let backend = MemoryBackend::new();
-        let result =
-            export_cfg_slice_from_storage(&backend, &repo, &out).unwrap();
+        let result = export_cfg_slice_from_storage(&backend, &repo, &out).unwrap();
         assert!(result.slice.available);
         assert_eq!(result.slice.function_count, 1);
         assert!(result.cfg.available);

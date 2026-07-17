@@ -707,7 +707,7 @@ mod tests {
     fn add_symbol_with_body_sets_token_bloom() {
         let mut builder = GraphBuilder::new();
         let file_id = builder.ensure_file_node(Path::new("src/main.rs"));
-        let mut symbol = sample_symbol();
+        let symbol = sample_symbol();
         builder.add_symbol_with_body(&symbol, file_id, Some("let port = ntohs(raw);"));
         let node = builder
             .nodes()
@@ -762,5 +762,98 @@ mod tests {
             .edges
             .iter()
             .any(|e| e.edge_type == EdgeType::UsesConfig));
+    }
+
+    fn function_symbol(file: &str, name: &str, qualified: &str) -> Symbol {
+        Symbol {
+            name: name.to_string(),
+            symbol_type: SymbolType::Function,
+            qualified_name: Some(qualified.to_string()),
+            location: SourceLocation {
+                file: file.to_string(),
+                start_line: 1,
+                end_line: 3,
+                start_column: 0,
+                end_column: 1,
+            },
+            signature: None,
+            return_type: None,
+            parameters: vec![],
+            fields: vec![],
+            modifiers: vec![],
+            documentation: None,
+            metadata: serde_json::json!({}),
+        }
+    }
+
+    /// QE desired policy: duplicate FQN must not resolve as a single definitive UUID.
+    /// Currently `symbols_by_qualified.insert` overwrites — required-red until fixed
+    /// ([sshaaf/rBuilder#27](https://github.com/sshaaf/rBuilder/issues/27)).
+    #[test]
+    fn qe_duplicate_qualified_name_must_not_collapse_index() {
+        let mut builder = GraphBuilder::new();
+        let a = builder.ensure_file_node(Path::new("a.rs"));
+        let b = builder.ensure_file_node(Path::new("b.rs"));
+        builder.add_symbol(&function_symbol("a.rs", "transform", "Helper.transform"), a);
+        builder.add_symbol(&function_symbol("b.rs", "transform", "Helper.transform"), b);
+        builder.build_resolution_indexes();
+
+        let nodes_with_fqn = builder
+            .nodes()
+            .iter()
+            .filter(|n| n.qualified_name.as_deref() == Some("Helper.transform"))
+            .count();
+        assert_eq!(nodes_with_fqn, 2, "both nodes must survive ingest");
+
+        let suffix_n = builder
+            .symbols_by_suffix
+            .get("Helper.transform")
+            .map(|v| v.len())
+            .unwrap_or(0);
+        assert!(
+            suffix_n >= 2,
+            "suffix index should retain both UUIDs (got {suffix_n})"
+        );
+
+        let resolved = builder.resolve_symbol_tracked(
+            "transform",
+            "caller.rs",
+            Some("Helper.transform"),
+            None,
+        );
+        assert!(
+            resolved.is_none(),
+            "QE: duplicate FQN must not resolve to a single UUID via qualified hint \
+             (got {resolved:?}); see rbuilder-tests/correctness/QE.md"
+        );
+    }
+
+    /// QE desired policy: suffix multi-match must not silently pick `.first()`
+    /// ([sshaaf/rBuilder#27](https://github.com/sshaaf/rBuilder/issues/27)).
+    #[test]
+    fn qe_suffix_multimatch_must_not_pick_first_silently() {
+        let mut builder = GraphBuilder::new();
+        let a = builder.ensure_file_node(Path::new("pkg/a.rs"));
+        let b = builder.ensure_file_node(Path::new("pkg/b.rs"));
+        builder.add_symbol(&function_symbol("pkg/a.rs", "twin", "alpha::twin"), a);
+        builder.add_symbol(&function_symbol("pkg/b.rs", "twin", "beta::twin"), b);
+        builder.build_resolution_indexes();
+
+        let candidates = builder
+            .symbols_by_suffix
+            .get("twin")
+            .map(|v| v.len())
+            .unwrap_or(0);
+        assert!(
+            candidates >= 2,
+            "expected ≥2 suffix candidates for twin, got {candidates}"
+        );
+
+        let resolved = builder.resolve_symbol_tracked("twin", "other.rs", None, None);
+        assert!(
+            resolved.is_none(),
+            "QE: fuzzy suffix multi-match must not return Some(uuid) without signaling ambiguity \
+             (got {resolved:?}); see rbuilder-tests/correctness/QE.md"
+        );
     }
 }

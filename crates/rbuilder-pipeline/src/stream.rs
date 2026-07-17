@@ -2,10 +2,10 @@
 
 use crate::parallel::with_pool;
 use crossbeam::channel::{bounded, Receiver};
+use rayon::prelude::*;
 use rbuilder_error::Result;
 use rbuilder_extraction::{ExtractionTail, Extractor, FileExtraction, GraphBuilder};
 use rbuilder_registry::LanguageRegistry;
-use rayon::prelude::*;
 use std::path::PathBuf;
 use std::sync::Arc;
 

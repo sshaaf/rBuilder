@@ -246,7 +246,7 @@ rbuilder serve -r REPO --daemon [--socket PATH] [--idle-secs SECS]
 **Command:**
 
 ```bash
-rbuilder -f json discover PATH [--languages LANGS] [--exclude PATTERNS] [--security] [--cfg] [--all] [--write-json-graph]
+rbuilder -f json discover PATH [--languages LANGS] [--exclude PATTERNS] [--with-security] [--with-cfg] [--with-taint] [--write-json-graph]
 ```
 
 **Source:** `src/cli/discover_output.rs`, `src/cli/discover_impl.rs`
@@ -290,9 +290,9 @@ Without `-f json`, discover remains human-readable text progress (unchanged).
 | `.rbuilder/analysis_results.bin` | Always | Columnar analysis tables |
 | `.rbuilder/dashboard/` | When export succeeds | Static dashboard bundle (`index.html`, `manifest.json`, …) |
 | `.rbuilder/graph.db` / `.rbuilder/graph.json` | `--write-json-graph` only | Legacy full graph JSON |
-| `.rbuilder/analysis/cfg_pdg.archive.bin` | `--cfg` or `--all` | CFG + PDG for `--with-slices` |
-| `.rbuilder/analysis/*.json` | `--cfg` or `--all` | Per-function analysis storage (taint, CFG, PDG) |
-| `.rbuilder/dashboard/taint_index.json` | `--cfg` or `--all` | Dashboard taint catalog (see [json-api.md](json-api.md) §12) |
+| `.rbuilder/analysis/cfg_pdg.archive.bin` | `--with-cfg` or `--with-taint` | CFG + PDG for `--with-slices` |
+| `.rbuilder/analysis/*.json` | `--with-cfg` or `--with-taint` | Per-function analysis storage (taint, CFG, PDG) |
+| `.rbuilder/dashboard/taint_index.json` | `--with-cfg` or `--with-taint` | Dashboard taint catalog (see [json-api.md](json-api.md) §12) |
 
 ---
 

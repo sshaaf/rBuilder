@@ -53,13 +53,17 @@ pub enum EmbedderChoice {
     SignHash,
     /// Generic ONNX `--model` (hash tokenization, or SentencePiece with `--tokenizer`).
     Onnx {
+        /// Path to the ONNX model file.
         model: PathBuf,
+        /// Optional SentencePiece / tokenizer path.
         tokenizer: Option<PathBuf>,
     },
     /// [`faxenoff/code-daemon-embed-v1`](https://huggingface.co/faxenoff/code-daemon-embed-v1).
     /// When `model` is `None`, loads the embedder bundled in the rBuilder binary.
     CodeDaemon {
+        /// Optional on-disk model path; `None` uses the embedded model.
         model: Option<PathBuf>,
+        /// Optional SentencePiece tokenizer path.
         tokenizer: Option<PathBuf>,
     },
 }
@@ -67,22 +71,25 @@ pub enum EmbedderChoice {
 /// Options when reloading an ONNX-backed index at query time.
 #[derive(Debug, Clone, Default)]
 pub struct OnnxReloadOptions {
+    /// Override ONNX model path from the persisted index.
     pub model_path: Option<PathBuf>,
+    /// Override tokenizer path from the persisted index.
     pub tokenizer_path: Option<PathBuf>,
 }
 
 /// Resolve an embedder for indexing or querying.
-pub fn resolve_embedder(choice: &EmbedderChoice, dimensions: usize) -> Result<Box<dyn SemanticEmbedder>> {
+pub fn resolve_embedder(
+    choice: &EmbedderChoice,
+    dimensions: usize,
+) -> Result<Box<dyn SemanticEmbedder>> {
     match choice {
         EmbedderChoice::SignHash => Ok(Box::new(SignHashEmbedder::new(dimensions))),
         EmbedderChoice::Onnx { model, tokenizer } => {
             onnx_embedder(model, dimensions, tokenizer.as_deref())
         }
-        EmbedderChoice::CodeDaemon { model, tokenizer } => code_daemon_embedder(
-            model.as_deref(),
-            dimensions,
-            tokenizer.as_deref(),
-        ),
+        EmbedderChoice::CodeDaemon { model, tokenizer } => {
+            code_daemon_embedder(model.as_deref(), dimensions, tokenizer.as_deref())
+        }
     }
 }
 
@@ -121,11 +128,7 @@ pub fn embedder_for_index(
             .tokenizer_path
             .clone()
             .or_else(|| index.tokenizer_path.clone().map(PathBuf::from));
-        return onnx_embedder(
-            &model,
-            index.dimensions,
-            tokenizer.as_deref(),
-        );
+        return onnx_embedder(&model, index.dimensions, tokenizer.as_deref());
     }
     Err(Error::ConfigError(format!(
         "unknown semantic model_id: {}",
@@ -164,9 +167,7 @@ fn code_daemon_embedder(
     {
         Ok(Box::new(match path {
             Some(model_path) => super::semantic_code_daemon::load_code_daemon_embedder(
-                model_path,
-                tokenizer,
-                dimensions,
+                model_path, tokenizer, dimensions,
             )?,
             None => super::semantic_code_daemon::load_embedded_code_daemon_embedder(dimensions)?,
         }))

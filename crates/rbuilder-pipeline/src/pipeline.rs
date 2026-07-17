@@ -108,7 +108,7 @@ impl ProcessingPipeline {
         let extractor = Extractor::new(Arc::clone(&self.registry));
         let extract_start = Instant::now();
         let mut builder = GraphBuilder::new();
-        let progress_for_stream = progress.as_ref().map(|pb| pb.clone());
+        let progress_for_stream = progress.clone();
         let (files_processed, tails) = stream_into_graph(
             self.config.thread_count,
             &extractor,

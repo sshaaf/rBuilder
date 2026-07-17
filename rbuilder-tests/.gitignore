@@ -1,0 +1,45 @@
+# Databases
+*.db
+*.db-journal
+**/data/
+
+# rBuilder cache (reproduce with `rbuilder discover`)
+**/.rbuilder/
+
+# Generated CI reports (download from GitHub Actions artifacts)
+rbuilder-reports/
+.rbuilder-bin/
+
+# Rust
+**/target/
+
+# Python
+**/.venv/
+**/__pycache__/
+*.pyc
+
+# Node
+**/node_modules/
+**/dist/
+
+# Java
+**/target/
+**/.classpath
+**/.project
+
+# C#
+**/bin/
+**/obj/
+**/ecommerce-csharp/data/
+
+# Go
+**/ecommerce-go/ecommerce.db
+
+# IDE
+.idea/
+.vscode/
+*.swp
+
+# Env
+.env
+.env.local

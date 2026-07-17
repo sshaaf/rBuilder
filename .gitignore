@@ -1,3 +1,11 @@
+#AI
+.cursor/
+.claude/
+.opencode/
+openspec/
+.scratch/
+.playwright-mcp/
+
 # Rust
 /target
 Cargo.lock
@@ -49,4 +57,4 @@ graphify-out/
 .cache/
 
 # Local large fixtures (clone separately; not part of the repo)
-example/
+/example/

@@ -1,6 +1,6 @@
 # rBuilder User Guide
 
-End-to-end guide for installing rBuilder, indexing a Java example project, and querying the codebase from the **command line only**.
+End-to-end guide for installing rBuilder, indexing an in-tree example, and querying a codebase from the **command line**. Every command below includes sample output captured against **`rbuilder-tests/ecommerce-java`** (Spring Boot e-commerce fixture).
 
 **New to code graphs?** Read **[Introduction](Introduction.md)** first — concepts, goals, and benefits for each feature, with links back here for commands.
 
@@ -12,7 +12,7 @@ For JSON field reference see [cli-output-schemas.md](cli-output-schemas.md) and 
 
 1. [Installation](#1-installation)
 2. [Add rBuilder to your PATH](#2-add-rbuilder-to-your-path)
-3. [Example project: coolstore](#3-example-project-coolstore)
+3. [Example project: ecommerce-java](#3-example-project-ecommerce-java)
 4. [Index with `discover`](#4-index-with-discover)
 5. [Global CLI flags](#5-global-cli-flags)
 6. [Query the graph with GQL](#6-query-the-graph-with-gql)
@@ -132,30 +132,38 @@ alias rbuilder='/path/to/rbuilder'
 
 ---
 
-## 3. Example project: coolstore
+## 3. Example project: ecommerce-java
 
-[Konveyor coolstore](https://github.com/konveyor-ecosystem/coolstore) is a Java e-commerce demo used in migration tooling walkthroughs. Use the **`quarkus`** branch for a modern Quarkus REST app (recommended). The **`main`** branch is the legacy Java EE / EAP monolith.
+This guide uses the in-tree Spring Boot fixture shipped with rBuilder:
+
+**[`rbuilder-tests/ecommerce-java`](../rbuilder-tests/ecommerce-java)**
+
+It implements the same e-commerce domain as the other `ecommerce-*` fixtures (cart, orders, products, auth). No separate clone is required when you have the rBuilder repo.
 
 ```bash
-git clone https://github.com/konveyor-ecosystem/coolstore.git
-cd coolstore
-git checkout quarkus
-export REPO="$PWD"
+# From the rBuilder repository root
+export REPO="$PWD/rbuilder-tests/ecommerce-java"
+cd "$REPO"
 ```
 
-Layout on the `quarkus` branch (simplified):
+Layout (simplified):
 
 ```
-coolstore/
+ecommerce-java/
 ├── pom.xml
-├── src/main/java/com/redhat/coolstore/
-│   ├── rest/           # CartEndpoint, OrderEndpoint, ProductEndpoint, …
-│   ├── service/        # ShoppingCartService, OrderService, CatalogService, …
-│   └── model/          # Order, Product, ShoppingCart, …
-└── deploy/
+└── src/main/java/com/example/ecommerce/
+    ├── controller/     # CartController, OrderController, ProductController, …
+    ├── service/        # CartService, OrderService, ProductService, …
+    ├── entity/         # Cart, Order, Product, User, …
+    ├── repository/     # Spring Data JPA repos
+    └── security/       # JWT filter / token provider
 ```
 
-All commands below assume `REPO` points at the project root, or run from inside the repo and use `.` instead of `"$REPO"`.
+Sibling fixtures (`ecommerce-python`, `ecommerce-rust`, …) share the same REST shape — see [`rbuilder-tests/README.md`](../rbuilder-tests/README.md).
+
+All commands below assume `REPO` points at `ecommerce-java`, or that you run from inside that directory and use `.` instead of `"$REPO"`.
+
+**Sample outputs** in this guide were captured on a laptop with a release build; absolute paths are shortened to `…/ecommerce-java/…` for readability. Counts may differ slightly across versions.
 
 ---
 
@@ -167,41 +175,101 @@ All commands below assume `REPO` points at the project root, or run from inside 
 
 ```bash
 cd "$REPO"
-rbuilder discover .
+rbuilder discover . -l java -e target
 ```
 
-Typical runtime: under a minute on a laptop for coolstore (`quarkus` branch).
+Example output:
+
+```text
+==> Analyzing: …/ecommerce-java/.
+[✓] Indexed 51 files -> 518 nodes, 1122 edges (0.0s)
+[✓] Detected 443 communities (modularity: 0.47)
+[✓] Analyzed 187 functions (avg complexity: 1.0, 0 high, 0 medium)
+[*] Top hotspot: findAll (PageRank: 0.0177)
+[!] Found 48 circular dependencies
+[✓] Analysis complete
+[✓] Saved to .rbuilder/ (0.1 MB total)
+[✓] Completed in 0.0s (peak memory: 21 MB)
+
+[i] Next steps:
+   rbuilder gql "MATCH (n:Function) RETURN n"  # Query the graph
+   rbuilder slice <file> --line <N> --variable <VAR>
+   rbuilder serve --open   # Dashboard + query API at http://127.0.0.1:8080
+```
+
+Typical runtime on this fixture: **well under a second**.
 
 **CI / automation** — structured metrics on stdout:
 
 ```bash
-rbuilder -f json discover . | jq '.metrics'
+rbuilder -f json discover . -l java -e target | jq .
+```
+
+Example:
+
+```json
+{
+  "command": "discover",
+  "metrics": {
+    "duration_ms": 32,
+    "edges_generated": 1122,
+    "files_discovered": 51,
+    "files_indexed": 51,
+    "files_skipped": 0,
+    "nodes_generated": 518
+  },
+  "schema_version": 2
+}
 ```
 
 ### Language and path filters
 
 ```bash
-# Java only, skip build output
-rbuilder discover . -l java -e target,node_modules
+# Java only, skip Maven output
+rbuilder discover . -l java -e target
 
-# Multiple languages
-rbuilder discover . -l java,typescript -e node_modules,dist
+# Multiple languages (polyglot monorepo)
+rbuilder discover . -l java,typescript -e target,node_modules,dist
 ```
 
-### Deeper analysis (slower)
+### Default pipeline (always on)
+
+Bare `discover` (no `--with-*`) always runs: index/extract → topology → community → complexity → PageRank/betweenness → dependency cycles → blast engine → persist analysis + snapshot.
+
+Harmonic, dashboard, migration export, security, CFG/PDG, and discover-time taint are **opt-in** via the flags below.
+
+### Deeper analysis (opt-in)
 
 | Flag | What it adds |
 |------|----------------|
-| `--security` | Secret scanning on config-like files |
-| `--cfg` | Per-function CFG, PDG, dominance, and taint analysis |
-| `--all` | `--security` + `--cfg` |
+| `--with-security` | Secret scanning |
+| `--with-cfg` | Per-function CFG, dominators, PDG (archive under `.rbuilder/analysis/`) |
+| `--with-taint` | Discover-time taint into archive (implies CFG/PDG pass) |
+| `--with-harmonic` | Harmonic centrality (migration ranking) |
+| `--with-dashboard` | Static dashboard bundle under `.rbuilder/dashboard/` |
+| `--export-migration-hints` | Migration roadmap JSON (alias: `--export-migration-plan`) |
 
 ```bash
-rbuilder discover . --cfg
-rbuilder discover . --all
+# CFG so inspect / slice have rich PDG context
+rbuilder discover . -l java -e target --with-cfg
+
+# Full walkthrough set used for the samples below
+rbuilder discover . -l java -e target \
+  --with-cfg --with-dashboard --with-harmonic --export-migration-hints
 ```
 
-Use `--cfg` or `--all` when you need `inspect`, `slice` overlays, or taint flows. On large monorepos (100k+ functions) expect minutes to hours.
+Example lines from that richer run:
+
+```text
+[!] Deep analysis enabled (--with-cfg / --with-taint).
+✓ Control flow analysis:
+  CFG/PDG/Dominance: 178 functions analyzed
+  Skipped: 9 functions (unsupported language or parse error)
+[✓] Migration plan (Hybrid Default): 9 steps → …/ecommerce-java/./.rbuilder/migration_plan.json
+[✓] Dashboard: …/ecommerce-java/./.rbuilder/dashboard/index.html
+```
+
+Use `--with-cfg` when you need `inspect` / slice overlays; add `--with-taint` for discover-time taint flows. On large monorepos (100k+ functions) expect minutes to hours.
 
 ### Verbose logging and stage profiling
 
@@ -211,14 +279,25 @@ rbuilder discover . -v
 
 With `-v`, discover emits a **`[profile] discover summary`** line (wall time, peak RSS, node count) and per-stage timings.
 
-For centrality sub-phase breakdown (PageRank, betweenness, harmonic, columnar fill):
-
 ```bash
-RUST_LOG=info,profile=info rbuilder discover . -v 2>&1 | tee discover-profile.log
+RUST_LOG=info,profile=info rbuilder discover . --with-cfg -v -l java -e target 2>&1 \
+  | tee discover-profile.log
 grep '\[profile\]' discover-profile.log
 ```
 
-See [analysis-architecture.md](analysis-architecture.md) and [internal/temp.md](internal/temp.md) for large-graph adaptive gating (PageRank / HyperBall caps at 500k+ nodes).
+Example profile lines (ecommerce-java, `--with-cfg`):
+
+```text
+[profile] discover summary wall_secs=0.14 index_secs=0.01 post_index_secs=0.09 \
+  peak_rss_mb=27.0 functions=187 nodes=518 cfg=true security=false
+[profile] stage stage="cfg_total" secs=0.030 pct_wall=21.0
+[profile] stage stage="save_dashboard" secs=0.028 pct_wall=19.6
+[profile] stage stage="index_extract" secs=0.012 pct_wall=8.1
+```
+
+Harmonic centrality is **off by default** — pass `--with-harmonic` when you need it for migration ranking. On kernel-scale graphs it adds ~30s wall and multi‑GB peak RSS.
+
+See [analysis-architecture.md](analysis-architecture.md) and [internal/temp.md](internal/temp.md) for large-graph adaptive gating.
 
 ### Legacy JSON graph (optional)
 
@@ -233,22 +312,24 @@ rbuilder discover . --write-json-graph
 After a successful run:
 
 ```
-coolstore/.rbuilder/
+ecommerce-java/.rbuilder/
 ├── graph.snapshot.bin          # Columnar mmap graph (primary cache for queries)
 ├── blast_engine.snapshot.bin   # Pre-built blast-radius engine
 ├── macro_call_index.db         # Blast-radius lookup cache (SQLite; not the graph)
 ├── macro_call_index.bin        # Same index in bincode (companion to .db)
 ├── analysis_results.bin        # Columnar analysis properties
 ├── file_hashes.json            # Incremental file tracker
-├── analysis/                   # Per-function CFG/PDG/taint (with --cfg or --all)
-│   └── cfg_pdg.archive.bin     # CFG/PDG archive (with --cfg or --all)
-└── dashboard/                  # Static HTML dashboard (if embedded in your build)
+├── migration_plan.json         # With --export-migration-hints
+├── analysis/                   # Per-function CFG/PDG/taint (with --with-cfg / --with-taint)
+│   └── cfg_pdg.archive.bin
+└── dashboard/                  # Only with --with-dashboard
     ├── index.html
     ├── manifest.json
+    ├── migration_plan.json
     └── graph_payload.bin
 ```
 
-Query commands read `graph.snapshot.bin` when present. You do **not** need `graph.db` for normal CLI use. The SQLite file is **only** a precomputed blast-radius shortcut — GQL and export use the columnar graph, not SQL.
+Query commands read `graph.snapshot.bin` when present. You do **not** need `graph.db` for normal CLI use.
 
 Point every subsequent command at this repo:
 
@@ -278,7 +359,7 @@ Examples:
 rbuilder -r "$REPO" -f json gql 'MATCH (n:Class) RETURN n LIMIT 10'
 
 # Mermaid diagram to a file
-rbuilder -r "$REPO" -f mermaid -o cart-cfg.mmd inspect CartEndpoint cfg
+rbuilder -r "$REPO" -f mermaid -o checkout-cfg.mmd inspect checkout cfg
 ```
 
 ---
@@ -287,81 +368,115 @@ rbuilder -r "$REPO" -f mermaid -o cart-cfg.mmd inspect CartEndpoint cfg
 
 `gql` runs the graph query language against the indexed graph. **Run `discover` first.**
 
-### Count and list nodes
+### Inventory macros
 
 ```bash
-rbuilder -r "$REPO" gql 'MATCH (n:Function) RETURN n'
+rbuilder -r "$REPO" gql --macro-name all_functions unused
 ```
 
-### Filter by name (wildcards)
+Text mode prints one function name per line (187 on this fixture). JSON is better for scripts:
+
+```bash
+rbuilder -r "$REPO" -f json gql --macro-name all_functions unused | jq '.count'
+```
+
+```text
+187
+```
+
+### Exact name match
 
 ```bash
 rbuilder -r "$REPO" gql \
-  "MATCH (n:Function) WHERE n.name LIKE '*Cart*' RETURN n"
+  "MATCH (n:Function) WHERE n.name = 'clearCart' RETURN n"
 ```
 
-Exact match:
+```text
+clearCart
+clearCart
+```
+
+(There are two `clearCart` methods — service and controller.)
+
+JSON shows file paths:
 
 ```bash
-rbuilder -r "$REPO" gql \
-  "MATCH (n:Function) WHERE n.name = 'ShoppingCartService' RETURN n"
+rbuilder -r "$REPO" -f json gql \
+  "MATCH (n:Function) WHERE n.name = 'clearCart' RETURN n" | jq '.rows'
+```
+
+```json
+[
+  [
+    {
+      "binding": "n",
+      "file": "…/service/CartService.java",
+      "node": "clearCart",
+      "type": "Function"
+    }
+  ],
+  [
+    {
+      "binding": "n",
+      "file": "…/controller/CartController.java",
+      "node": "clearCart",
+      "type": "Function"
+    }
+  ]
+]
+```
+
+### Classes
+
+```bash
+rbuilder -r "$REPO" -f json gql \
+  "MATCH (n:Class) WHERE n.name = 'CartService' RETURN n" | jq '.rows[0]'
+```
+
+```json
+[
+  {
+    "binding": "n",
+    "file": "…/service/CartService.java",
+    "node": "CartService",
+    "type": "Class"
+  }
+]
 ```
 
 ### Call relationships
 
-One-hop calls:
+Who calls `clearCart`?
 
 ```bash
 rbuilder -r "$REPO" gql \
-  'MATCH (a:Function)-[:CALLS*1..1]->(b:Function) RETURN a,b LIMIT 20'
+  "MATCH (a:Function)-[:CALLS]->(b:Function) WHERE b.name = 'clearCart' RETURN a,b"
 ```
 
-Multi-hop chain (up to 3 hops):
-
-```bash
-rbuilder -r "$REPO" gql \
-  'MATCH (a:Function)-[:CALLS*1..3]->(b:Function) RETURN a,b'
+```text
+checkout -> clearCart
+clearCart -> clearCart
 ```
 
-```bash
-rbuilder -r "$REPO" gql \
-  "MATCH (n:Function) WHERE n.name LIKE '*Endpoint' RETURN n"
+JSON (trimmed):
+
+```json
+{
+  "count": 2,
+  "rows": [
+    [
+      { "binding": "a", "node": "checkout", "file": "…/OrderService.java", "type": "Function" },
+      { "binding": "b", "node": "clearCart", "file": "…/CartService.java", "type": "Function" }
+    ]
+  ],
+  "schema_version": 1
+}
 ```
 
-### Named query macros
+### Common node / edge types
 
-Built-in macros avoid typing long queries:
-
-```bash
-rbuilder -r "$REPO" gql --macro-name all_functions 'unused'
-rbuilder -r "$REPO" gql --macro-name direct_calls 'unused'
-rbuilder -r "$REPO" gql --macro-name call_chain 'unused'
-```
-
-The positional query string is ignored when `--macro-name` is set.
-
-### Explain query plans
-
-```bash
-rbuilder -r "$REPO" gql --explain \
-  "MATCH (n:Function) WHERE n.name = 'ShoppingCartService' RETURN n"
-```
-
-### JSON for automation
-
-```bash
-rbuilder -r "$REPO" -f json gql \
-  "MATCH (n:Function) WHERE n.name LIKE '*Cart*' RETURN n" \
-  | jq '.rows'
-```
-
-### Common node types
-
-`Function`, `Class`, `Interface`, `Module`, `File`, `Import`, `ConfigKey`, …
-
-### Common edge types
-
-`CALLS`, `IMPORTS`, `CONTAINS`, `DEPENDS_ON`, `IMPLEMENTS`, …
+- Nodes: `Function`, `Class`, `Interface`, `Module`, `File`, `Import`, `ConfigKey`, …
+- Edges: `CALLS`, `IMPORTS`, `CONTAINS`, `DEPENDS_ON`, `IMPLEMENTS`, …
 
 ---
 
@@ -369,95 +484,143 @@ rbuilder -r "$REPO" -f json gql \
 
 `blast-radius` answers: **“What breaks upstream if I change this symbol?”**
 
+Bare names are often ambiguous. Prefer **FQN** (`Class::method`):
+
 ```bash
-rbuilder -r "$REPO" blast-radius ShoppingCartService
+rbuilder -r "$REPO" blast-radius 'CartService::clearCart'
 ```
 
-Coolstore examples:
+```text
+Blast radius for 'CartService::clearCart'
+  Score: 25.1/100
+  Direct callers: 1
+  Impact zone: 1
+  Callers: OrderService.checkout
+  Impact: OrderService.checkout
+```
+
+Ambiguous bare name shows remediation:
 
 ```bash
-rbuilder -r "$REPO" blast-radius CatalogService
-rbuilder -r "$REPO" blast-radius CartEndpoint
-rbuilder -r "$REPO" blast-radius OrderService
+rbuilder -r "$REPO" blast-radius clearCart
+```
+
+```text
+Error: Symbol 'clearCart' is ambiguous. Found 2 matches.
+UUID                                   | Class Context  | Source File Path
+…                                      | CartService    | …/CartService.java
+…                                      | CartController | …/CartController.java
+
+Remediation: Refine your search query using a fully qualified namespace syntax:
+  rbuilder blast-radius "ClassName::clearCart"
+  rbuilder blast-radius "path/to/file.java::clearCart"
 ```
 
 ### Symbol forms
 
 | Form | Example |
 |------|---------|
-| Bare name | `process` (fails if ambiguous) |
-| FQN | `ShoppingCartService::checkOutShoppingCart` |
-| UUID | node id from GQL JSON output |
+| Bare name | `checkout` (fails if ambiguous) |
+| FQN | `CartService::clearCart` |
+| UUID | node id from GQL / blast JSON |
 
-Disambiguate with:
+Disambiguate with filters:
 
 ```bash
-rbuilder -r "$REPO" blast-radius process --class ShoppingCartService
-rbuilder -r "$REPO" blast-radius process --file src/main/java/com/redhat/coolstore/service/ShoppingCartService.java
+rbuilder -r "$REPO" blast-radius clearCart --class CartService
+rbuilder -r "$REPO" blast-radius clearCart \
+  --file src/main/java/com/example/ecommerce/service/CartService.java
 ```
 
 ### Limit caller depth
 
 ```bash
-# Direct callers only in impact zone
-rbuilder -r "$REPO" blast-radius ShoppingCartService --depth 1
-
-# Up to 5 incoming call hops
-rbuilder -r "$REPO" blast-radius ShoppingCartService --depth 5
+rbuilder -r "$REPO" blast-radius 'CartService::clearCart' --depth 1
+rbuilder -r "$REPO" blast-radius 'CartService::clearCart' --depth 5
 ```
 
 Omit `--depth` for full transitive upstream closure.
 
-### Policy file (gatekeeping)
+### JSON output
 
 ```bash
-rbuilder -r "$REPO" blast-radius ShoppingCartService --policy-file policy.json
-rbuilder -r "$REPO" blast-radius ShoppingCartService --no-policy
+rbuilder -r "$REPO" -f json blast-radius 'CartService::clearCart' \
+  | jq '{score: .metrics.score, callers: .topology.direct_callers}'
 ```
+
+```json
+{
+  "score": 25.05,
+  "callers": [
+    {
+      "file_path": "…/OrderService.java",
+      "fqn": "OrderService.checkout",
+      "id": "…"
+    }
+  ]
+}
+```
+
+Schema: [cli-output-schemas.md](cli-output-schemas.md) §1 and [json-api.md](json-api.md) §6.
 
 ### Statement-level slice hand-offs (slow)
 
 ```bash
-rbuilder -r "$REPO" blast-radius ShoppingCartService --with-slices
+rbuilder -r "$REPO" blast-radius 'CartService::clearCart' --with-slices
 ```
 
-Requires `discover --cfg` for rich PDG context.
-
-### JSON output
-
-```bash
-rbuilder -r "$REPO" -f json blast-radius ShoppingCartService \
-  | jq '.metrics.score, .topology.direct_callers'
-```
-
-Schema: [cli-output-schemas.md](cli-output-schemas.md) §1 and [json-api.md](json-api.md) §6.
+Requires `discover --with-cfg` for rich PDG context.
 
 ---
 
 ## 8. Program slicing and taint
 
-`slice` performs **line-level** backward or forward slicing on a source file. It reads the file from disk; `discover --cfg` improves cross-function context elsewhere in the toolchain.
+`slice` performs **line-level** backward or forward slicing on a source file. Run `discover --with-cfg` first so PDG data is available.
 
 ### Backward slice
 
-“What code influences this variable at this line?”
+“What code influences this variable at this line?” — in `OrderService.checkout`, `cart` is assigned on line 52:
 
 ```bash
 rbuilder -r "$REPO" slice \
-  src/main/java/com/redhat/coolstore/service/ShoppingCartService.java \
-  --line 45 \
+  src/main/java/com/example/ecommerce/service/OrderService.java \
+  --line 52 \
   --variable cart \
-  --function checkOutShoppingCart
+  --function checkout
+```
+
+```text
+Backward slice for src/main/java/com/example/ecommerce/service/OrderService.java:52 (variable: cart)
+Reduction: 92.3%
+  52
+```
+
+A denser example from `CartService.addItem` (line 50, local `item`):
+
+```bash
+rbuilder -r "$REPO" slice \
+  src/main/java/com/example/ecommerce/service/CartService.java \
+  --line 50 \
+  --variable item \
+  --function addItem
+```
+
+```text
+Backward slice for src/main/java/com/example/ecommerce/service/CartService.java:50 (variable: item)
+Reduction: 78.6%
+  42
+  45
+  50
 ```
 
 ### Forward slice
 
 ```bash
 rbuilder -r "$REPO" slice \
-  src/main/java/com/redhat/coolstore/rest/CartEndpoint.java \
-  --line 37 \
-  --variable cartId \
-  --function getCart \
+  src/main/java/com/example/ecommerce/service/CartService.java \
+  --line 42 \
+  --variable cart \
+  --function addItem \
   --direction forward
 ```
 
@@ -465,10 +628,10 @@ rbuilder -r "$REPO" slice \
 
 ```bash
 rbuilder -r "$REPO" slice \
-  src/main/java/com/redhat/coolstore/service/ShoppingCartService.java \
-  --line 48 \
-  --variable cart \
-  --function addToCart \
+  src/main/java/com/example/ecommerce/service/OrderService.java \
+  --line 83 \
+  --variable cartService \
+  --function checkout \
   --taint
 ```
 
@@ -481,61 +644,114 @@ rbuilder -r "$REPO" slice \
 | `pdg` | PDG overlay |
 
 ```bash
-rbuilder -r "$REPO" -f mermaid slice ... --view cfg
+rbuilder -r "$REPO" -f mermaid slice \
+  src/main/java/com/example/ecommerce/service/CartService.java \
+  --line 50 --variable item --function addItem --view cfg
 ```
 
 ### `--function` names
 
-`--function` must be the **method/function name** in the source file (as parsed by tree-sitter), not the enclosing class name. Find names with GQL:
+`--function` must be the **method/function name** in the source file (as parsed by tree-sitter), not the enclosing class name:
 
 ```bash
-rbuilder -r "$REPO" gql "MATCH (n:Function) WHERE n.file_path LIKE '*ShoppingCartService*' RETURN n LIMIT 20"
+rbuilder -r "$REPO" gql \
+  "MATCH (n:Function) WHERE n.name = 'checkout' RETURN n"
 ```
-
-### Explicit language
 
 ---
 
 ## 9. Inspect CFG / PDG / dominance
 
-`inspect` dumps semantic layers for an **indexed function symbol** (no `--class` flag — use a unique symbol or GQL to pick the right function). Run `discover --cfg` first for full CFG/PDG data.
+`inspect` dumps semantic layers for an **indexed function symbol** (no `--class` flag — use a unique symbol or GQL to pick the right function). Run `discover --with-cfg` first.
 
 ```bash
-# Control-flow graph summary
-rbuilder -r "$REPO" inspect ShoppingCartService cfg
+rbuilder -r "$REPO" inspect checkout cfg
+```
 
+```text
+CFG for checkout: 5 blocks, 5 edges
+```
+
+```bash
+rbuilder -r "$REPO" -f json inspect checkout cfg | jq '{layer, blocks: (.nodes|length), edges: (.edges|length)}'
+```
+
+```json
+{
+  "layer": "cfg",
+  "blocks": 5,
+  "edges": 5
+}
+```
+
+Mermaid CFG:
+
+```bash
+rbuilder -r "$REPO" -f mermaid inspect checkout cfg
+```
+
+```text
+flowchart TD
+  462c1054-… --> 14712608-…
+  462c1054-… --> ae5a5a76-…
+  14712608-… --> 897883b6-…
+  ae5a5a76-… --> 897883b6-…
+  897883b6-… --> 4165ce10-…
+```
+
+Other layers:
+
+```bash
 # Prune unreachable blocks
-rbuilder -r "$REPO" inspect ShoppingCartService cfg --prune
+rbuilder -r "$REPO" inspect checkout cfg --prune
 
-# CFG as Mermaid
-rbuilder -r "$REPO" -f mermaid inspect ShoppingCartService cfg
+# Program dependence graph (data edges)
+rbuilder -r "$REPO" inspect checkout pdg --edge-layer data
+# → PDG for checkout: 13 nodes, 22 data deps, 0 control deps
 
-# Program dependence graph (data edges only)
-rbuilder -r "$REPO" inspect ShoppingCartService pdg --edge-layer data
-
-# PDG with def-use lists
-rbuilder -r "$REPO" inspect ShoppingCartService pdg --def-use
-
-# Dominator tree + frontiers
-rbuilder -r "$REPO" inspect ShoppingCartService dom --frontiers
+rbuilder -r "$REPO" inspect checkout pdg --def-use
+rbuilder -r "$REPO" inspect checkout dom --frontiers
 ```
 
 ---
 
 ## 10. Graph metrics
 
-`metrics` reports network analytics on the indexed call graph. Discover already computes many of these during indexing; use `metrics` for on-demand JSON output.
+`metrics` reports network analytics on the indexed call graph. Prefer **JSON** for scripting (text mode prints debug-style structs).
 
 ```bash
-# All metrics (PageRank, betweenness, communities)
-rbuilder -r "$REPO" metrics
+rbuilder -r "$REPO" -f json metrics --communities | jq .
+```
 
-# Individual reports
-rbuilder -r "$REPO" metrics --pagerank
+```json
+{
+  "communities": {
+    "assignments": 518,
+    "count": 442,
+    "modularity": 0.49
+  },
+  "schema_version": 1
+}
+```
+
+```bash
+rbuilder -r "$REPO" -f json metrics --pagerank | jq '.pagerank | {iterations, converged, top: .top[:3]}'
+```
+
+```json
+{
+  "iterations": 20,
+  "converged": false,
+  "top": [
+    { "node": "…uuid…", "pagerank": 0.0027 },
+    { "node": "…uuid…", "pagerank": 0.0015 },
+    { "node": "…uuid…", "pagerank": 0.0015 }
+  ]
+}
+```
+
+```bash
 rbuilder -r "$REPO" metrics --betweenness
-rbuilder -r "$REPO" metrics --communities
-
-# Tune PageRank iterations
 rbuilder -r "$REPO" -f json metrics --pagerank --iterations 50 | jq .
 ```
 
@@ -582,28 +798,29 @@ Design → **[Semantic search design](design/semantic-search-design.md)**
 | Query | Meaning |
 |-------|---------|
 | `all` | Entire graph |
-| `name:ShoppingCartService` | Nodes with exact name |
+| `name:clearCart` | Nodes with exact name |
 | `type:Function` | All functions |
 | `functions` | Shortcut for function nodes |
 
 ```bash
-# Full graph as JSON
 rbuilder -r "$REPO" export \
-  --export-format json \
-  --export-output coolstore-graph.json
-
-# GraphML subgraph (filter query)
-rbuilder -r "$REPO" export \
-  --export-format graphml \
-  --export-output cart-subgraph.graphml \
-  --query "name:ShoppingCartService"
-
-# DOT / Mermaid for external tools
-rbuilder -r "$REPO" export --export-format graphviz --export-output calls.dot --query all
-rbuilder -r "$REPO" export --export-format mermaid --export-output calls.mmd --query all
+  --export-format mermaid \
+  --export-output cart-clear.mmd \
+  --query "name:clearCart"
 ```
 
-For GQL pattern matching, use `rbuilder gql` and pipe results — or `rbuilder serve` + [HTTP API](http-api.md).
+```text
+Exported 518 nodes, 1122 edges -> cart-clear.mmd
+```
+
+```bash
+# Full graph as JSON / GraphML / DOT
+rbuilder -r "$REPO" export --export-format json --export-output ecommerce-graph.json --query all
+rbuilder -r "$REPO" export --export-format graphml --export-output ecommerce.graphml --query all
+rbuilder -r "$REPO" export --export-format graphviz --export-output calls.dot --query all
+```
+
+For GQL pattern matching, use `rbuilder gql` — or `rbuilder serve` + [HTTP API](http-api.md).
 
 ---
 
@@ -619,14 +836,16 @@ rbuilder -r "$REPO" check --policy-file policy.json
 
 Exit code **1** when violations are found — suitable for CI pipelines.
 
+The fixture also ships a shared policy at [`rbuilder-tests/rbuilder-policy.json`](../rbuilder-tests/rbuilder-policy.json).
+
 ---
 
 ## 14. HTTP server (`serve`)
 
-`serve` starts a local HTTP server with the **dashboard** and **GQL query API** (default `http://127.0.0.1:8080/`).
+`serve` starts a local HTTP server with the **dashboard** and **GQL query API** (default `http://127.0.0.1:8080/`). Discover with `--with-dashboard` first if you want the static UI assets.
 
 ```bash
-rbuilder -r "$REPO" discover .
+rbuilder -r "$REPO" discover . -l java -e target --with-dashboard
 rbuilder -r "$REPO" serve --open
 ```
 
@@ -637,8 +856,6 @@ rbuilder -r "$REPO" serve --open
 | `GET /api/semantic/status` | Semantic index availability |
 | `POST /api/semantic/query` | Semantic search (JSON body) |
 | `/api/health` | Health check |
-
-Query from another terminal or an agent:
 
 ```bash
 curl -sS -X POST http://127.0.0.1:8080/api/query \
@@ -655,51 +872,51 @@ For blast-radius auto-connect only (no HTTP):
 ```bash
 rbuilder -r "$REPO" serve --daemon
 # Terminal 2 — auto-uses .rbuilder/query.sock when present
-rbuilder -r "$REPO" -f json blast-radius ShoppingCartService
+rbuilder -r "$REPO" -f json blast-radius 'CartService::clearCart'
 ```
 
 Disable auto-connect: `RBUILDER_NO_QUERY_DAEMON=1`.
-
-```bash
-rbuilder -r "$REPO" serve --daemon --socket /tmp/rbuilder.sock --idle-secs 600
-```
 
 ---
 
 ## 15. Recommended workflow
 
 ```bash
-# 1. Install and clone example
-git clone https://github.com/konveyor-ecosystem/coolstore.git
-cd coolstore
-git checkout quarkus
-export REPO="$PWD"
+# 1. Point at the in-tree fixture
+cd /path/to/rBuilder
+export REPO="$PWD/rbuilder-tests/ecommerce-java"
+cd "$REPO"
 
-# 2. Index
-rbuilder discover .
+# 2. Index (add CFG + dashboard for the rest of this walkthrough)
+rbuilder discover . -l java -e target \
+  --with-cfg --with-dashboard --with-harmonic --export-migration-hints
 
 # 3. Explore structure
-rbuilder -r "$REPO" gql --macro-name all_functions 'x' | head
+rbuilder -r "$REPO" -f json gql --macro-name all_functions unused | jq '.count'
 rbuilder -r "$REPO" gql \
-  'MATCH (a:Function)-[:CALLS]->(b:Function) RETURN a,b LIMIT 15'
+  "MATCH (a:Function)-[:CALLS]->(b:Function) WHERE b.name = 'clearCart' RETURN a,b"
 
 # 4. Change-impact before editing
-rbuilder -r "$REPO" blast-radius CartEndpoint
-rbuilder -r "$REPO" -f json blast-radius CartEndpoint --depth 3 | jq .
+rbuilder -r "$REPO" blast-radius 'CartService::clearCart'
+rbuilder -r "$REPO" -f json blast-radius 'CartService::clearCart' | jq '.metrics'
 
-# 5. Find architectural hotspots
-rbuilder -r "$REPO" -f json metrics --pagerank | jq .
+# 5. Architectural hotspots
+rbuilder -r "$REPO" -f json metrics --communities | jq .
+rbuilder -r "$REPO" -f json metrics --pagerank | jq '.pagerank.top[:5]'
 
-# 6. Deep dive on a hot path (after discover --cfg)
-rbuilder discover . --cfg
-rbuilder -r "$REPO" inspect ShoppingCartService pdg --edge-layer data
-rbuilder -r "$REPO" slice src/main/java/com/redhat/coolstore/service/ShoppingCartService.java \
-  --line 45 --variable cart --function checkOutShoppingCart
+# 6. Deep dive on checkout
+rbuilder -r "$REPO" inspect checkout cfg
+rbuilder -r "$REPO" slice \
+  src/main/java/com/example/ecommerce/service/CartService.java \
+  --line 50 --variable item --function addItem
 
-# 7. Export for external graph tools
-rbuilder -r "$REPO" export --export-format graphml \
-  --export-output coolstore-calls.graphml --query all
+# 7. Export / dashboard
+rbuilder -r "$REPO" export --export-format mermaid \
+  --export-output clearCart.mmd --query 'name:clearCart'
+rbuilder -r "$REPO" serve --open
 ```
+
+Migration hints (with `--export-migration-hints`) land under `.rbuilder/migration_plan.json` and `.rbuilder/dashboard/migration_plan.json` — package-level steps such as `com.example.ecommerce.service`, `…repository`, `…controller`.
 
 ---
 
@@ -724,11 +941,16 @@ rbuilder -r "$REPO" export --export-format graphml \
 |------|-------------|
 | `-l, --languages` | Comma-separated filter (`java`, `typescript`, `rust`, …) |
 | `-e, --exclude` | Comma-separated path exclude patterns |
-| `-v, --verbose` | Debug logging |
-| `--security` | Secret scanning |
-| `--cfg` | CFG / PDG / taint analysis |
-| `--all` | Security + CFG analysis |
+| `-v, --verbose` | Debug logging + stage profile lines |
+| `--with-security` | Secret scanning |
+| `--with-cfg` | CFG / PDG (not taint) |
+| `--with-taint` | Discover-time taint (implies CFG pass) |
+| `--with-harmonic` | Harmonic centrality (default off) |
+| `--with-dashboard` | Static dashboard bundle (default off) |
+| `--export-migration-hints` | Migration roadmap JSON |
 | `--write-json-graph` | Also write legacy `graph.db` / `graph.json` |
+
+There is no umbrella `--all` flag — combine `--with-cfg --with-security --with-taint` explicitly when you want the former deep pass.
 
 ---
 
@@ -736,69 +958,57 @@ rbuilder -r "$REPO" export --export-format graphml \
 
 ### `Graph not found` / `run discover first`
 
-Run indexing in the repository root:
-
 ```bash
-rbuilder discover .
+rbuilder discover . -l java -e target
+# or
+rbuilder -r "$REPO" gql 'MATCH (n:Function) RETURN n LIMIT 1'
 ```
 
-Or pass `-r` explicitly:
+### Symbol not found / ambiguous (`blast-radius`, `inspect`)
+
+List exact names, then use FQN:
 
 ```bash
-rbuilder -r /path/to/coolstore gql 'MATCH (n:Function) RETURN n LIMIT 1'
+rbuilder -r "$REPO" gql "MATCH (n:Function) WHERE n.name = 'clearCart' RETURN n"
+rbuilder -r "$REPO" blast-radius 'CartService::clearCart'
+rbuilder -r "$REPO" blast-radius clearCart --class CartService
 ```
 
-### Symbol not found (`blast-radius`, `inspect`)
+`inspect` takes a **function** name (`checkout`, `addItem`), not a class name (`CartService`).
 
-Search for exact names:
+### Slice parse / PDG errors
 
-```bash
-rbuilder -r "$REPO" gql "MATCH (n:Function) WHERE n.name LIKE '*Cart*' RETURN n"
-```
-
-Use FQN or disambiguation flags:
+Ensure you ran `discover --with-cfg`, then pass the method name and a variable that exists on that line:
 
 ```bash
-rbuilder -r "$REPO" blast-radius addItem --class ShoppingCartService
-```
-
-### Slice parse errors
-
-Pass explicit language and class:
-
-```bash
-rbuilder -r "$REPO" slice path/to/File.java \
-  --line 10 --variable x --function MyClass --language java
+rbuilder -r "$REPO" slice \
+  src/main/java/com/example/ecommerce/service/CartService.java \
+  --line 50 --variable item --function addItem --language java
 ```
 
 ### Slow `discover`
 
-Start with the default mode. Add `--cfg` or `--all` only when you need inspect, slice overlays, or taint.
+Start with the default mode. Add `--with-cfg` or `--with-taint` only when you need inspect, slice overlays, or taint. Keep `--with-harmonic` / `--with-dashboard` off unless you need migration ranking or the static UI.
 
 On **very large repos** (500k+ graph nodes), discover automatically:
 
 - Caps PageRank iterations and relaxes convergence tolerance
-- Caps HyperBall harmonic rounds and parallelizes propagation
+- Caps HyperBall harmonic rounds (when `--with-harmonic`) and parallelizes propagation
 - Skips per-function rows in `function_metrics.json` (community/metagraph view instead)
 - Uses on-demand blast reachability for flat call graphs (no eager multi-hundred-GB bitsets)
 
-Profile where time goes:
+Profile a cold run:
 
 ```bash
-RUST_LOG=info,profile=info rbuilder discover . -v
+rm -rf .rbuilder
+RUST_LOG=info,profile=info rbuilder discover . -v 2>&1 | grep '\[profile\]'
 ```
 
-### `rbuilder: command not found`
+### Further reading
 
-Confirm PATH (see [§2](#2-add-rbuilder-to-your-path)) or invoke the binary by full path.
-
----
-
-## Further reading
-
-- [json-api.md](json-api.md) — programmatic JSON parsing (TypeScript shapes, jq, exit codes)
-- [cli-getting-started.md](cli-getting-started.md) — extended coolstore examples
-- [cli-output-schemas.md](cli-output-schemas.md) — JSON shapes for automation
-- [cli-io-sanity-qe.md](cli-io-sanity-qe.md) — subprocess test contract and release perf gates
-- [graph-storage-architecture.md](graph-storage-architecture.md) — snapshot layout and blast lookup cache
-- [dashboard-design.md](dashboard-design.md) — optional HTML dashboard (not required for CLI)
+- [Introduction](Introduction.md) — concepts and feature goals
+- [cli-getting-started.md](cli-getting-started.md) — shorter walkthrough
+- [http-api.md](http-api.md) — dashboard HTTP API
+- [json-api.md](json-api.md) / [cli-output-schemas.md](cli-output-schemas.md) — machine-readable output
+- [AGENTS.md](../AGENTS.md) — agent-oriented command recipes
+- [`rbuilder-tests/README.md`](../rbuilder-tests/README.md) — all language fixtures + correctness suite

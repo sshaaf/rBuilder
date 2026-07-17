@@ -1,0 +1,42 @@
+{
+  "schema_version": 1,
+  "fixture": "tiny_polyglot_repo",
+  "languages": ["java", "rust"],
+  "notes": "Semantic search QE oracles. Required — suite red until fixed (rbuilder-tests/correctness/QE.md). Distinct from tests/semantic_audit.rs.",
+  "pin": {
+    "model_id_contains": "code-daemon",
+    "dimensions": 256
+  },
+  "oracles": [
+    {
+      "id": "checkout_flow",
+      "query": "checkout order cart",
+      "k": 5,
+      "expect_in_top_k": ["checkout"],
+      "severity": "required"
+    },
+    {
+      "id": "publish_event",
+      "query": "publish event handler",
+      "k": 5,
+      "expect_in_top_k": ["publishEvent"],
+      "severity": "required"
+    },
+    {
+      "id": "process_order",
+      "query": "process order service",
+      "k": 5,
+      "expect_in_top_k": ["process"],
+      "severity": "required"
+    },
+    {
+      "id": "expand_neighbors_checkout",
+      "query": "checkout",
+      "k": 5,
+      "expect_in_top_k": ["checkout"],
+      "expand": "neighbors",
+      "require_expansion": true,
+      "severity": "required"
+    }
+  ]
+}

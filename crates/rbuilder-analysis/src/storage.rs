@@ -67,7 +67,11 @@ impl FunctionAnalysis {
     /// Stable cache key when body hash is known.
     pub fn stable_key(&self) -> Option<String> {
         let hash = self.code_hash.as_deref()?;
-        Some(stable_function_key(&self.file_path, &self.function_name, hash))
+        Some(stable_function_key(
+            &self.file_path,
+            &self.function_name,
+            hash,
+        ))
     }
 }
 
@@ -310,18 +314,11 @@ impl AnalysisStorage {
     }
 
     /// Align index entries (and artifact filenames) with current graph function UUIDs.
-    pub fn sync_index_function_ids(
-        &self,
-        functions: &[FunctionIdSyncEntry<'_>],
-    ) -> Result<usize> {
+    pub fn sync_index_function_ids(&self, functions: &[FunctionIdSyncEntry<'_>]) -> Result<usize> {
         let mut index = self.load_analysis_index()?;
         let mut remapped = 0usize;
         for func in functions {
-            let key = stable_function_key(
-                func.file_path,
-                func.function_name,
-                func.code_hash,
-            );
+            let key = stable_function_key(func.file_path, func.function_name, func.code_hash);
             let Some(entry) = index.get_mut(&key) else {
                 continue;
             };
@@ -398,9 +395,8 @@ fn decode_function_analysis_bincode(bytes: &[u8]) -> Result<FunctionAnalysis> {
     if let Ok(legacy) = bincode::deserialize::<FunctionAnalysisPdgThree>(bytes) {
         return Ok(legacy.into_analysis());
     }
-    bincode::deserialize(bytes).map_err(|e| {
-        Error::SerdeError(format!("analysis bincode decode: {e}"))
-    })
+    bincode::deserialize(bytes)
+        .map_err(|e| Error::SerdeError(format!("analysis bincode decode: {e}")))
 }
 
 #[derive(Deserialize)]
@@ -577,10 +573,8 @@ impl AnalysisStorage {
             let Some(id) = analysis_function_id(&path) else {
                 continue;
             };
-            if !active_ids.contains(&id) {
-                if fs::remove_file(&path).is_ok() {
-                    removed += 1;
-                }
+            if !active_ids.contains(&id) && fs::remove_file(&path).is_ok() {
+                removed += 1;
             }
         }
         Ok(removed)

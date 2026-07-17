@@ -2,8 +2,8 @@
 
 use crate::export_context::{resolve_analysis, DashboardExportContext};
 use rbuilder_analysis::{
-    build_migration_graph, compute_migration_plan, MigrationGraphPayload,
-    MigrationOrderMode, MigrationPlanPayload, MigrationWeights,
+    build_migration_graph, compute_migration_plan, MigrationGraphPayload, MigrationOrderMode,
+    MigrationPlanPayload, MigrationWeights,
 };
 use rbuilder_graph::backend::MemoryBackend;
 use std::fs;

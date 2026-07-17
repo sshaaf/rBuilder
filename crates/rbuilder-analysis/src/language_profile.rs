@@ -121,9 +121,9 @@ const PROFILES: &[LanguageAnalysisProfile] = &[
 /// Return the profile for a canonical id or alias.
 pub fn profile_for_language(language: &str) -> Option<&'static LanguageAnalysisProfile> {
     let key = language.to_lowercase();
-    PROFILES.iter().find(|p| {
-        p.id == key.as_str() || p.aliases.contains(&key.as_str())
-    })
+    PROFILES
+        .iter()
+        .find(|p| p.id == key.as_str() || p.aliases.contains(&key.as_str()))
 }
 
 /// Map a file path to a canonical language id when the extension is known.
@@ -260,7 +260,10 @@ mod tests {
             cfg_language_id_from_path(Path::new("app.js")),
             Some("javascript")
         );
-        assert_eq!(language_id_from_path(Path::new("app.js")), Some("javascript"));
+        assert_eq!(
+            language_id_from_path(Path::new("app.js")),
+            Some("javascript")
+        );
     }
 
     #[test]

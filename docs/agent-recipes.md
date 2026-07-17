@@ -113,7 +113,7 @@ rbuilder -r "$REPO" -f json slice src/.../Controller.java \
 ## Recipe 7 — Migration batch planning
 
 ```bash
-rbuilder discover . --all --export-migration-plan
+rbuilder discover . --with-cfg --with-security --with-taint --with-dashboard --with-harmonic --export-migration-hints
 jq '.packages[:10]' "$REPO/.rbuilder/dashboard/migration_plan.json"
 rbuilder serve --open   # Migration tab for interactive tuning
 ```

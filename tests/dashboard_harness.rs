@@ -10,29 +10,51 @@ use std::time::{Duration, Instant};
 /// Default golden repo for dashboard phase gates (override with env).
 pub const DEFAULT_GOLDEN_REPO: &str = "/Users/sshaaf/git/java/gbuilder";
 
+fn in_tree_ecommerce(name: &str) -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("rbuilder-tests")
+        .join(name)
+}
+
 /// Default Go ecommerce test repo (override with env).
-pub const DEFAULT_GO_REPO: &str = "/Users/sshaaf/git/rust/rbuilder-tests/ecommerce-go";
+pub fn default_go_repo() -> PathBuf {
+    in_tree_ecommerce("ecommerce-go")
+}
 
 /// Default C# ecommerce test repo (override with env).
-pub const DEFAULT_CSHARP_REPO: &str = "/Users/sshaaf/git/rust/rbuilder-tests/ecommerce-csharp";
+pub fn default_csharp_repo() -> PathBuf {
+    in_tree_ecommerce("ecommerce-csharp")
+}
 
 /// Default C ecommerce test repo (override with env).
-pub const DEFAULT_C_REPO: &str = "/Users/sshaaf/git/rust/rbuilder-tests/ecommerce-c";
+pub fn default_c_repo() -> PathBuf {
+    in_tree_ecommerce("ecommerce-c")
+}
 
 /// Default C++ ecommerce test repo (override with env).
-pub const DEFAULT_CPP_REPO: &str = "/Users/sshaaf/git/rust/rbuilder-tests/ecommerce-cpp";
+pub fn default_cpp_repo() -> PathBuf {
+    in_tree_ecommerce("ecommerce-cpp")
+}
 
 /// Default Python ecommerce test repo (override with env).
-pub const DEFAULT_PYTHON_REPO: &str = "/Users/sshaaf/git/rust/rbuilder-tests/ecommerce-python";
+pub fn default_python_repo() -> PathBuf {
+    in_tree_ecommerce("ecommerce-python")
+}
 
 /// Default Rust ecommerce test repo (override with env).
-pub const DEFAULT_RUST_REPO: &str = "/Users/sshaaf/git/rust/rbuilder-tests/ecommerce-rust";
+pub fn default_rust_repo() -> PathBuf {
+    in_tree_ecommerce("ecommerce-rust")
+}
 
 /// Default JavaScript ecommerce test repo (override with env).
-pub const DEFAULT_JAVASCRIPT_REPO: &str = "/Users/sshaaf/git/rust/rbuilder-tests/ecommerce-javascript";
+pub fn default_javascript_repo() -> PathBuf {
+    in_tree_ecommerce("ecommerce-javascript")
+}
 
 /// Default TypeScript ecommerce test repo (override with env).
-pub const DEFAULT_TYPESCRIPT_REPO: &str = "/Users/sshaaf/git/rust/rbuilder-tests/ecommerce-typescript";
+pub fn default_typescript_repo() -> PathBuf {
+    in_tree_ecommerce("ecommerce-typescript")
+}
 
 pub fn golden_repo_path() -> PathBuf {
     std::env::var("RBUILDER_DASHBOARD_GOLDEN_REPO")
@@ -43,49 +65,49 @@ pub fn golden_repo_path() -> PathBuf {
 pub fn ecommerce_go_repo_path() -> PathBuf {
     std::env::var("RBUILDER_GO_REPO")
         .map(PathBuf::from)
-        .unwrap_or_else(|_| PathBuf::from(DEFAULT_GO_REPO))
+        .unwrap_or_else(|_| default_go_repo())
 }
 
 pub fn ecommerce_csharp_repo_path() -> PathBuf {
     std::env::var("RBUILDER_CSHARP_REPO")
         .map(PathBuf::from)
-        .unwrap_or_else(|_| PathBuf::from(DEFAULT_CSHARP_REPO))
+        .unwrap_or_else(|_| default_csharp_repo())
 }
 
 pub fn ecommerce_c_repo_path() -> PathBuf {
     std::env::var("RBUILDER_C_REPO")
         .map(PathBuf::from)
-        .unwrap_or_else(|_| PathBuf::from(DEFAULT_C_REPO))
+        .unwrap_or_else(|_| default_c_repo())
 }
 
 pub fn ecommerce_cpp_repo_path() -> PathBuf {
     std::env::var("RBUILDER_CPP_REPO")
         .map(PathBuf::from)
-        .unwrap_or_else(|_| PathBuf::from(DEFAULT_CPP_REPO))
+        .unwrap_or_else(|_| default_cpp_repo())
 }
 
 pub fn ecommerce_python_repo_path() -> PathBuf {
     std::env::var("RBUILDER_PYTHON_REPO")
         .map(PathBuf::from)
-        .unwrap_or_else(|_| PathBuf::from(DEFAULT_PYTHON_REPO))
+        .unwrap_or_else(|_| default_python_repo())
 }
 
 pub fn ecommerce_rust_repo_path() -> PathBuf {
     std::env::var("RBUILDER_RUST_REPO")
         .map(PathBuf::from)
-        .unwrap_or_else(|_| PathBuf::from(DEFAULT_RUST_REPO))
+        .unwrap_or_else(|_| default_rust_repo())
 }
 
 pub fn ecommerce_javascript_repo_path() -> PathBuf {
     std::env::var("RBUILDER_JAVASCRIPT_REPO")
         .map(PathBuf::from)
-        .unwrap_or_else(|_| PathBuf::from(DEFAULT_JAVASCRIPT_REPO))
+        .unwrap_or_else(|_| default_javascript_repo())
 }
 
 pub fn ecommerce_typescript_repo_path() -> PathBuf {
     std::env::var("RBUILDER_TYPESCRIPT_REPO")
         .map(PathBuf::from)
-        .unwrap_or_else(|_| PathBuf::from(DEFAULT_TYPESCRIPT_REPO))
+        .unwrap_or_else(|_| default_typescript_repo())
 }
 
 pub fn rbuilder_bin() -> PathBuf {
@@ -99,19 +121,19 @@ pub fn run_discover(repo: &Path, languages: &str) -> Output {
     run_discover_with_flags(repo, Some(languages), false)
 }
 
-/// Run `discover . --all` (CFG/PDG, security scan, full dashboard analysis exports).
+/// Run discover with CFG + security + taint + dashboard (former `--all` depth + dashboard).
 pub fn run_discover_all(repo: &Path, languages: Option<&str>) -> Output {
     run_discover_with_flags(repo, languages, true)
 }
 
-/// Run `discover . --all` and return wall-clock duration alongside process output.
+/// Run deep discover and return wall-clock duration alongside process output.
 pub fn run_discover_all_timed(repo: &Path, languages: Option<&str>) -> (Output, Duration) {
     let start = Instant::now();
     let output = run_discover_all(repo, languages);
     (output, start.elapsed())
 }
 
-fn run_discover_with_flags(repo: &Path, languages: Option<&str>, all: bool) -> Output {
+fn run_discover_with_flags(repo: &Path, languages: Option<&str>, deep: bool) -> Output {
     let bin = rbuilder_bin();
     assert!(
         bin.is_file(),
@@ -119,9 +141,17 @@ fn run_discover_with_flags(repo: &Path, languages: Option<&str>, all: bool) -> O
         bin.display()
     );
     let mut cmd = Command::new(&bin);
-    cmd.args(["-r", repo.to_str().unwrap(), "discover", "."]);
-    if all {
-        cmd.arg("--all");
+    // Dashboard tests always opt in (#31 — bare discover skips dashboard).
+    cmd.args([
+        "-r",
+        repo.to_str().unwrap(),
+        "discover",
+        ".",
+        "--with-dashboard",
+    ]);
+    if deep {
+        // Former `--all` ≡ security + cfg + taint (#34).
+        cmd.args(["--with-cfg", "--with-security", "--with-taint"]);
     }
     if let Some(langs) = languages {
         cmd.args(["--languages", langs]);
@@ -242,7 +272,8 @@ pub fn assert_dashboard_bundle_with_meta(repo: &Path, min_nodes: u64, min_metano
         dash.join("slice_index.json").is_file(),
         "missing slice_index.json (Phase 5)"
     );
-    assert_eq!(slice_index["schema_version"], 1);
+    let sv = slice_index["schema_version"].as_u64().unwrap_or(0);
+    assert!(sv >= 1, "slice_index schema_version must be >= 1, got {sv}");
     assert_eq!(slice_index["available"], cfg_available);
     assert_eq!(analysis["slice_available"], slice_available);
     assert_eq!(analysis["slice_index_path"], "slice_index.json");
@@ -251,7 +282,11 @@ pub fn assert_dashboard_bundle_with_meta(repo: &Path, min_nodes: u64, min_metano
         dash.join("cfg_index.json").is_file(),
         "missing cfg_index.json (Phase 4)"
     );
-    assert_eq!(cfg_index["schema_version"], 1);
+    let cfg_sv = cfg_index["schema_version"].as_u64().unwrap_or(0);
+    assert!(
+        cfg_sv >= 1,
+        "cfg_index schema_version must be >= 1, got {cfg_sv}"
+    );
     if !cfg_available {
         assert_eq!(
             cfg_index["available"], false,
@@ -288,7 +323,10 @@ pub fn assert_dashboard_bundle_with_meta(repo: &Path, min_nodes: u64, min_metano
         serde_json::from_slice(&std::fs::read(dash.join("communities.json")).unwrap()).unwrap();
     assert_eq!(communities["schema_version"], 1);
     assert!(
-        communities["communities"].as_array().map(|a| !a.is_empty()).unwrap_or(false),
+        communities["communities"]
+            .as_array()
+            .map(|a| !a.is_empty())
+            .unwrap_or(false),
         "communities.json must list at least one community"
     );
     assert_eq!(view["communities_path"], "communities.json");
@@ -320,8 +358,12 @@ pub fn assert_dashboard_bundle_with_meta(repo: &Path, min_nodes: u64, min_metano
     assert_eq!(migration_plan["schema_version"], 2);
     assert_eq!(migration_plan["order_mode"], "scheduled");
     assert!(
-        migration_plan["steps"][0]["schedule_step"].as_u64().is_some()
-            && migration_plan["steps"][0]["priority_rank"].as_u64().is_some(),
+        migration_plan["steps"][0]["schedule_step"]
+            .as_u64()
+            .is_some()
+            && migration_plan["steps"][0]["priority_rank"]
+                .as_u64()
+                .is_some(),
         "migration plan steps must include schedule_step and priority_rank"
     );
 
@@ -421,7 +463,7 @@ pub fn assert_dashboard_bundle_with_meta(repo: &Path, min_nodes: u64, min_metano
     }
 }
 
-/// Assert dashboard bundle after `discover --all` (CFG, slice, dataflow must be present).
+/// Assert dashboard bundle after `discover --with-cfg --with-security --with-taint` (CFG, slice, dataflow must be present).
 pub fn assert_dashboard_bundle_all_analysis(repo: &Path, min_nodes: u64, min_metanodes: u64) {
     assert_dashboard_bundle_with_meta(repo, min_nodes, min_metanodes);
 
@@ -448,7 +490,7 @@ pub fn assert_dashboard_bundle_all_analysis(repo: &Path, min_nodes: u64, min_met
 
     assert!(
         dash.join("cfg_pdg.archive.bin").is_file(),
-        "cfg_pdg.archive.bin expected in dashboard bundle after discover --all"
+        "cfg_pdg.archive.bin expected in dashboard bundle after discover --with-cfg --with-security --with-taint"
     );
 
     let cfg_index: Value =

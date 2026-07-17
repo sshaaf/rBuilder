@@ -107,7 +107,7 @@ Turn a folder of source code into a **persistent, queryable graph** plus pre-com
 
 ### Description
 
-`discover` walks the repository, uses language-aware parsers to extract symbols and relationships, and writes artifacts to `.rbuilder/`. The **primary graph** is a columnar binary snapshot (`graph.snapshot.bin`); GQL and most commands read that via mmap — **not** a SQL database. Also written: a blast-radius engine snapshot, a **SQLite blast-radius lookup cache** (`macro_call_index.db`, `blast-radius` fast path only), and optionally per-function control-flow and taint data when you enable deeper modes (`--cfg` or `--all`).
+`discover` walks the repository, uses language-aware parsers to extract symbols and relationships, and writes artifacts to `.rbuilder/`. The **primary graph** is a columnar binary snapshot (`graph.snapshot.bin`); GQL and most commands read that via mmap — **not** a SQL database. Also written: a blast-radius engine snapshot, a **SQLite blast-radius lookup cache** (`macro_call_index.db`, `blast-radius` fast path only), and optionally per-function control-flow and taint data when you enable deeper modes (`--with-cfg` or `--with-taint`).
 
 Default discover is tuned for speed. Deeper modes trade time for semantic detail (slicing, taint, inspect overlays).
 
@@ -116,8 +116,8 @@ Default discover is tuned for speed. Deeper modes trade time for semantic detail
 - **One command** to prepare the whole repo for all other features  
 - **Incremental-friendly** file tracking for faster re-runs after small changes  
 - **CI-friendly** telemetry with `-f json` (file counts, nodes, edges, duration)  
-- **Optional security scan** (`--security`) and **optional CFG/PDG/taint** (`--cfg`, `--all`)
-- **Optional migration roadmap** (`--export-migration-plan`, with `--migration-preset` and `--migration-order scheduled|priority`)
+- **Optional security scan** (`--security`) and **optional CFG/PDG/taint** (`--with-cfg`, `--with-taint`)
+- **Optional migration roadmap** (`--export-migration-hints`, with `--migration-preset` and `--migration-order scheduled|priority`)
 
 ### How to run it
 
@@ -215,7 +215,7 @@ Find **unsafe flows** where untrusted input (sources) may reach dangerous operat
 
 **Taint analysis** tracks how data of interest propagates from **sources** (request parameters, files, environment variables, …) to **sinks** (SQL execution, shell, HTML render, …). Flows may be **sanitized** on the path; vulnerable flows are those with no effective sanitizer.
 
-At CLI level, `slice --taint` gives a quick per-function check. Full-repo taint summaries are produced when you run `discover --cfg` or `--all` and appear in the dashboard **Taint Analysis** tab and exported JSON indexes.
+At CLI level, `slice --taint` gives a quick per-function check. Full-repo taint summaries are produced when you run `discover --with-cfg` or `--with-taint` and appear in the dashboard **Taint Analysis** tab and exported JSON indexes.
 
 ### Key benefits
 
@@ -226,7 +226,7 @@ At CLI level, `slice --taint` gives a quick per-function check. Full-repo taint 
 ### How to run it
 
 → [User Guide §8 — Program slicing and taint](user-guide.md#8-program-slicing-and-taint) (taint sections)  
-→ Deeper index: `discover . --cfg` or `discover . --all` ([User Guide §4](user-guide.md#4-index-with-discover))  
+→ Deeper index: `discover . --cfg` or `discover . --with-cfg --with-security --with-taint` ([User Guide §4](user-guide.md#4-index-with-discover))  
 → Design: **[Taint analysis design](design/taint-analysis-design.md)**
 
 ---
@@ -310,7 +310,7 @@ Two orderings are available:
 - **Scheduled step** — Kahn topological sort so callees appear before callers (dependency-aware)  
 - **Priority rank** — score-only ordering without dependency constraints  
 
-Strategy **presets** (Hybrid Default, Foundational First, Dense Cluster Extraction, Risk Mitigation) adjust α/β/γ. The dashboard **Migration** tab lets you tune weights live and explore a ForceAtlas2 layout (cluster color from Louvain communities, node size from priority). Every `discover` exports `migration_graph.json` and a default `migration_plan.json` under **`.rbuilder/dashboard/`** when analysis metrics are available. Use `--export-migration-plan` for a preset-tuned plan file (default **`.rbuilder/migration_plan.json`**, or `-o`).
+Strategy **presets** (Hybrid Default, Foundational First, Dense Cluster Extraction, Risk Mitigation) adjust α/β/γ. The dashboard **Migration** tab lets you tune weights live and explore a ForceAtlas2 layout (cluster color from Louvain communities, node size from priority). Every `discover` exports `migration_graph.json` and a default `migration_plan.json` under **`.rbuilder/dashboard/`** when analysis metrics are available. Use `--export-migration-hints` for a preset-tuned plan file (default **`.rbuilder/migration_plan.json`**, or `-o`).
 
 ### Key benefits
 
@@ -322,7 +322,7 @@ Strategy **presets** (Hybrid Default, Foundational First, Dense Cluster Extracti
 ### How to run it
 
 ```bash
-rbuilder discover . --all --export-migration-plan
+rbuilder discover . --with-cfg --with-security --with-taint --export-migration-hints
 rbuilder serve --open   # http://127.0.0.1:8080/ → Migration tab + query API
 ```
 
@@ -469,4 +469,4 @@ rbuilder serve --open        # recommended: dashboard + /api/query
 1. Read this introduction (you are here).  
 2. Follow [User Guide §1–4](user-guide.md#1-installation) — install, clone [coolstore](https://github.com/konveyor-ecosystem/coolstore), run `discover`.  
 3. Run one **GQL** query and one **blast-radius** on a function you recognize.  
-4. Optionally open the **dashboard** (try the **Migration** tab after `discover --all --export-migration-plan`) or try `-f json` with [JSON API](json-api.md).
+4. Optionally open the **dashboard** (try the **Migration** tab after `discover --with-cfg --with-security --with-taint --export-migration-hints`) or try `-f json` with [JSON API](json-api.md).

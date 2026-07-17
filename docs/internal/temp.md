@@ -160,17 +160,21 @@ Currently hard-coded via `DEFAULT_*` and `LARGE_GRAPH_*` constants.
 
 ### Linux kernel (`example/linux`, 2.65M nodes, 8.56M edges)
 
+> **Note (Jul 2026 / #29 + #31):** default `discover` skips HyperBall harmonic and dashboard export.
+> Expected cold wall ≈ **~130–135s** (r3 no-harmonic ~142s minus ~8–9s `save_dashboard`).
+> Use `--with-harmonic` / `--with-dashboard` to restore those stages.
+
 Sub-phase profile (`RUST_LOG=profile=info discover -v`):
 
-| Sub-phase | Before optimizations | After (parallel HyperBall + gating) |
-|-----------|---------------------|-------------------------------------|
-| PageRank | ~85s (with HashMap path) | **0.18 s** |
-| Betweenness (sampled) | — | **2.0 s** |
-| Harmonic (HyperBall) | **84.3 s** (16 rounds, sequential) | **31.0 s** (8 rounds, Rayon) |
-| **Centrality total** | **~87 s** | **~33 s** |
-| **Discover wall (incremental)** | **~140 s** | **~84 s** |
-| **Discover wall (cold)** | **~354 s** | **~231 s** (prior run; cold re-profile after HyperBall fix expected ~177 s) |
-| Peak RSS | 13.3 GB | **5.5 GB** (columnar path; no UUID HashMap spike) |
+| Sub-phase | Before optimizations | After (parallel HyperBall + gating) | Default (no `--with-harmonic`) |
+|-----------|---------------------|-------------------------------------|--------------------------------|
+| PageRank | ~85s (with HashMap path) | **0.18 s** | same |
+| Betweenness (sampled) | — | **2.0 s** | same |
+| Harmonic (HyperBall) | **84.3 s** (16 rounds, sequential) | **31.0 s** (8 rounds, Rayon) | **skipped** |
+| **Centrality total** | **~87 s** | **~33 s** | **~3 s** (PR + betweenness) |
+| **Discover wall (incremental)** | **~140 s** | **~84 s** | lower by ~harmonic |
+| **Discover wall (cold)** | **~354 s** | **~231 s** → re-profile **~169–172 s**; expected **~140 s** without harmonic | target after #29 |
+| Peak RSS | 13.3 GB | **5.5 GB** documented / **~17 GB** measured with HyperBall | expect much lower without harmonic |
 
 Top PageRank hotspot remained **BIT** (stable rank order).
 

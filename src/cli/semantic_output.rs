@@ -1,7 +1,8 @@
 //! Structured semantic search CLI JSON response.
 
 use rbuilder_analysis::{
-    SemanticBuildStats, SemanticEntry, SemanticExpansion, SemanticHit, SEMANTIC_INDEX_SCHEMA_VERSION,
+    SemanticBuildStats, SemanticEntry, SemanticExpansion, SemanticHit,
+    SEMANTIC_INDEX_SCHEMA_VERSION,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};

@@ -12,17 +12,23 @@ use uuid::Uuid;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum SemanticExpandMode {
+    /// No graph expansion after retrieval.
     #[default]
     None,
+    /// Expand CALLS neighbors from semantic anchors.
     Neighbors,
+    /// Attach blast-radius summaries for anchors.
     Blast,
+    /// Neighbor expansion labeled for GQL-style consumers.
     Gql,
+    /// Neighbors + blast + GQL expansions.
     All,
 }
 
 /// Config for post-query graph expansion.
 #[derive(Debug, Clone)]
 pub struct SemanticExpandConfig {
+    /// Which expansion modes to run.
     pub mode: SemanticExpandMode,
     /// CALLS hop depth for neighbor / GQL-style expansion.
     pub call_depth: usize,
@@ -46,24 +52,35 @@ impl Default for SemanticExpandConfig {
 /// One related symbol from graph expansion.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SemanticExpandedNode {
+    /// Graph node UUID (string form).
     pub node_id: String,
+    /// Short display name.
     pub name: String,
     #[serde(skip_serializing_if = "Option::is_none")]
+    /// Fully qualified name when available.
     pub qualified_name: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    /// Source file path when available.
     pub file_path: Option<String>,
+    /// Relation label (e.g. caller/callee).
     pub relation: String,
     #[serde(skip_serializing_if = "Option::is_none")]
+    /// Anchor hit this expansion came from.
     pub anchor_node_id: Option<String>,
 }
 
 /// Blast-radius summary for one anchor.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct SemanticBlastSummary {
+    /// Anchor node UUID.
     pub anchor_node_id: String,
+    /// Anchor display name.
     pub anchor_name: String,
+    /// Number of direct callers.
     pub direct_callers: usize,
+    /// Impact zone size.
     pub impact_zone: usize,
+    /// Blast impact score.
     pub score: f64,
 }
 
@@ -71,10 +88,13 @@ pub struct SemanticBlastSummary {
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct SemanticExpansion {
     #[serde(skip_serializing_if = "Option::is_none")]
+    /// CALLS-neighborhood expansions.
     pub neighbors: Option<Vec<SemanticExpandedNode>>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    /// Per-anchor blast summaries.
     pub blast: Option<Vec<SemanticBlastSummary>>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    /// Neighbor expansion for GQL-style consumers.
     pub gql: Option<Vec<SemanticExpandedNode>>,
 }
 
@@ -104,7 +124,10 @@ pub fn expand_semantic_hits(
         )?);
     }
 
-    if matches!(config.mode, SemanticExpandMode::Gql | SemanticExpandMode::All) {
+    if matches!(
+        config.mode,
+        SemanticExpandMode::Gql | SemanticExpandMode::All
+    ) {
         expansion.gql = Some(expand_call_neighbors(
             backend,
             &anchors,
@@ -135,6 +158,7 @@ pub fn expand_semantic_hits(
 
 /// Trait to supply blast summaries without pulling CLI types into analysis.
 pub trait BlastSummaryProvider {
+    /// Summarize blast radius for a semantic anchor node.
     fn summarize(&self, anchor_id: Uuid) -> Result<Option<SemanticBlastSummary>>;
 }
 
@@ -169,11 +193,7 @@ pub fn expand_call_neighbors(
                     if node.node_type != NodeType::Function {
                         continue;
                     }
-                    out.push(node_to_expanded(
-                        &node,
-                        relation,
-                        Some(anchor_id),
-                    ));
+                    out.push(node_to_expanded(&node, relation, Some(anchor_id)));
                     anchor_count += 1;
                     if anchor_count >= per_anchor_limit {
                         break;

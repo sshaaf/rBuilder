@@ -19,17 +19,12 @@ pub fn thread_pool(thread_count: Option<usize>) -> Arc<ThreadPool> {
     if let Some(pool) = lock.get(&thread_count) {
         return Arc::clone(pool);
     }
-    let mut builder = rayon::ThreadPoolBuilder::new().thread_name(|idx| {
-        format!("rbuilder-worker-{idx}")
-    });
+    let mut builder =
+        rayon::ThreadPoolBuilder::new().thread_name(|idx| format!("rbuilder-worker-{idx}"));
     if let Some(n) = thread_count {
         builder = builder.num_threads(n);
     }
-    let pool = Arc::new(
-        builder
-            .build()
-            .expect("failed to build rayon thread pool"),
-    );
+    let pool = Arc::new(builder.build().expect("failed to build rayon thread pool"));
     lock.insert(thread_count, Arc::clone(&pool));
     pool
 }

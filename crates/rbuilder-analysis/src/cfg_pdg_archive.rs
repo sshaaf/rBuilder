@@ -57,7 +57,9 @@ where
     pdg.as_ref().serialize(serializer)
 }
 
-fn deserialize_arc_pdg<'de, D>(deserializer: D) -> std::result::Result<Arc<ProgramDependenceGraph>, D::Error>
+fn deserialize_arc_pdg<'de, D>(
+    deserializer: D,
+) -> std::result::Result<Arc<ProgramDependenceGraph>, D::Error>
 where
     D: serde::Deserializer<'de>,
 {
@@ -203,7 +205,8 @@ fn parse_payload(mmap: &[u8]) -> Result<CfgPdgArchive> {
             "cfg_pdg archive payload truncated".into(),
         ));
     }
-    let mut archive: CfgPdgArchive = bincode::deserialize(&mmap[16..16 + payload_len]).map_err(serde_err)?;
+    let mut archive: CfgPdgArchive =
+        bincode::deserialize(&mmap[16..16 + payload_len]).map_err(serde_err)?;
     for record in archive.records.values_mut() {
         Arc::make_mut(&mut record.pdg).restore_derived_indexes();
     }

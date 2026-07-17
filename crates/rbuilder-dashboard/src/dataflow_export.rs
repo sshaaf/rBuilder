@@ -55,9 +55,10 @@ pub fn export_dataflow_index(
     )
     .map_err(|e| e.to_string())?;
 
-    let cfg_index: Option<crate::cfg_export::CfgIndexPayload> = fs::read(out_dir.join(crate::cfg_export::CFG_INDEX_FILE))
-        .ok()
-        .and_then(|bytes| serde_json::from_slice(&bytes).ok());
+    let cfg_index: Option<crate::cfg_export::CfgIndexPayload> =
+        fs::read(out_dir.join(crate::cfg_export::CFG_INDEX_FILE))
+            .ok()
+            .and_then(|bytes| serde_json::from_slice(&bytes).ok());
     let block_counts: std::collections::HashMap<String, usize> = cfg_index
         .map(|idx| {
             idx.functions
@@ -93,10 +94,7 @@ pub fn export_dataflow_index(
             file_path: entry.file_path.clone(),
             pdg_nodes: entry.pdg_nodes,
             data_edges,
-            block_count: block_counts
-                .get(&entry.function_id)
-                .copied()
-                .unwrap_or(0),
+            block_count: block_counts.get(&entry.function_id).copied().unwrap_or(0),
         });
     }
 

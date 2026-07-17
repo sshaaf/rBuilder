@@ -101,7 +101,7 @@ impl Extractor {
     ) -> Result<ExtractionTail> {
         let file_id = builder.ensure_file_node(&extraction.path);
 
-        let source = (!extraction.source.is_empty()).then(|| extraction.source.as_slice());
+        let source = (!extraction.source.is_empty()).then_some(extraction.source.as_slice());
 
         for symbol in &extraction.symbols {
             let body = source.and_then(|bytes| symbol_body_from_source(bytes, symbol));

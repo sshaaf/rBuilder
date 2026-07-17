@@ -273,8 +273,7 @@ impl<'a> TaintAnalyzer<'a> {
             }
 
             if text.contains(".bind(") {
-                self.sanitizers
-                    .insert(*node_id, Sanitizer::SqlParameterize);
+                self.sanitizers.insert(*node_id, Sanitizer::SqlParameterize);
             } else if text.contains(".parse::<") || text.contains("FromStr") {
                 self.sanitizers
                     .insert(*node_id, Sanitizer::TypeCast("typed".into()));
@@ -320,9 +319,7 @@ impl<'a> TaintAnalyzer<'a> {
                 || text.contains("sql.Open")
             {
                 self.sinks.insert(*node_id, TaintSink::SqlQuery);
-            } else if text.contains("exec.Command")
-                || text.contains("exec.CommandContext")
-            {
+            } else if text.contains("exec.Command") || text.contains("exec.CommandContext") {
                 self.sinks.insert(*node_id, TaintSink::ShellCommand);
             } else if text.contains("template.HTML(")
                 || text.contains("c.HTML(")
@@ -342,8 +339,7 @@ impl<'a> TaintAnalyzer<'a> {
             } else if text.contains("html.EscapeString") {
                 self.sanitizers.insert(*node_id, Sanitizer::HtmlEscape);
             } else if text.contains("Prepare(") || text.contains("PrepareContext(") {
-                self.sanitizers
-                    .insert(*node_id, Sanitizer::SqlParameterize);
+                self.sanitizers.insert(*node_id, Sanitizer::SqlParameterize);
             }
         }
     }
@@ -457,9 +453,7 @@ impl<'a> TaintAnalyzer<'a> {
                 || text.contains("ExecuteReader")
             {
                 self.sinks.insert(*node_id, TaintSink::SqlQuery);
-            } else if text.contains("Process.Start")
-                || text.contains("ProcessStartInfo")
-            {
+            } else if text.contains("Process.Start") || text.contains("ProcessStartInfo") {
                 self.sinks.insert(*node_id, TaintSink::ShellCommand);
             } else if text.contains("File.WriteAllText")
                 || text.contains("File.WriteAllBytes")
@@ -490,8 +484,7 @@ impl<'a> TaintAnalyzer<'a> {
             {
                 self.sanitizers.insert(*node_id, Sanitizer::HtmlEscape);
             } else if text.contains("AddWithValue") || text.contains("Parameters.Add") {
-                self.sanitizers
-                    .insert(*node_id, Sanitizer::SqlParameterize);
+                self.sanitizers.insert(*node_id, Sanitizer::SqlParameterize);
             }
         }
     }
@@ -541,8 +534,7 @@ impl<'a> TaintAnalyzer<'a> {
                 self.sanitizers
                     .insert(*node_id, Sanitizer::TypeCast("numeric".into()));
             } else if text.contains("snprintf(") && text.contains("%") {
-                self.sanitizers
-                    .insert(*node_id, Sanitizer::SqlParameterize);
+                self.sanitizers.insert(*node_id, Sanitizer::SqlParameterize);
             }
         }
     }
@@ -708,7 +700,12 @@ impl<'a> TaintAnalyzer<'a> {
             if self.sinks.contains_key(&current) {
                 reachable.push((current, reconstruct_path(&parent, source, current)));
             }
-            for &next in self.data_succ.get(&current).map(|v| v.as_slice()).unwrap_or(&[]) {
+            for &next in self
+                .data_succ
+                .get(&current)
+                .map(|v| v.as_slice())
+                .unwrap_or(&[])
+            {
                 if visited.insert(next) {
                     parent.insert(next, current);
                     queue.push_back(next);
@@ -874,7 +871,10 @@ def handle(request):
         let mut analyzer = TaintAnalyzer::new(&pdg, &cfg);
         analyzer.detect_patterns("python");
         let flows = analyzer.vulnerable_flows();
-        assert!(!flows.is_empty(), "multi-hop assignment chain should reach sink");
+        assert!(
+            !flows.is_empty(),
+            "multi-hop assignment chain should reach sink"
+        );
         assert_eq!(flows[0].source_type, TaintSource::HttpParameter);
     }
 }

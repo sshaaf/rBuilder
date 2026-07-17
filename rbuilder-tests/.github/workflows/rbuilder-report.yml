@@ -1,0 +1,115 @@
+# Generate Tier 1 e-commerce rBuilder reports using a release binary.
+#
+# Triggers:
+#   - repository_dispatch (event: rbuilder-released) from sshaaf/rBuilder release workflow
+#   - workflow_dispatch (manual run, optional tag)
+#
+# Output: downloadable .tar.gz artifact (reports are not committed to this repo).
+name: rBuilder Report
+
+on:
+  repository_dispatch:
+    types: [rbuilder-released]
+  workflow_dispatch:
+    inputs:
+      rbuilder_tag:
+        description: "rbuilder release tag (e.g. v0.1.0). Empty = latest release."
+        required: false
+        type: string
+      skip_blast_scan:
+        description: "Skip full function blast scan (faster CI)"
+        required: false
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+
+concurrency:
+  group: rbuilder-report-${{ github.event.client_payload.tag || inputs.rbuilder_tag || 'latest' }}
+  cancel-in-progress: false
+
+env:
+  RBUILDER_REPO: sshaaf/rbuilder
+  RBUILDER_TARGET: x86_64-unknown-linux-gnu
+
+jobs:
+  report:
+    name: Generate reports
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    steps:
+      - name: Resolve rbuilder tag
+        id: meta
+        run: |
+          set -euo pipefail
+          if [[ "${{ github.event_name }}" == "repository_dispatch" ]]; then
+            TAG="${{ github.event.client_payload.tag }}"
+          else
+            TAG="${{ inputs.rbuilder_tag }}"
+          fi
+          TAG="${TAG:-}"
+          SAFE="${TAG:-latest}"
+          SAFE="${SAFE//\//-}"
+          echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
+          echo "safe_tag=${SAFE}" >> "$GITHUB_OUTPUT"
+          echo "Triggered by: ${{ github.event_name }}"
+          echo "rbuilder tag: ${TAG:-latest}"
+
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install rbuilder from GitHub Release
+        env:
+          RBUILDER_TAG: ${{ steps.meta.outputs.tag }}
+          GITHUB_TOKEN: ${{ secrets.RBUILDER_DOWNLOAD_TOKEN || secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          ./scripts/install_rbuilder_release.sh
+          "$RBUILDER" --version 2>/dev/null || "$RBUILDER" -h | head -5
+
+      - name: Run feature matrix
+        run: |
+          set -euo pipefail
+          ARGS=(--no-clean)
+          if [[ "${{ inputs.skip_blast_scan }}" == "true" ]]; then
+            ARGS+=(--skip-blast-scan)
+          fi
+          ./scripts/run_rbuilder_report.py "${ARGS[@]}"
+
+      - name: Package reports
+        id: package
+        if: always()
+        run: |
+          set -euo pipefail
+          TAG="${{ steps.meta.outputs.safe_tag }}"
+          ARCHIVE="rbuilder-reports-${TAG}-${{ github.run_id }}.tar.gz"
+          tar -czf "$ARCHIVE" rbuilder-reports
+          shasum -a 256 "$ARCHIVE" | tee "${ARCHIVE}.sha256"
+          ls -lh "$ARCHIVE"
+          echo "archive=${ARCHIVE}" >> "$GITHUB_OUTPUT"
+
+      - name: Upload report archive
+        uses: actions/upload-artifact@v4
+        with:
+          name: rbuilder-reports-${{ steps.meta.outputs.safe_tag }}-${{ github.run_id }}
+          path: |
+            ${{ steps.package.outputs.archive }}
+            ${{ steps.package.outputs.archive }}.sha256
+          if-no-files-found: error
+          retention-days: 90
+
+      - name: Summary
+        run: |
+          {
+            echo "### rBuilder report archive"
+            echo ""
+            echo "| Field | Value |"
+            echo "|-------|-------|"
+            echo "| rbuilder | \`${RBUILDER_VERSION:-latest}\` |"
+            echo "| Archive | \`${{ steps.package.outputs.archive }}\` |"
+            echo "| Run | ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }} |"
+            echo ""
+            echo "Download the **Artifacts** section of this workflow run."
+          } >> "$GITHUB_STEP_SUMMARY"

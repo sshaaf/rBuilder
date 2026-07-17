@@ -65,8 +65,6 @@ fn discover_all_writes_python_cfg_dashboard_bundle() {
 
     eprintln!(
         "ecommerce-python OK: {} nodes, {} functions, {} cfg functions",
-        manifest["graph"]["node_count"],
-        functions,
-        cfg_index["function_count"]
+        manifest["graph"]["node_count"], functions, cfg_index["function_count"]
     );
 }

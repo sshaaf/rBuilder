@@ -1,8 +1,8 @@
 //! Phase 17 — sampled betweenness + HyperBall harmonic scale gates.
 
 use rbuilder::analysis::{
-    BetweennessMode, CentralityAnalyzer, HarmonicMode, PetGraphView, SampledBetweenness,
-    HyperBallHarmonic, FlatGraphIndex, DEFAULT_SAMPLE_PIVOTS,
+    BetweennessMode, CentralityAnalyzer, FlatGraphIndex, HarmonicMode, HyperBallHarmonic,
+    PetGraphView, SampledBetweenness, DEFAULT_SAMPLE_PIVOTS,
 };
 use rbuilder::graph::backend::GraphBackend;
 use rbuilder::graph::schema::{Edge, EdgeType, Node, NodeType};
@@ -189,11 +189,8 @@ fn approx_centrality_metasfresh_timing() {
 #[test]
 #[ignore = "scale gate: run with --ignored when RBUILDER_BENCH_REPO or gbuilder snapshot present"]
 fn approx_centrality_gbuilder_timing() {
-    let root = repo_or_env(
-        "gbuilder",
-        PathBuf::from("/Users/sshaaf/git/java/gbuilder"),
-    )
-    .expect("gbuilder snapshot required");
+    let root = repo_or_env("gbuilder", PathBuf::from("/Users/sshaaf/git/java/gbuilder"))
+        .expect("gbuilder snapshot required");
 
     let (n, e, total, bt, hm) = bench_repo(&root).expect("centrality failed");
     eprintln!("gbuilder: nodes={n} edges={e} total={total:?} bt={bt:?} hm={hm:?}");

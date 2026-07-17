@@ -549,7 +549,9 @@ fn extension_property_usize(
         return None;
     }
     let ext: NodeExtension = bincode::deserialize(&bytes[start..end]).ok()?;
-    ext.properties.get(key).and_then(|v| v.parse::<usize>().ok())
+    ext.properties
+        .get(key)
+        .and_then(|v| v.parse::<usize>().ok())
 }
 
 fn impact_score_from_counts(direct_count: usize, impact_count: usize) -> f64 {

@@ -3,10 +3,10 @@
 use crate::semantic_embedder::SemanticEmbedder;
 use crate::semantic_onnx_tokenizer::OnnxTokenizer;
 use ndarray::{Array2, ArrayD, Axis};
-use ort::session::Session;
-use ort::session::builder::SessionBuilder;
-use ort::value::TensorRef;
 use ort::inputs;
+use ort::session::builder::SessionBuilder;
+use ort::session::Session;
+use ort::value::TensorRef;
 use rbuilder_error::{Error, Result};
 use std::borrow::Cow;
 use std::path::Path;
@@ -39,10 +39,7 @@ pub struct SharedOnnxEmbedder {
 impl SharedOnnxEmbedder {
     /// Load a generic ONNX model (hash tokenization unless tokenizer supplied).
     pub fn load(path: &Path, dimensions: usize) -> Result<Self> {
-        let stem = path
-            .file_stem()
-            .and_then(|s| s.to_str())
-            .unwrap_or("onnx");
+        let stem = path.file_stem().and_then(|s| s.to_str()).unwrap_or("onnx");
         Self::load_with(
             path,
             &format!("onnx:{stem}"),
@@ -74,10 +71,18 @@ impl SharedOnnxEmbedder {
 
         let mut builder = Session::builder().map_err(map_ort)?;
         let session = builder.commit_from_file(path).map_err(map_ort)?;
-        Self::from_session(model_id, dimensions, native_dims, tokenizer, postprocess, session)
+        Self::from_session(
+            model_id,
+            dimensions,
+            native_dims,
+            tokenizer,
+            postprocess,
+            session,
+        )
     }
 
     /// Load ONNX graph + external weight blob from compiled-in bytes.
+    #[allow(clippy::too_many_arguments)]
     pub fn load_from_embedded(
         model_bytes: &'static [u8],
         external_data_name: &'static str,
@@ -96,7 +101,14 @@ impl SharedOnnxEmbedder {
             )
             .map_err(map_builder)?;
         let session = builder.commit_from_memory(model_bytes).map_err(map_ort)?;
-        Self::from_session(model_id, dimensions, native_dims, tokenizer, postprocess, session)
+        Self::from_session(
+            model_id,
+            dimensions,
+            native_dims,
+            tokenizer,
+            postprocess,
+            session,
+        )
     }
 
     fn from_session(
@@ -139,10 +151,7 @@ impl SharedOnnxEmbedder {
         dimensions: usize,
         tokenizer_path: Option<&Path>,
     ) -> Result<Self> {
-        let stem = path
-            .file_stem()
-            .and_then(|s| s.to_str())
-            .unwrap_or("onnx");
+        let stem = path.file_stem().and_then(|s| s.to_str()).unwrap_or("onnx");
 
         let tokenizer = if let Some(explicit) = tokenizer_path {
             let sp_path =
@@ -258,7 +267,10 @@ fn vector_from_output(tensor: ArrayD<f32>, native_dims: usize) -> Result<Vec<f32
         )),
         2 => {
             let row = tensor.index_axis(Axis(0), 0);
-            Ok(resize_or_truncate(row.as_slice().unwrap_or(&[]), native_dims))
+            Ok(resize_or_truncate(
+                row.as_slice().unwrap_or(&[]),
+                native_dims,
+            ))
         }
         3 => {
             let batch = tensor.index_axis(Axis(0), 0);

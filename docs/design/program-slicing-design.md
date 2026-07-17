@@ -17,7 +17,7 @@
 | Dashboard exploration | WASM `compute_slice` on exported PDG bundles |
 | Security cross-check | `--taint` mode shares taint engine paths |
 
-Requires `discover --cfg` or `--all` for PDG archives and dashboard export.
+Requires `discover --with-cfg` (and `--with-taint` for discover-time taint) for PDG archives and dashboard export.
 
 ---
 

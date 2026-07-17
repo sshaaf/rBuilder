@@ -20,25 +20,25 @@ pub mod dependency;
 pub mod dominance;
 pub mod flow_cache;
 pub mod graph_utils;
-pub mod language_profile;
 pub mod interprocedural_cfg;
 pub mod interprocedural_slicing;
+pub mod language_profile;
 pub mod macro_call_index;
 pub mod macro_call_lookup;
 pub mod migration;
 pub mod pdg;
 pub mod policy;
 pub mod results;
+pub mod semantic_code_daemon;
 #[cfg(feature = "semantic-onnx")]
 pub mod semantic_embedded;
-pub mod semantic_code_daemon;
 pub mod semantic_embedder;
 pub mod semantic_extract;
 pub mod semantic_fusion;
 pub mod semantic_hybrid;
-pub mod semantic_onnx_tokenizer;
 #[cfg(feature = "semantic-onnx")]
 pub mod semantic_onnx;
+pub mod semantic_onnx_tokenizer;
 pub mod semantic_search;
 pub mod slicing;
 pub mod storage;
@@ -66,10 +66,10 @@ pub use centrality::{
     LARGE_GRAPH_PAGERANK_TOLERANCE, PAGERANK_TOLERANCE, STRUCTURAL_EDGE_TYPES,
 };
 pub use centrality_approx::{
-    BetweennessMode, CentralityApproxStats, HarmonicMode, HyperBallHarmonic,
-    SampledBetweenness, DEFAULT_EXACT_CENTRALITY_LIMIT, DEFAULT_HYPERBALL_ROUNDS,
-    DEFAULT_SAMPLE_PIVOTS, HYPERBALL_EXACT_THRESHOLD, HYPERLOGLOG_PRECISION,
-    LARGE_GRAPH_HYPERBALL_NODE_LIMIT, LARGE_GRAPH_HYPERBALL_ROUNDS,
+    BetweennessMode, CentralityApproxStats, HarmonicMode, HyperBallHarmonic, SampledBetweenness,
+    DEFAULT_EXACT_CENTRALITY_LIMIT, DEFAULT_HYPERBALL_ROUNDS, DEFAULT_SAMPLE_PIVOTS,
+    HYPERBALL_EXACT_THRESHOLD, HYPERLOGLOG_PRECISION, LARGE_GRAPH_HYPERBALL_NODE_LIMIT,
+    LARGE_GRAPH_HYPERBALL_ROUNDS,
 };
 pub use cfg::{
     BasicBlock, BlockId, CfgEdge, CfgEdgeType, ControlFlowGraph, Statement, StatementKind,
@@ -81,8 +81,8 @@ pub use cfg_builder::{
 pub use cfg_pdg_archive::{CfgPdgArchive, CfgPdgRecord, CFG_PDG_ARCHIVE_FILE};
 pub use community::{
     default_community_edge_types, detect_communities, Community, CommunityDetector,
-    CommunityResult, DashboardCommunity, HubStripPolicy, TieBreakStrategy,
-    DEFAULT_HUB_SIGMA_K, DEFAULT_MAX_FROZEN_FRACTION, DEFAULT_MIN_NODES_FOR_HUB_STRIP,
+    CommunityResult, DashboardCommunity, HubStripPolicy, TieBreakStrategy, DEFAULT_HUB_SIGMA_K,
+    DEFAULT_MAX_FROZEN_FRACTION, DEFAULT_MIN_NODES_FOR_HUB_STRIP,
 };
 pub use complexity::{classify_complexity, ComplexityAnalyzer, ComplexityLevel, ComplexityReport};
 pub use dataflow::{compute_reaching_definitions, Definition, ReachingDefs};
@@ -94,13 +94,15 @@ pub use graph_utils::{
     edge_type_set, filter_impact_by_caller_depth, PetGraphView, TraversalConfig,
     DEFAULT_TRAVERSAL_DEPTH,
 };
+pub use interprocedural_cfg::{
+    InterproceduralCFG, InterproceduralCfgAccess, InterproceduralCfgView,
+};
+pub use interprocedural_slicing::{InterproceduralSlice, InterproceduralSlicer};
 pub use language_profile::{
     canonical_language_id, cfg_language_id_from_path, cfg_language_ids, cfg_language_list,
     function_kinds_for, language_id_from_path, parse_source, profile_for_language,
     taint_enabled_for, LanguageAnalysisProfile,
 };
-pub use interprocedural_cfg::{InterproceduralCfgAccess, InterproceduralCfgView, InterproceduralCFG};
-pub use interprocedural_slicing::{InterproceduralSlice, InterproceduralSlicer};
 pub use macro_call_index::{GraphFingerprint, MacroCallIndex, MacroCallIndexEntry, SymbolContext};
 pub use macro_call_lookup::{
     candidates_from_backend, candidates_from_snapshot, canonical_fqn_from_node,
@@ -109,10 +111,9 @@ pub use macro_call_lookup::{
     MacroCallLookupDb, MacroCallLookupRow, MacroIndexEntry, ParsedSymbol,
 };
 pub use migration::{
-    build_migration_graph, compute_migration_plan, MigrationCommunityEdge,
-    MigrationCommunityNode, MigrationGraphPayload, MigrationOrderMode, MigrationPlanPayload,
-    MigrationPlanStep, MigrationWeights, MIGRATION_GRAPH_SCHEMA_VERSION,
-    MIGRATION_PLAN_SCHEMA_VERSION,
+    build_migration_graph, compute_migration_plan, MigrationCommunityEdge, MigrationCommunityNode,
+    MigrationGraphPayload, MigrationOrderMode, MigrationPlanPayload, MigrationPlanStep,
+    MigrationWeights, MIGRATION_GRAPH_SCHEMA_VERSION, MIGRATION_PLAN_SCHEMA_VERSION,
 };
 pub use pdg::{
     ControlDependency, DataDepType, DataDependency, PdgNode, PdgNodeId, ProgramDependenceGraph,
@@ -128,9 +129,7 @@ pub use semantic_code_daemon::{
     CODE_DAEMON_ONNX_FILE, CODE_DAEMON_TOKENIZER_FILE,
 };
 #[cfg(feature = "semantic-onnx")]
-pub use semantic_code_daemon::{
-    load_code_daemon_embedder, load_embedded_code_daemon_embedder,
-};
+pub use semantic_code_daemon::{load_code_daemon_embedder, load_embedded_code_daemon_embedder};
 pub use semantic_embedder::{
     embedder_for_index, resolve_embedder, EmbedderChoice, OnnxReloadOptions, SemanticEmbedder,
     SignHashEmbedder,
@@ -150,11 +149,11 @@ pub use semantic_hybrid::{
     SemanticExpansion,
 };
 pub use semantic_search::{
-    build_from_backend, build_index, embed_text_for_function, embed_text_for_node, hamming_distance,
-    hamming_top_k, query_index, query_index_with_embedder, quantize_binary, sign_hash_embed,
-    SemanticBuildOptions, SemanticBuildStats, SemanticEntry, SemanticHit, SemanticIndex,
-    DEFAULT_EMBEDDING_DIMENSIONS, SEMANTIC_INDEX_FILE, SEMANTIC_INDEX_SCHEMA_VERSION,
-    SIGN_HASH_MODEL_ID,
+    build_from_backend, build_index, embed_text_for_function, embed_text_for_node,
+    hamming_distance, hamming_top_k, quantize_binary, query_index, query_index_with_embedder,
+    sign_hash_embed, SemanticBuildOptions, SemanticBuildStats, SemanticEntry, SemanticHit,
+    SemanticIndex, DEFAULT_EMBEDDING_DIMENSIONS, SEMANTIC_INDEX_FILE,
+    SEMANTIC_INDEX_SCHEMA_VERSION, SIGN_HASH_MODEL_ID,
 };
 pub use slicing::{BackwardSlicer, CodeSlice, SliceCriterion};
 pub use storage::{AnalysisIndexEntry, AnalysisStorage, FunctionAnalysis, FunctionIdSyncEntry};

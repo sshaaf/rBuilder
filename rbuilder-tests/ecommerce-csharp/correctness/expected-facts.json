@@ -1,0 +1,168 @@
+{
+  "schema_version": 1,
+  "language": "csharp",
+  "project": "ecommerce-csharp",
+  "graph": {
+    "severity": "required",
+    "min_functions": 20,
+    "min_calls_edges": 1
+  },
+  "symbols": {
+    "correctnessRoot": {
+      "match": { "name": "CorrectnessRoot", "class": "CorrectnessHarness" },
+      "severity": "required",
+      "unique": true,
+      "identity": {
+        "exact_name": "CorrectnessRoot",
+        "canonical_fqn": "CorrectnessHarness::CorrectnessRoot",
+        "class_context": "CorrectnessHarness",
+        "file_suffix": "CorrectnessHarness.cs",
+        "language": "csharp"
+      },
+      "exact_callees": ["CorrectnessMid"],
+      "exact_callers": [],
+      "blast": {
+        "exact_direct_callers": [],
+        "exact_impact_zone": []
+      },
+      "ast": {
+        "must_call": ["CorrectnessMid"],
+        "statements_contain": ["var value = CorrectnessMid();", "if (flag)"],
+        "statement_kinds_any": ["Declaration", "Branch", "Return"]
+      },
+      "cfg": {
+        "exact_block_count": 5,
+        "exact_edge_count": 5,
+        "exact_edge_kinds": ["iffalse", "iftrue", "next", "next", "return"],
+        "statements_contain": ["CorrectnessMid()"]
+      },
+      "pdg": {
+        "exact_data_deps": 2,
+        "exact_control_deps": 0,
+        "exact_node_count": 3,
+        "exact_node_kinds": ["Branch", "Declaration", "Return"],
+        "data_edges": [{ "variable": "value" }],
+        "node_labels_contain": ["CorrectnessMid()", "value * 2"]
+      },
+      "dom": {
+        "exact_block_count": 5,
+        "idom_contains": [
+          { "block": 3, "immediate_dominator": 3 },
+          { "block": 4, "immediate_dominator": 3 }
+        ]
+      }
+    },
+    "correctnessMid": {
+      "match": { "name": "CorrectnessMid", "class": "CorrectnessHarness" },
+      "severity": "required",
+      "unique": true,
+      "identity": {
+        "exact_name": "CorrectnessMid",
+        "canonical_fqn": "CorrectnessHarness::CorrectnessMid",
+        "class_context": "CorrectnessHarness",
+        "file_suffix": "CorrectnessHarness.cs",
+        "language": "csharp"
+      },
+      "exact_callees": ["CorrectnessLeaf"],
+      "exact_callers": ["CorrectnessRoot"],
+      "blast": {
+        "exact_direct_callers": ["CorrectnessRoot"],
+        "exact_impact_zone": ["CorrectnessRoot"],
+        "min_score": 0.1
+      },
+      "ast": {
+        "must_call": ["CorrectnessLeaf"],
+        "statements_contain": ["CorrectnessLeaf() + 1"],
+        "exact_statement_kinds": ["Expression"]
+      },
+      "cfg": {
+        "exact_block_count": 2,
+        "exact_edge_count": 1,
+        "exact_edge_kinds": ["next"]
+      },
+      "pdg": {
+        "exact_data_deps": 0,
+        "exact_control_deps": 0,
+        "exact_node_count": 1,
+        "exact_node_kinds": ["Expression"],
+        "node_labels_contain": ["CorrectnessLeaf()"]
+      },
+      "dom": { "exact_block_count": 2 }
+    },
+    "correctnessLeaf": {
+      "match": { "name": "CorrectnessLeaf", "class": "CorrectnessHarness" },
+      "severity": "required",
+      "unique": true,
+      "identity": {
+        "exact_name": "CorrectnessLeaf",
+        "canonical_fqn": "CorrectnessHarness::CorrectnessLeaf",
+        "class_context": "CorrectnessHarness",
+        "file_suffix": "CorrectnessHarness.cs",
+        "language": "csharp"
+      },
+      "exact_callees": [],
+      "exact_callers": ["CorrectnessMid"],
+      "blast": {
+        "exact_direct_callers": ["CorrectnessMid"],
+        "exact_impact_zone": ["CorrectnessMid", "CorrectnessRoot"],
+        "min_score": 0.1
+      },
+      "ast": {
+        "statements_contain": ["=> 42"],
+        "exact_statement_kinds": ["Expression"]
+      },
+      "cfg": {
+        "exact_block_count": 2,
+        "exact_edge_count": 1,
+        "exact_edge_kinds": ["next"]
+      },
+      "pdg": {
+        "exact_data_deps": 0,
+        "exact_control_deps": 0,
+        "exact_node_count": 1,
+        "exact_node_kinds": ["Expression"]
+      },
+      "dom": { "exact_block_count": 2 }
+    },
+    "orderServiceCheckout": {
+      "match": { "name": "CheckoutAsync", "class": "OrderService" },
+      "severity": "best_effort",
+      "direct_callees": [
+        { "name": "ClearCartAsync", "class": "CartService", "severity": "best_effort" }
+      ]
+    }
+  },
+  "invariants": {
+    "B1_blast_vs_calls": {
+      "enabled": true,
+      "severity": "required",
+      "symbols": ["correctnessLeaf", "correctnessMid"]
+    },
+    "B2_gql_calls_nonzero": { "enabled": true, "severity": "required" },
+    "B5_inspect_cfg_present": {
+      "enabled": true,
+      "severity": "required",
+      "symbols": ["correctnessRoot", "correctnessMid", "correctnessLeaf"]
+    },
+    "B6_cfg_calls_subset_of_calls_edges": {
+      "enabled": true,
+      "severity": "required",
+      "symbols": ["correctnessRoot", "correctnessMid"]
+    },
+    "B7_pdg_lines_subset_cfg": {
+      "enabled": true,
+      "severity": "required",
+      "symbols": ["correctnessRoot", "correctnessMid", "correctnessLeaf"]
+    },
+    "B8_dom_blocks_match_cfg": {
+      "enabled": true,
+      "severity": "required",
+      "symbols": ["correctnessRoot", "correctnessMid", "correctnessLeaf"]
+    },
+    "B9_blast_target_name": {
+      "enabled": true,
+      "severity": "required",
+      "symbols": ["correctnessRoot", "correctnessMid", "correctnessLeaf"]
+    }
+  }
+}

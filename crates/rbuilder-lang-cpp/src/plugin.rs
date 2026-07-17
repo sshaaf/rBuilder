@@ -127,25 +127,40 @@ impl CppPlugin {
 
             match node.kind() {
                 "function_definition" | "declaration" => {
-                    if let Some(sym) = self.extract_function(node, source, file_path, active_scope)? {
+                    if let Some(sym) =
+                        self.extract_function(node, source, file_path, active_scope)?
+                    {
                         symbols.push(sym);
                     }
                 }
                 "class_specifier" => {
                     if type_name(node, source).is_some() {
-                        symbols.push(self.extract_class(node, source, file_path, SymbolType::Class)?);
+                        symbols.push(self.extract_class(
+                            node,
+                            source,
+                            file_path,
+                            SymbolType::Class,
+                        )?);
                     }
                 }
                 "struct_specifier" => {
                     if type_name(node, source).is_some() {
-                        symbols.push(
-                            self.extract_class(node, source, file_path, SymbolType::Struct)?,
-                        );
+                        symbols.push(self.extract_class(
+                            node,
+                            source,
+                            file_path,
+                            SymbolType::Struct,
+                        )?);
                     }
                 }
                 "enum_specifier" => {
                     if type_name(node, source).is_some() {
-                        symbols.push(self.extract_class(node, source, file_path, SymbolType::Enum)?);
+                        symbols.push(self.extract_class(
+                            node,
+                            source,
+                            file_path,
+                            SymbolType::Enum,
+                        )?);
                     }
                 }
                 "type_definition" => {
@@ -218,7 +233,13 @@ impl CppPlugin {
                     let mut cursor = node.walk();
                     for child in node.children(&mut cursor) {
                         if child.kind() == "base_class_clause" {
-                            collect_base_relations(&class_name, child, source, file_path, relations);
+                            collect_base_relations(
+                                &class_name,
+                                child,
+                                source,
+                                file_path,
+                                relations,
+                            );
                         }
                     }
                 }
@@ -302,7 +323,10 @@ fn collect_base_relations(
     for child in base_clause.children(&mut cursor) {
         match child.kind() {
             "access_specifier" => {
-                access_public = child.utf8_text(source).ok().is_some_and(|t| t.contains("public"));
+                access_public = child
+                    .utf8_text(source)
+                    .ok()
+                    .is_some_and(|t| t.contains("public"));
             }
             "type_identifier" | "qualified_identifier" => {
                 let base = child
@@ -328,7 +352,13 @@ fn collect_base_relations(
     }
 }
 
-fn relation(from: &str, to: &str, relation_type: RelationType, node: Node, file_path: &Path) -> Relation {
+fn relation(
+    from: &str,
+    to: &str,
+    relation_type: RelationType,
+    node: Node,
+    file_path: &Path,
+) -> Relation {
     Relation {
         from: from.to_string(),
         to: to.to_string(),
@@ -373,8 +403,11 @@ fn name_from_declarator(root: Node, source: &[u8]) -> Option<String> {
                     .child_by_field_name("name")
                     .and_then(|n| n.utf8_text(source).ok().map(str::to_string));
             }
-            "function_declarator" | "pointer_declarator" | "reference_declarator"
-            | "parenthesized_declarator" | "array_declarator" => {
+            "function_declarator"
+            | "pointer_declarator"
+            | "reference_declarator"
+            | "parenthesized_declarator"
+            | "array_declarator" => {
                 if let Some(inner) = node.child_by_field_name("declarator") {
                     stack.push((inner, depth + 1));
                 } else {

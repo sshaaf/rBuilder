@@ -65,7 +65,7 @@ Most codebase tools stop at **text search**, **file trees**, or a **shallow call
 | **Migration planner** | **Package-level roadmap** — PageRank + harmonic centrality − blast radius; dependency-aware schedule and priority rank; ForceAtlas2 graph in the dashboard | [migration-planner-design.md](docs/design/migration-planner-design.md) |
 | **CI policy checks** | **`check`** — fail builds when blast-radius rules are violated on touched symbols | [ci-policy-checks-design.md](docs/design/ci-policy-checks-design.md) |
 
-All of the above share one index: run [`discover`](docs/Introduction.md#indexing-the-repository-discover) once (use [`discover --cfg`](docs/Introduction.md#indexing-the-repository-discover) or `--all` for full CFG/PDG/taint archives and migration exports). **Semantic search** is opt-in: `rbuilder semantic index` after discover. Explore in the CLI, pipe **JSON** to agents, or open the **[dashboard](docs/Introduction.md#dashboard-visual-exploration)** (including **Search** and **Migration** tabs).
+All of the above share one index: run [`discover`](docs/Introduction.md#indexing-the-repository-discover) once (use [`discover --with-cfg`](docs/Introduction.md#indexing-the-repository-discover) / `--with-taint` for CFG/PDG/taint archives; add `--with-dashboard` / `--export-migration-hints` for UI and migration exports). **Semantic search** is opt-in: `rbuilder semantic index` after discover. Explore in the CLI, pipe **JSON** to agents, or open the **[dashboard](docs/Introduction.md#dashboard-visual-exploration)** (including **Search** and **Migration** tabs).
 
 **Deep dive on every feature → [Introduction](docs/Introduction.md) · [Feature designs](docs/design/README.md)**
 
@@ -111,17 +111,17 @@ Use the features above together for **migration and modernization** work:
 
 ### Migration planner
 
-After `discover --all`, open the dashboard **Migration** tab or export a machine-readable plan for agents and downstream tools:
+After deep discover + dashboard flags, open the dashboard **Migration** tab or export a machine-readable plan for agents and downstream tools:
 
 *Unified view: tune α/β/γ weights and presets, explore the package call graph (community-colored by label propagation — see [graph metrics naming](docs/design/graph-metrics-design.md#31-community-detection-naming)), and paginate through the ordered package table.*
 
 - **Package macro graph** — aggregates functions into path-derived package labels (Java package paths, Rust/C `/src/` modules)
 - **Dual ordering** — **scheduled step** (Kahn topological sort, callee before caller) and **priority rank** (score-only)
 - **Scoring** — `Priority = α·PageRank + β·Harmonic − γ·Blast`; presets include Hybrid Default, Foundational First, Dense Cluster Extraction, Risk Mitigation
-- **CLI export** — every `discover` writes `migration_graph.json` and a default `migration_plan.json` under `.rbuilder/dashboard/`; use `--export-migration-plan` to write a preset-tuned plan (default `.rbuilder/migration_plan.json`, override with `-o`)
+- **CLI export** — pass `--with-dashboard` to write `migration_graph.json` / default plan under `.rbuilder/dashboard/`; use `--export-migration-hints` (alias `--export-migration-plan`) for a preset-tuned plan (default `.rbuilder/migration_plan.json`, override with `-o`)
 
 ```bash
-rbuilder discover . --all --export-migration-plan
+rbuilder discover . --with-cfg --with-security --with-taint --with-dashboard --with-harmonic --export-migration-hints
 rbuilder serve   # http://127.0.0.1:8080/ → Migration tab
 ```
 
@@ -180,12 +180,12 @@ rbuilder -f json blast-radius ShoppingCartService
 rbuilder -f json metrics --pagerank --communities
 
 # Package migration roadmap (graph + plan JSON for agents)
-rbuilder discover . --all --export-migration-plan
+rbuilder discover . --with-cfg --with-security --with-taint --with-dashboard --with-harmonic --export-migration-hints
 ```
 
 Concepts → **[Introduction](docs/Introduction.md)** · Commands → **[User Guide](docs/user-guide.md)**
 
-Example deep-analysis commands (after `discover --cfg`):
+Example deep-analysis commands (after `discover --with-cfg`):
 
 ```bash
 rbuilder inspect MyClass#myMethod          # CFG / PDG / dominance
@@ -211,8 +211,8 @@ Quick links into **[Introduction](docs/Introduction.md)** — see [Where most to
 | `check` | [CI policy](docs/Introduction.md#ci-policy-checks) |
 | `serve` | [HTTP server](docs/Introduction.md#http-server-serve) |
 
-**Dashboard** — visual exploration after `discover` (`.rbuilder/dashboard/`). See **[Feature designs](docs/design/README.md)** for per-tab engineering docs.  
-**Migration export** — `discover --export-migration-plan` (optional `--migration-preset`, `--migration-order scheduled|priority`).  
+**Dashboard** — visual exploration after `discover --with-dashboard` (`.rbuilder/dashboard/`). See **[Feature designs](docs/design/README.md)** for per-tab engineering docs.  
+**Migration export** — `discover --export-migration-hints` (alias `--export-migration-plan`; optional `--migration-preset`, `--migration-order scheduled|priority`).  
 **Languages** — nine Tier 1 languages (Rust, Python, Java, Go, TypeScript, JavaScript, C#, C, C++) plus config/IaC plugins. See [Language guide](docs/LANGUAGE_GUIDE.md).
 
 ---

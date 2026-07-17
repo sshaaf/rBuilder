@@ -31,10 +31,7 @@ pub fn resolve_source_path(repo_root: &Path, file_path: &str) -> PathBuf {
 }
 
 /// Extract body tokens for a graph function node when location metadata is present.
-pub fn extract_body_tokens_for_node(
-    repo_root: &Path,
-    node: &Node,
-) -> Result<HashSet<String>> {
+pub fn extract_body_tokens_for_node(repo_root: &Path, node: &Node) -> Result<HashSet<String>> {
     let file_path = node
         .file_path
         .as_deref()
@@ -129,11 +126,7 @@ mod tests {
         let rel = "src/packet.rs";
         let abs = dir.path().join(rel);
         std::fs::create_dir_all(abs.parent().unwrap()).unwrap();
-        std::fs::write(
-            &abs,
-            "fn process_sk_buff() {\n    ntohs(value);\n}\n",
-        )
-        .unwrap();
+        std::fs::write(&abs, "fn process_sk_buff() {\n    ntohs(value);\n}\n").unwrap();
 
         let node = Node::new(NodeType::Function, "process_sk_buff".into())
             .with_file_path(rel.into())

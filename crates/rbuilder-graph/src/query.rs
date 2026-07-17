@@ -143,17 +143,11 @@ fn execute_node_ids(backend: &MemoryBackend, query: &str) -> Result<HashSet<Uuid
     }
 
     if let Some(name) = query.strip_prefix("name:") {
-        return Ok(backend
-            .find_node_ids_by_name(name)?
-            .into_iter()
-            .collect());
+        return Ok(backend.find_node_ids_by_name(name)?.into_iter().collect());
     }
 
     if let Some(label) = query.strip_prefix("label:") {
-        return Ok(backend
-            .find_node_ids_by_label(label)?
-            .into_iter()
-            .collect());
+        return Ok(backend.find_node_ids_by_label(label)?.into_iter().collect());
     }
 
     if let Some(suffix) = query.strip_prefix("name_suffix:") {
@@ -229,10 +223,7 @@ fn execute_node_ids(backend: &MemoryBackend, query: &str) -> Result<HashSet<Uuid
     }
 }
 
-fn filter_node_ids_by_signature(
-    backend: &MemoryBackend,
-    pattern: &str,
-) -> Result<HashSet<Uuid>> {
+fn filter_node_ids_by_signature(backend: &MemoryBackend, pattern: &str) -> Result<HashSet<Uuid>> {
     Ok(backend
         .all_nodes()?
         .into_iter()
@@ -244,10 +235,7 @@ fn filter_node_ids_by_signature(
         .collect())
 }
 
-fn filter_node_ids_by_return_type(
-    backend: &MemoryBackend,
-    prefix: &str,
-) -> Result<HashSet<Uuid>> {
+fn filter_node_ids_by_return_type(backend: &MemoryBackend, prefix: &str) -> Result<HashSet<Uuid>> {
     Ok(backend
         .all_nodes()?
         .into_iter()
@@ -270,10 +258,7 @@ fn filter_node_ids_by_property(
         .collect())
 }
 
-fn filter_node_ids_by_name_suffix(
-    backend: &MemoryBackend,
-    suffix: &str,
-) -> Result<HashSet<Uuid>> {
+fn filter_node_ids_by_name_suffix(backend: &MemoryBackend, suffix: &str) -> Result<HashSet<Uuid>> {
     Ok(backend
         .all_nodes()?
         .into_iter()

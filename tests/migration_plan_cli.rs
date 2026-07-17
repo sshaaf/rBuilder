@@ -10,7 +10,14 @@ use std::process::Command;
 fn run_discover_migration(repo: &Path, extra_args: &[&str]) -> std::process::Output {
     let bin = rbuilder_bin();
     let mut cmd = Command::new(&bin);
-    cmd.args(["-r", repo.to_str().unwrap(), "discover", ".", "--languages", "java,rust"]);
+    cmd.args([
+        "-r",
+        repo.to_str().unwrap(),
+        "discover",
+        ".",
+        "--languages",
+        "java,rust",
+    ]);
     cmd.args(extra_args);
     cmd.output().expect("spawn rbuilder discover")
 }
@@ -26,7 +33,7 @@ fn export_migration_plan_writes_json_file() {
     let output = run_discover_migration(
         &repo,
         &[
-            "--export-migration-plan",
+            "--export-migration-hints",
             "-o",
             plan_path.to_str().unwrap(),
         ],
@@ -42,7 +49,10 @@ fn export_migration_plan_writes_json_file() {
     let plan: Value = serde_json::from_slice(&std::fs::read(&plan_path).unwrap()).unwrap();
     assert_eq!(plan["schema_version"], 2);
     assert_eq!(plan["order_mode"], "scheduled");
-    assert!(plan["steps"].as_array().map(|s| !s.is_empty()).unwrap_or(false));
+    assert!(plan["steps"]
+        .as_array()
+        .map(|s| !s.is_empty())
+        .unwrap_or(false));
     assert_eq!(plan["preset"], "hybrid_default");
     assert!(plan["weights"]["alpha"].as_f64().is_some());
 }
@@ -54,10 +64,7 @@ fn export_migration_plan_json_stdout() {
     let repo = tmp.path().join("repo");
     copy_dir_all(fixture, &repo).expect("copy fixture");
 
-    let output = run_discover_migration(
-        &repo,
-        &["--export-migration-plan", "-f", "json"],
-    );
+    let output = run_discover_migration(&repo, &["--export-migration-hints", "-f", "json"]);
     assert!(
         output.status.success(),
         "discover failed:\nstdout: {}\nstderr: {}",
@@ -68,7 +75,10 @@ fn export_migration_plan_json_stdout() {
     let plan: Value = serde_json::from_slice(&output.stdout).unwrap();
     assert_eq!(plan["schema_version"], 2);
     assert_eq!(plan["order_mode"], "scheduled");
-    assert!(plan["steps"].as_array().map(|s| !s.is_empty()).unwrap_or(false));
+    assert!(plan["steps"]
+        .as_array()
+        .map(|s| !s.is_empty())
+        .unwrap_or(false));
 }
 
 #[test]
@@ -82,7 +92,7 @@ fn migration_preset_foundational_first() {
     let output = run_discover_migration(
         &repo,
         &[
-            "--export-migration-plan",
+            "--export-migration-hints",
             "--migration-preset",
             "foundational_first",
             "-o",
@@ -107,7 +117,7 @@ fn export_migration_plan_priority_order() {
     let output = run_discover_migration(
         &repo,
         &[
-            "--export-migration-plan",
+            "--export-migration-hints",
             "--migration-order",
             "priority",
             "-o",

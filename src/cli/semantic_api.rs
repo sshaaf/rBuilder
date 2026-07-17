@@ -1,9 +1,7 @@
 //! Shared semantic search execution for CLI and HTTP API.
 
 use super::semantic::{expand_gql_neighbors, EngineBlastProvider, SemanticQueryArgs};
-use super::semantic_output::{
-    build_query_response, hit_from_semantic, SemanticQueryJsonResponse,
-};
+use super::semantic_output::{build_query_response, hit_from_semantic, SemanticQueryJsonResponse};
 use crate::analysis::{
     expand_semantic_hits, query_index_with_fusion, AnalysisResults, BlastSummaryProvider,
     OnnxReloadOptions, SemanticExpandConfig, SemanticExpandMode, SemanticFusionConfig,
@@ -84,9 +82,8 @@ pub fn execute_semantic_query(
     let analysis_path = repo.join(".rbuilder/analysis_results.bin");
     let analysis = if analysis_path.is_file() {
         Some(
-            AnalysisResults::load(&analysis_path).with_context(|| {
-                format!("load analysis results {}", analysis_path.display())
-            })?,
+            AnalysisResults::load(&analysis_path)
+                .with_context(|| format!("load analysis results {}", analysis_path.display()))?,
         )
     } else {
         None
@@ -134,14 +131,20 @@ pub fn execute_semantic_query(
             backend,
             &hits,
             &config,
-            if matches!(expand_mode, SemanticExpandMode::Blast | SemanticExpandMode::All) {
+            if matches!(
+                expand_mode,
+                SemanticExpandMode::Blast | SemanticExpandMode::All
+            ) {
                 Some(&blast_provider as &dyn BlastSummaryProvider)
             } else {
                 None
             },
         )?;
 
-        if matches!(expand_mode, SemanticExpandMode::Gql | SemanticExpandMode::All) {
+        if matches!(
+            expand_mode,
+            SemanticExpandMode::Gql | SemanticExpandMode::All
+        ) {
             expansion.gql = Some(expand_gql_neighbors(
                 backend,
                 &hits,

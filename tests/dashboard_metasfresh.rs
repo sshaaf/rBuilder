@@ -1,4 +1,4 @@
-//! Dashboard gate on **metasfresh** with `discover . --all` (CFG/PDG + taint exports).
+//! Dashboard gate on **metasfresh** with `discover . --with-cfg --with-security --with-taint` (CFG/PDG + taint exports).
 //!
 //! Manual / optional — full analysis on ~128k functions takes a long time:
 //!   ./scripts/test-dashboard-metasfresh.sh
@@ -19,7 +19,7 @@ const METASFRESH_MIN_FUNCTIONS: u64 = 100_000;
 const METASFRESH_MIN_METANODES: u64 = 20;
 
 #[test]
-#[ignore = "manual: metasfresh discover --all is slow (CFG/PDG on ~128k functions)"]
+#[ignore = "manual: metasfresh discover --with-cfg --with-security --with-taint is slow (CFG/PDG on ~128k functions)"]
 fn discover_all_writes_dashboard_bundle_on_metasfresh() {
     if !dist_embedded() {
         panic!(
@@ -39,7 +39,7 @@ fn discover_all_writes_dashboard_bundle_on_metasfresh() {
     let (output, elapsed) = run_discover_all_timed(&repo, None);
     assert!(
         output.status.success(),
-        "discover --all on metasfresh failed:\nstdout: {}\nstderr: {}",
+        "discover --with-cfg --with-security --with-taint on metasfresh failed:\nstdout: {}\nstderr: {}",
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr)
     );

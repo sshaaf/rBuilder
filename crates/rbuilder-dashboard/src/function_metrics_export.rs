@@ -146,9 +146,5 @@ fn write_empty(out_dir: &Path) -> Result<(), String> {
 }
 
 fn write_community_only(out_dir: &Path) -> Result<(), String> {
-    write_payload(
-        out_dir,
-        Vec::new(),
-        Some("community_only".into()),
-    )
+    write_payload(out_dir, Vec::new(), Some("community_only".into()))
 }

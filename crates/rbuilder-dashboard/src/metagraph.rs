@@ -120,9 +120,7 @@ pub fn write_metagraph(
                 member_indices: Vec::new(),
                 community_votes: HashMap::new(),
             });
-        if let Some(cid) =
-            community_id_for_node(analysis, detected_communities.as_ref(), n.id)
-        {
+        if let Some(cid) = community_id_for_node(analysis, detected_communities.as_ref(), n.id) {
             *bucket.community_votes.entry(cid).or_insert(0) += 1;
         }
         match n.node_type {
@@ -329,9 +327,7 @@ fn community_id_for_node(
     detected.and_then(|m| m.get(&node_id).copied())
 }
 
-fn detect_node_communities(
-    backend: &MemoryBackend,
-) -> Result<(HashMap<Uuid, usize>, f64), String> {
+fn detect_node_communities(backend: &MemoryBackend) -> Result<(HashMap<Uuid, usize>, f64), String> {
     let view = PetGraphView::from_backend(backend).map_err(|e| e.to_string())?;
     let result = CommunityDetector::new()
         .detect_with_view(&view)

@@ -1,6 +1,8 @@
 //! C# CFG analysis against the ecommerce-csharp fixture.
 
-use rbuilder::analysis::{build_cfg_for_function, cfg_language_id_from_path, ProgramDependenceGraph};
+use rbuilder::analysis::{
+    build_cfg_for_function, cfg_language_id_from_path, ProgramDependenceGraph,
+};
 use std::path::Path;
 
 const CSHARP_REPO: &str = "/Users/sshaaf/git/rust/rbuilder-tests/ecommerce-csharp";
@@ -27,8 +29,12 @@ fn csharp_cfg_builds_checkout_from_fixture() {
     }
 
     let source = std::fs::read_to_string(&file).unwrap();
-    let cfg = build_cfg_for_function("csharp", &source, "CheckoutAsync").expect("CheckoutAsync CFG");
-    assert!(cfg.blocks.len() >= 3, "expected branching CFG for CheckoutAsync");
+    let cfg =
+        build_cfg_for_function("csharp", &source, "CheckoutAsync").expect("CheckoutAsync CFG");
+    assert!(
+        cfg.blocks.len() >= 3,
+        "expected branching CFG for CheckoutAsync"
+    );
 
     let pdg = ProgramDependenceGraph::build(&cfg, source.as_bytes()).expect("CheckoutAsync PDG");
     assert!(!pdg.nodes.is_empty());

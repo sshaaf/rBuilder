@@ -214,10 +214,12 @@ async fn api_query(
     State(state): State<Arc<AppState>>,
     Json(body): Json<QueryRequest>,
 ) -> Result<Json<Value>, (StatusCode, String)> {
-    let graph = state
-        .graph
-        .read()
-        .map_err(|_| (StatusCode::INTERNAL_SERVER_ERROR, "graph lock poisoned".into()))?;
+    let graph = state.graph.read().map_err(|_| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "graph lock poisoned".into(),
+        )
+    })?;
     let backend = graph.backend();
 
     let result = if let Some(name) = body.r#macro {
@@ -258,21 +260,22 @@ async fn api_semantic_query(
     let index = state.semantic.as_ref().ok_or_else(|| {
         (
             StatusCode::SERVICE_UNAVAILABLE,
-            "semantic index not available — run `rbuilder semantic index` and restart serve"
-                .into(),
+            "semantic index not available — run `rbuilder semantic index` and restart serve".into(),
         )
     })?;
 
     let expand = parse_expand_mode(body.expand.as_deref())?;
 
-    let graph = state
-        .graph
-        .read()
-        .map_err(|_| (StatusCode::INTERNAL_SERVER_ERROR, "graph lock poisoned".into()))?;
+    let graph = state.graph.read().map_err(|_| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "graph lock poisoned".into(),
+        )
+    })?;
 
     let args = SemanticQueryArgs {
         query: query.to_string(),
-        limit: body.limit.max(1).min(100),
+        limit: body.limit.clamp(1, 100),
         expand,
         expand_depth: body.expand_depth.max(1),
         model: None,

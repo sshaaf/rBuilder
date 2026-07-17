@@ -251,11 +251,8 @@ impl CommunityDetector {
 
         let modularity = self.calculate_modularity(view, &label_map, allowed_types);
 
-        let infrastructure_community_id = assign_infrastructure_hubs(
-            &mut labels,
-            &is_hub,
-            node_count,
-        );
+        let infrastructure_community_id =
+            assign_infrastructure_hubs(&mut labels, &is_hub, node_count);
 
         let mut community_members: HashMap<usize, Vec<Uuid>> = HashMap::new();
         for (idx, label) in view.directed.node_indices().map(|i| (i, labels[i.index()])) {
@@ -410,11 +407,7 @@ fn select_hubs(
                 .collect();
 
             if selected.is_empty() && node_count >= 10 {
-                if let Some((idx, _)) = degrees
-                    .iter()
-                    .enumerate()
-                    .max_by_key(|(_, d)| *d)
-                {
+                if let Some((idx, _)) = degrees.iter().enumerate().max_by_key(|(_, d)| *d) {
                     if degrees[idx] as f64 > mu {
                         selected.push(idx);
                     }
@@ -449,9 +442,7 @@ fn resolve_importance_flat(
     let score_map: HashMap<Uuid, f64> = if let Some(map) = importance {
         map.clone()
     } else {
-        FastPageRank::new(20, 0.85)
-            .compute(view, allowed_types)
-            .0
+        FastPageRank::new(20, 0.85).compute(view, allowed_types).0
     };
 
     let mut flat = vec![0.0; node_count];
@@ -880,16 +871,13 @@ mod tests {
 
     #[test]
     fn test_importance_tie_break_beats_label_id() {
-        let neighbors = vec![
-            vec![1, 2],
-            vec![0],
-            vec![0],
-        ];
+        let neighbors = vec![vec![1, 2], vec![0], vec![0]];
         let labels = vec![0, 1, 2];
         let importance = vec![0.0, 0.1, 0.9];
         let is_hub = vec![false; 3];
 
-        let left_imp = neighbor_importance_for_label(1, 0, &neighbors, &labels, &importance, &is_hub);
+        let left_imp =
+            neighbor_importance_for_label(1, 0, &neighbors, &labels, &importance, &is_hub);
         let right_imp =
             neighbor_importance_for_label(2, 0, &neighbors, &labels, &importance, &is_hub);
         assert!(right_imp > left_imp);
@@ -933,12 +921,7 @@ mod tests {
     #[test]
     fn test_statistical_hub_threshold_respects_sigma() {
         let degrees = vec![1, 1, 1, 1, 1, 1, 1, 1, 1, 50];
-        let hubs = select_hubs(
-            &degrees,
-            HubStripPolicy::Statistical { k: 2.0 },
-            0.05,
-            5,
-        );
+        let hubs = select_hubs(&degrees, HubStripPolicy::Statistical { k: 2.0 }, 0.05, 5);
         assert!(hubs[9]);
         assert_eq!(hubs.iter().filter(|&&h| h).count(), 1);
     }

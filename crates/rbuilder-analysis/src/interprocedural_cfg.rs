@@ -95,11 +95,7 @@ impl InterproceduralCfgAccess for InterproceduralCfgView<'_> {
         self.call_graph
             .callers(function)
             .into_iter()
-            .filter_map(|caller_id| {
-                self.archive
-                    .get_cfg(caller_id)
-                    .map(|cfg| (caller_id, cfg))
-            })
+            .filter_map(|caller_id| self.archive.get_cfg(caller_id).map(|cfg| (caller_id, cfg)))
             .collect()
     }
 

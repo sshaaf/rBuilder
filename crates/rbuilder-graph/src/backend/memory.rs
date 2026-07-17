@@ -186,10 +186,7 @@ impl MemoryBackend {
             return Ok(Vec::new());
         }
         let nodes = read_lock(&self.nodes)?;
-        Ok(ids
-            .iter()
-            .filter_map(|id| nodes.get(id).cloned())
-            .collect())
+        Ok(ids.iter().filter_map(|id| nodes.get(id).cloned()).collect())
     }
 
     /// Find node IDs by label (returns UUIDs, not cloned nodes).
@@ -770,8 +767,7 @@ impl MemoryBackend {
         for (key, value) in &node.properties {
             let key_arc = self.string_interner.intern(key)?;
             let value_arc = self.string_interner.intern(value)?;
-            if let Some(values) = write_lock(&self.node_property_index)?.get_mut(key_arc.as_ref())
-            {
+            if let Some(values) = write_lock(&self.node_property_index)?.get_mut(key_arc.as_ref()) {
                 if let Some(ids) = values.get_mut(value_arc.as_ref()) {
                     ids.retain(|&x| x != node.id);
                 }

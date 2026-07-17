@@ -66,7 +66,7 @@ fn discover_writes_dashboard_bundle_on_gbuilder_golden_repo() {
 }
 
 #[test]
-#[ignore = "manual: gbuilder discover --all runs CFG/PDG on full Java graph"]
+#[ignore = "manual: gbuilder discover --with-cfg --with-security --with-taint runs CFG/PDG on full Java graph"]
 fn discover_all_writes_dashboard_bundle_on_gbuilder() {
     if !dist_embedded() {
         panic!(
@@ -86,7 +86,7 @@ fn discover_all_writes_dashboard_bundle_on_gbuilder() {
     let (output, elapsed) = run_discover_all_timed(&repo, Some("java"));
     assert!(
         output.status.success(),
-        "discover --all on gbuilder failed:\nstdout: {}\nstderr: {}",
+        "discover --with-cfg --with-security --with-taint on gbuilder failed:\nstdout: {}\nstderr: {}",
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr)
     );
@@ -99,7 +99,7 @@ fn discover_all_writes_dashboard_bundle_on_gbuilder() {
     .unwrap();
 
     eprintln!(
-        "gbuilder discover --all OK in {:.1}s: {} nodes, {} edges, taint={}",
+        "gbuilder discover --with-cfg --with-security --with-taint OK in {:.1}s: {} nodes, {} edges, taint={}",
         elapsed.as_secs_f64(),
         manifest["graph"]["node_count"],
         manifest["graph"]["edge_count"],

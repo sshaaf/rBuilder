@@ -238,11 +238,7 @@ pub(crate) fn incoming_from_dag_edges(
     incoming
 }
 
-fn reachability_row_on_demand(
-    incoming: &[Vec<usize>],
-    scc_id: usize,
-    scc_count: usize,
-) -> BitSet {
+fn reachability_row_on_demand(incoming: &[Vec<usize>], scc_id: usize, scc_count: usize) -> BitSet {
     let mut reachable = BitSet::new();
     let mut stack = vec![scc_id];
     reachable.insert(scc_id);
@@ -273,9 +269,7 @@ impl ReachabilityStore {
             word_count: scc_count.div_ceil(64),
             backing: ReachabilityBacking::DagOnDemand {
                 incoming,
-                cache: Mutex::new(ReachabilityCache::new(
-                    ON_DEMAND_REACHABILITY_CACHE_CAP,
-                )),
+                cache: Mutex::new(ReachabilityCache::new(ON_DEMAND_REACHABILITY_CACHE_CAP)),
             },
         }
     }
@@ -294,9 +288,7 @@ impl ReachabilityStore {
                 word_count: scc_count.div_ceil(64),
                 backing: ReachabilityBacking::Lazy {
                     rows,
-                    cache: Mutex::new(ReachabilityCache::new(
-                        ON_DEMAND_REACHABILITY_CACHE_CAP,
-                    )),
+                    cache: Mutex::new(ReachabilityCache::new(ON_DEMAND_REACHABILITY_CACHE_CAP)),
                 },
             });
         }
@@ -477,7 +469,9 @@ mod tests {
         };
         snap.write_to_path(&path).unwrap();
         assert_eq!(
-            BlastEngineSnapshot::read_graph_digest(&path).unwrap().as_deref(),
+            BlastEngineSnapshot::read_graph_digest(&path)
+                .unwrap()
+                .as_deref(),
             Some("abc123digest")
         );
         assert!(BlastEngineSnapshot::digest_matches(&path, "abc123digest").unwrap());

@@ -223,7 +223,9 @@ fn collect_declarator_defs(node: Node, source: &[u8], defined: &mut HashSet<Stri
                 defined.insert(name.to_string());
             }
         }
-        "pointer_declarator" | "function_declarator" | "array_declarator"
+        "pointer_declarator"
+        | "function_declarator"
+        | "array_declarator"
         | "parenthesized_declarator" => {
             if let Some(inner) = node.child_by_field_name("declarator") {
                 collect_declarator_defs(inner, source, defined);

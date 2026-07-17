@@ -348,9 +348,7 @@ impl BlastRadiusEngine {
 
     /// Get statistics about the engine.
     pub fn stats(&self) -> EngineStats {
-        let memory_bytes = if self.reachability.is_on_demand() {
-            self.scc_count * 64
-        } else if self.reachability.is_lazy() {
+        let memory_bytes = if self.reachability.is_on_demand() || self.reachability.is_lazy() {
             self.scc_count * 64
         } else {
             self.scc_count * self.scc_count / 8
@@ -386,26 +384,27 @@ impl BlastRadiusEngine {
         };
         use rayon::prelude::*;
 
-        let reachability_rows: Vec<ReachabilityRow> = if let Some(eager) =
-            self.reachability.eager_slice()
-        {
-            eager
-                .par_iter()
-                .enumerate()
-                .filter_map(|(idx, bs)| {
-                    let words = bitset_to_words(bs, self.scc_count);
-                    if words_popcount(&words) <= 1 {
-                        return None;
-                    }
-                    compress_words(&words).ok().map(|compressed| ReachabilityRow {
-                        scc_idx: idx as u32,
-                        compressed,
+        let reachability_rows: Vec<ReachabilityRow> =
+            if let Some(eager) = self.reachability.eager_slice() {
+                eager
+                    .par_iter()
+                    .enumerate()
+                    .filter_map(|(idx, bs)| {
+                        let words = bitset_to_words(bs, self.scc_count);
+                        if words_popcount(&words) <= 1 {
+                            return None;
+                        }
+                        compress_words(&words)
+                            .ok()
+                            .map(|compressed| ReachabilityRow {
+                                scc_idx: idx as u32,
+                                compressed,
+                            })
                     })
-                })
-                .collect()
-        } else {
-            Vec::new()
-        };
+                    .collect()
+            } else {
+                Vec::new()
+            };
 
         crate::blast_engine_snapshot::BlastEngineSnapshot {
             graph_digest,

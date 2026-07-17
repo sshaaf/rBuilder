@@ -121,20 +121,30 @@ impl SemanticIndex {
 /// Stats from an index build (full or incremental).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct SemanticBuildStats {
+    /// Total entries considered for the build.
     pub total: usize,
+    /// Entries reused from an existing incremental index.
     pub reused: usize,
+    /// Entries freshly embedded in this build.
     pub embedded: usize,
+    /// Stale entries removed during incremental update.
     pub removed: usize,
 }
 
 /// Options controlling semantic index construction.
 #[derive(Debug, Clone)]
 pub struct SemanticBuildOptions {
+    /// Embedding dimensionality.
     pub dimensions: usize,
+    /// Optional graph content digest for incremental invalidation.
     pub graph_digest: Option<String>,
+    /// Reuse embeddings from `existing` when true.
     pub incremental: bool,
+    /// Prior index to reuse when `incremental` is set.
     pub existing: Option<SemanticIndex>,
+    /// Persisted ONNX model path metadata.
     pub model_path: Option<String>,
+    /// Persisted tokenizer path metadata.
     pub tokenizer_path: Option<String>,
     /// Repository root for on-demand body slicing during indexing.
     pub repo_root: Option<PathBuf>,
@@ -332,7 +342,11 @@ pub fn quantize_binary(floats: &[f32]) -> Vec<u8> {
 ///
 /// Processes 64-bit words so LLVM can lower XOR/`popcnt` efficiently.
 pub fn hamming_distance(a: &[u8], b: &[u8]) -> u32 {
-    debug_assert_eq!(a.len(), b.len(), "Hamming distance requires equal-length vectors");
+    debug_assert_eq!(
+        a.len(),
+        b.len(),
+        "Hamming distance requires equal-length vectors"
+    );
 
     let word_bytes = a.len() - (a.len() % 8);
     let mut total = 0u32;
@@ -481,7 +495,10 @@ mod tests {
         let mut flipped = packed.clone();
         flipped[0] = 0xFF;
         flipped[31] = 0x0F;
-        assert_eq!(hamming_distance(&packed, &flipped), byte_wise(&packed, &flipped));
+        assert_eq!(
+            hamming_distance(&packed, &flipped),
+            byte_wise(&packed, &flipped)
+        );
     }
 
     #[test]
@@ -593,12 +610,8 @@ mod tests {
         backend.insert_node(n2.clone()).unwrap();
 
         let embedder = crate::semantic_embedder::SignHashEmbedder::new(64);
-        let (index, stats) = build_index(
-            &backend,
-            &embedder,
-            SemanticBuildOptions::fresh(64, None),
-        )
-        .unwrap();
+        let (index, stats) =
+            build_index(&backend, &embedder, SemanticBuildOptions::fresh(64, None)).unwrap();
         assert_eq!(stats.embedded, 2);
 
         let (index2, stats2) = build_index(

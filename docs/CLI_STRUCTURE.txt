@@ -17,16 +17,19 @@ Active Commands:
 │   ├── -l, --languages <LANGS>     Comma-separated language filter
 │   ├── -e, --exclude <PATTERNS>    Comma-separated path excludes
 │   ├── -v, --verbose               Progress / debug logging
-│   ├── --security                  Secret scanning pass
-│   ├── --cfg                       CFG/PDG archive for slice hand-offs
-│   ├── --all                       All optional analyses (slow on large repos)
+│   ├── --with-security [--security] Secret scanning pass
+│   ├── --with-cfg [--cfg]          CFG / dominators / PDG archive
+│   ├── --with-taint                Discover-time taint (implies CFG pass)
+│   ├── --with-harmonic             Harmonic centrality
+│   ├── --with-dashboard            Static dashboard bundle
+│   ├── --export-migration-hints    Migration roadmap JSON
 │   └── --write-json-graph          Also write legacy graph.db / graph.json (opt-in)
 │
 │   Writes (default, under {repo}/.rbuilder/):
 │     graph.snapshot.bin          Columnar v2 mmap graph (default)
 │     blast_engine.snapshot.bin   Pre-built SCC blast engine
 │     macro_call_index.db/.bin    Blast-radius lookup cache (SQLite + bincode; not the graph)
-│     cfg_pdg.archive.bin         When --cfg
+│     analysis/cfg_pdg.archive.bin  When --with-cfg / --with-taint
 │
 ├── blast-radius <SYMBOL>
 │   ├── --depth <N>                 Cap impact_zone to N incoming call hops

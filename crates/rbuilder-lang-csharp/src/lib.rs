@@ -8,7 +8,5 @@ pub use plugin::CSharpPlugin;
 
 /// Register this language plugin.
 pub fn register(registry: &mut LanguageRegistry) {
-    registry.register_language_plugin(Arc::new(
-        CSharpPlugin::new().expect("init CSharpPlugin"),
-    ));
+    registry.register_language_plugin(Arc::new(CSharpPlugin::new().expect("init CSharpPlugin")));
 }

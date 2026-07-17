@@ -1,0 +1,205 @@
+{
+  "schema_version": 1,
+  "language": "rust",
+  "project": "ecommerce-rust",
+  "graph": {
+    "severity": "required",
+    "min_functions": 20,
+    "min_calls_edges": 1
+  },
+  "symbols": {
+    "correctnessRoot": {
+      "match": { "name": "correctness_root" },
+      "severity": "required",
+      "unique": true,
+      "identity": {
+        "exact_name": "correctness_root",
+        "canonical_fqn": "correctness_root",
+        "file_suffix": "correctness.rs",
+        "language": "rust"
+      },
+      "exact_callees": ["correctness_mid"],
+      "exact_callers": [],
+      "blast": {
+        "exact_direct_callers": [],
+        "exact_impact_zone": []
+      },
+      "ast": {
+        "must_call": ["correctness_mid"],
+        "statements_contain": ["let value = correctness_mid();", "if flag"]
+      },
+      "cfg": {
+        "exact_block_count": 5,
+        "exact_edge_count": 5,
+        "exact_edge_kinds": ["iffalse", "iftrue", "next", "next", "next"],
+        "statements_contain": ["correctness_mid()"]
+      },
+      "pdg": {
+        "exact_data_deps": 3,
+        "exact_control_deps": 2,
+        "exact_node_count": 4,
+        "data_edges": [{ "variable": "value" }],
+        "node_labels_contain": ["correctness_mid()"]
+      },
+      "dom": {
+        "exact_block_count": 5,
+        "idom_contains": [
+          { "block": 2, "immediate_dominator": 2 },
+          { "block": 3, "immediate_dominator": 2 }
+        ]
+      }
+    },
+    "correctnessMid": {
+      "match": { "name": "correctness_mid" },
+      "severity": "required",
+      "unique": true,
+      "identity": {
+        "exact_name": "correctness_mid",
+        "canonical_fqn": "correctness_mid",
+        "file_suffix": "correctness.rs",
+        "language": "rust"
+      },
+      "exact_callees": ["correctness_leaf"],
+      "exact_callers": ["correctness_root"],
+      "blast": {
+        "exact_direct_callers": ["correctness_root"],
+        "exact_impact_zone": ["correctness_root"],
+        "min_score": 0.1
+      },
+      "ast": {
+        "must_call": ["correctness_leaf"],
+        "statements_contain": ["correctness_leaf() + 1"]
+      },
+      "cfg": {
+        "exact_block_count": 2,
+        "exact_edge_count": 1,
+        "exact_edge_kinds": ["next"]
+      },
+      "pdg": {
+        "exact_data_deps": 0,
+        "exact_control_deps": 0,
+        "exact_node_count": 1,
+        "node_labels_contain": ["correctness_leaf()"]
+      },
+      "dom": {
+        "exact_block_count": 2,
+        "exact_idom": [
+          { "block": 0, "immediate_dominator": 1 },
+          { "block": 1, "immediate_dominator": 1 }
+        ]
+      }
+    },
+    "correctnessLeaf": {
+      "match": { "name": "correctness_leaf" },
+      "severity": "required",
+      "unique": true,
+      "identity": {
+        "exact_name": "correctness_leaf",
+        "canonical_fqn": "correctness_leaf",
+        "file_suffix": "correctness.rs",
+        "language": "rust"
+      },
+      "exact_callees": [],
+      "exact_callers": ["correctness_mid"],
+      "blast": {
+        "exact_direct_callers": ["correctness_mid"],
+        "exact_impact_zone": ["correctness_mid", "correctness_root"],
+        "min_score": 0.1
+      },
+      "ast": {
+        "statements_contain": ["42"],
+        "exact_statement_kinds": ["Expression"]
+      },
+      "cfg": {
+        "exact_block_count": 2,
+        "exact_edge_count": 1,
+        "exact_edge_kinds": ["next"]
+      },
+      "pdg": {
+        "exact_data_deps": 0,
+        "exact_control_deps": 0,
+        "exact_node_count": 1,
+        "exact_node_kinds": ["Expression"]
+      },
+      "dom": {
+        "exact_block_count": 2,
+        "exact_idom": [
+          { "block": 0, "immediate_dominator": 1 },
+          { "block": 1, "immediate_dominator": 1 }
+        ]
+      }
+    },
+    "correctnessShared": {
+      "match": { "name": "correctness_shared" },
+      "severity": "required",
+      "unique": true,
+      "identity": {
+        "exact_name": "correctness_shared",
+        "canonical_fqn": "correctness_shared",
+        "file_suffix": "correctness.rs",
+        "language": "rust"
+      },
+      "exact_callees": [],
+      "exact_callers": ["correctness_left", "correctness_right"],
+      "blast": {
+        "exact_direct_callers": ["correctness_left", "correctness_right"],
+        "exact_impact_zone": [
+          "correctness_left",
+          "correctness_right",
+          "correctness_diamond"
+        ],
+        "min_score": 0.1
+      }
+    },
+    "correctnessDiamond": {
+      "match": { "name": "correctness_diamond" },
+      "severity": "required",
+      "unique": true,
+      "identity": {
+        "exact_name": "correctness_diamond",
+        "canonical_fqn": "correctness_diamond",
+        "file_suffix": "correctness.rs",
+        "language": "rust"
+      },
+      "exact_callees": ["correctness_left", "correctness_right"],
+      "exact_callers": [],
+      "blast": {
+        "exact_direct_callers": [],
+        "exact_impact_zone": []
+      }
+    }
+  },
+  "invariants": {
+    "B1_blast_vs_calls": {
+      "enabled": true,
+      "severity": "required",
+      "symbols": ["correctnessLeaf", "correctnessMid", "correctnessShared"]
+    },
+    "B2_gql_calls_nonzero": { "enabled": true, "severity": "required" },
+    "B5_inspect_cfg_present": {
+      "enabled": true,
+      "severity": "required",
+      "symbols": ["correctnessRoot", "correctnessMid", "correctnessLeaf"]
+    },
+    "B6_cfg_calls_subset_of_calls_edges": {
+      "enabled": true,
+      "severity": "required",
+      "symbols": ["correctnessRoot", "correctnessMid"]
+    },
+    "B7_pdg_lines_subset_cfg": {
+      "enabled": true,
+      "severity": "required",
+      "symbols": ["correctnessRoot", "correctnessMid", "correctnessLeaf"]
+    },
+    "B8_dom_blocks_match_cfg": {
+      "enabled": true,
+      "severity": "required",
+      "symbols": ["correctnessRoot", "correctnessMid", "correctnessLeaf"]
+    },
+    "B9_blast_target_name": {
+      "enabled": true,
+      "severity": "required",
+      "symbols": ["correctnessRoot", "correctnessMid", "correctnessLeaf", "correctnessShared"]
+    }
+  }
+}

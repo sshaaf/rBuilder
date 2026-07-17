@@ -8,15 +8,22 @@ use std::path::{Path, PathBuf};
 pub enum OnnxTokenizer {
     /// Hash-based token IDs (generic fallback for unknown ONNX models).
     Hash {
+        /// Maximum sequence length for padding/truncation.
         max_seq_len: usize,
+        /// Vocabulary size used when hashing tokens.
         vocab_size: usize,
     },
     /// SentencePiece model (e.g. code-daemon-embed-v1).
     SentencePiece {
+        /// Path to the SentencePiece model file.
         path: PathBuf,
+        /// Maximum sequence length for padding/truncation.
         max_seq_len: usize,
+        /// Beginning-of-sequence token id.
         bos_id: i64,
+        /// End-of-sequence token id.
         eos_id: i64,
+        /// Padding token id.
         pad_id: i64,
     },
 }
@@ -56,11 +63,7 @@ pub fn resolve_sentencepiece_path(model_path: &Path, explicit: Option<&Path>) ->
         .parent()
         .ok_or_else(|| Error::ConfigError("model path has no parent directory".into()))?;
 
-    for name in [
-        "sentencepiece.bpe.model",
-        "tokenizer.model",
-        "spiece.model",
-    ] {
+    for name in ["sentencepiece.bpe.model", "tokenizer.model", "spiece.model"] {
         let candidate = parent.join(name);
         if candidate.is_file() {
             return Ok(candidate);
