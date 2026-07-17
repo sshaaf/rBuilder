@@ -49,7 +49,10 @@ fn export_migration_plan_writes_json_file() {
     let plan: Value = serde_json::from_slice(&std::fs::read(&plan_path).unwrap()).unwrap();
     assert_eq!(plan["schema_version"], 2);
     assert_eq!(plan["order_mode"], "scheduled");
-    assert!(plan["steps"].as_array().map(|s| !s.is_empty()).unwrap_or(false));
+    assert!(plan["steps"]
+        .as_array()
+        .map(|s| !s.is_empty())
+        .unwrap_or(false));
     assert_eq!(plan["preset"], "hybrid_default");
     assert!(plan["weights"]["alpha"].as_f64().is_some());
 }
@@ -61,10 +64,7 @@ fn export_migration_plan_json_stdout() {
     let repo = tmp.path().join("repo");
     copy_dir_all(fixture, &repo).expect("copy fixture");
 
-    let output = run_discover_migration(
-        &repo,
-        &["--export-migration-hints", "-f", "json"],
-    );
+    let output = run_discover_migration(&repo, &["--export-migration-hints", "-f", "json"]);
     assert!(
         output.status.success(),
         "discover failed:\nstdout: {}\nstderr: {}",
@@ -75,7 +75,10 @@ fn export_migration_plan_json_stdout() {
     let plan: Value = serde_json::from_slice(&output.stdout).unwrap();
     assert_eq!(plan["schema_version"], 2);
     assert_eq!(plan["order_mode"], "scheduled");
-    assert!(plan["steps"].as_array().map(|s| !s.is_empty()).unwrap_or(false));
+    assert!(plan["steps"]
+        .as_array()
+        .map(|s| !s.is_empty())
+        .unwrap_or(false));
 }
 
 #[test]

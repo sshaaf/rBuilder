@@ -188,20 +188,27 @@ rbuilder discover . -l java -e target,node_modules
 rbuilder discover . -l java,typescript -e node_modules,dist
 ```
 
+### Default pipeline (always on)
+
+Bare `discover` (no `--with-*`) always runs: index/extract → topology → community → complexity → PageRank/betweenness → dependency cycles → blast engine → persist analysis + snapshot. Harmonic, dashboard, migration export, security, CFG/PDG, and discover-time taint are **opt-in** via the flags below.
+
 ### Deeper analysis (slower)
 
 | Flag | What it adds |
 |------|----------------|
-| `--security` | Secret scanning on config-like files |
-| `--cfg` | Per-function CFG, PDG, dominance, and taint analysis |
-| `--all` | `--security` + `--cfg` |
+| `--with-security` | Secret scanning |
+| `--with-cfg` | Per-function CFG, dominators, PDG (archive under `.rbuilder/analysis/`) |
+| `--with-taint` | Discover-time taint into archive (implies CFG/PDG pass) |
+| `--with-harmonic` | Harmonic centrality (migration ranking) |
+| `--with-dashboard` | Static dashboard bundle |
+| `--export-migration-hints` | Migration roadmap JSON |
 
 ```bash
-rbuilder discover . --cfg
-rbuilder discover . --all
+rbuilder discover . --with-cfg
+rbuilder discover . --with-cfg --with-taint --with-security
 ```
 
-Use `--cfg` or `--all` when you need `inspect`, `slice` overlays, or taint flows. On large monorepos (100k+ functions) expect minutes to hours.
+Use `--with-cfg` when you need `inspect` / slice overlays; add `--with-taint` for discover-time taint flows. On large monorepos (100k+ functions) expect minutes to hours.
 
 ### Verbose logging and stage profiling
 
@@ -242,8 +249,8 @@ coolstore/.rbuilder/
 ├── macro_call_index.bin        # Same index in bincode (companion to .db)
 ├── analysis_results.bin        # Columnar analysis properties
 ├── file_hashes.json            # Incremental file tracker
-├── analysis/                   # Per-function CFG/PDG/taint (with --cfg or --all)
-│   └── cfg_pdg.archive.bin     # CFG/PDG archive (with --cfg or --all)
+├── analysis/                   # Per-function CFG/PDG/taint (with --with-cfg / --with-taint)
+│   └── cfg_pdg.archive.bin     # CFG/PDG archive
 └── dashboard/                  # Static HTML dashboard (only with --with-dashboard)
     ├── index.html
     ├── manifest.json
@@ -727,9 +734,10 @@ rbuilder -r "$REPO" export --export-format graphml \
 | `-l, --languages` | Comma-separated filter (`java`, `typescript`, `rust`, …) |
 | `-e, --exclude` | Comma-separated path exclude patterns |
 | `-v, --verbose` | Debug logging |
-| `--security` | Secret scanning |
-| `--cfg` | CFG / PDG / taint analysis |
-| `--all` | Security + CFG analysis |
+| `--with-security` | Secret scanning |
+| `--with-cfg` | CFG / PDG (not taint) |
+| `--with-taint` | Discover-time taint |
+| `--with-cfg` / `--with-taint` / `--with-security` | Deep analysis (explicit; no umbrella `--all`) |
 | `--write-json-graph` | Also write legacy `graph.db` / `graph.json` |
 
 ---
@@ -775,7 +783,7 @@ rbuilder -r "$REPO" slice path/to/File.java \
 
 ### Slow `discover`
 
-Start with the default mode. Add `--cfg` or `--all` only when you need inspect, slice overlays, or taint.
+Start with the default mode. Add `--with-cfg` or `--with-taint` only when you need inspect, slice overlays, or taint.
 
 On **very large repos** (500k+ graph nodes), discover automatically:
 

@@ -2,8 +2,8 @@
 
 use crate::centrality::FlatGraphIndex;
 use crate::graph_utils::PetGraphView;
-use rbuilder_graph::schema::EdgeType;
 use rayon::prelude::*;
+use rbuilder_graph::schema::EdgeType;
 use std::collections::{HashMap, HashSet, VecDeque};
 use uuid::Uuid;
 
@@ -135,11 +135,7 @@ pub struct SampledBetweenness;
 
 impl SampledBetweenness {
     /// Estimate normalized betweenness using `pivot_count` sources on a flat index.
-    pub fn compute_flat(
-        index: &FlatGraphIndex,
-        pivot_count: usize,
-        seed: u64,
-    ) -> Vec<f64> {
+    pub fn compute_flat(index: &FlatGraphIndex, pivot_count: usize, seed: u64) -> Vec<f64> {
         let n = index.node_count;
         if n == 0 {
             return Vec::new();
@@ -388,23 +384,19 @@ fn hyperball_hll_parallel(index: &FlatGraphIndex, rounds: usize) -> Vec<f64> {
             hll
         })
         .collect();
-    let mut next: Vec<HyperLogLog> = (0..n)
-        .map(|_| HyperLogLog::new(precision))
-        .collect();
+    let mut next: Vec<HyperLogLog> = (0..n).map(|_| HyperLogLog::new(precision)).collect();
 
     let mut harmonic = vec![0.0f64; n];
     let mut prev_count: Vec<f64> = vec![1.0; n];
 
     for distance in 1..=rounds {
-        next.par_iter_mut()
-            .enumerate()
-            .for_each(|(node, hll)| {
-                hll.reset();
-                hll.add(hash_node_id(node));
-                for &neighbor in &out_adj[node] {
-                    hll.merge(&current[neighbor]);
-                }
-            });
+        next.par_iter_mut().enumerate().for_each(|(node, hll)| {
+            hll.reset();
+            hll.add(hash_node_id(node));
+            for &neighbor in &out_adj[node] {
+                hll.merge(&current[neighbor]);
+            }
+        });
 
         let mut grew = false;
         for node in 0..n {
@@ -455,9 +447,7 @@ fn sample_pivot_indices(n: usize, k: usize, seed: u64) -> Vec<usize> {
     let mut chosen = vec![false; n];
     let mut pivots = Vec::with_capacity(k);
     while pivots.len() < k {
-        rng = rng
-            .wrapping_mul(6_364_136_223_846_793_005)
-            .wrapping_add(1);
+        rng = rng.wrapping_mul(6_364_136_223_846_793_005).wrapping_add(1);
         let idx = (rng as usize) % n;
         if !chosen[idx] {
             chosen[idx] = true;
@@ -541,7 +531,10 @@ mod tests {
     #[test]
     fn adaptive_hyperball_rounds_gating() {
         assert_eq!(adaptive_hyperball_rounds(100, 16), 16);
-        assert_eq!(adaptive_hyperball_rounds(600_000, 16), LARGE_GRAPH_HYPERBALL_ROUNDS);
+        assert_eq!(
+            adaptive_hyperball_rounds(600_000, 16),
+            LARGE_GRAPH_HYPERBALL_ROUNDS
+        );
         assert_eq!(
             HyperBallHarmonic::effective_rounds(600_000, 16),
             LARGE_GRAPH_HYPERBALL_ROUNDS
@@ -637,7 +630,11 @@ mod tests {
             harmonic[head],
             harmonic[tail]
         );
-        assert!(harmonic[tail] < 1e-9, "tail should be ~0, got {}", harmonic[tail]);
+        assert!(
+            harmonic[tail] < 1e-9,
+            "tail should be ~0, got {}",
+            harmonic[tail]
+        );
     }
 
     #[test]
@@ -662,10 +659,7 @@ mod tests {
         }
 
         let corr = spearman_correlation(&sampled, &exact);
-        assert!(
-            corr > 0.7,
-            "sampled/exact rank correlation too low: {corr}"
-        );
+        assert!(corr > 0.7, "sampled/exact rank correlation too low: {corr}");
     }
 
     fn spearman_correlation(a: &[f64], b: &[f64]) -> f64 {

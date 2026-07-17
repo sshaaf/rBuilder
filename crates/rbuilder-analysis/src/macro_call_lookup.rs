@@ -522,10 +522,10 @@ impl MacroCallLookupDb {
         if stored_digest != graph_digest {
             return Ok(false);
         }
-        let nodes: Option<usize> = Self::read_meta(&conn, "node_count")?
-            .and_then(|s| s.parse().ok());
-        let edges: Option<usize> = Self::read_meta(&conn, "edge_count")?
-            .and_then(|s| s.parse().ok());
+        let nodes: Option<usize> =
+            Self::read_meta(&conn, "node_count")?.and_then(|s| s.parse().ok());
+        let edges: Option<usize> =
+            Self::read_meta(&conn, "edge_count")?.and_then(|s| s.parse().ok());
         Ok(nodes == Some(node_count) && edges == Some(edge_count))
     }
 
@@ -946,8 +946,7 @@ mod tests {
     fn sqlite_meta_graph_digest_roundtrip() {
         let tmp = tempfile::TempDir::new().unwrap();
         let db = tmp.path().join("macro_call_index.db");
-        MacroCallLookupDb::write_meta_with_digest(&db, 1024, 10, 20, Some("abc123digest"))
-            .unwrap();
+        MacroCallLookupDb::write_meta_with_digest(&db, 1024, 10, 20, Some("abc123digest")).unwrap();
         let conn = rusqlite::Connection::open(&db).unwrap();
         let digest: String = conn
             .query_row(

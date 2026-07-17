@@ -222,7 +222,10 @@ mod tests {
             &uuid_to_index,
         )
         .unwrap();
-        assert!(summary.function_scores > 0, "expected blast function scores");
+        assert!(
+            summary.function_scores > 0,
+            "expected blast function scores"
+        );
         let index: BlastIndexPayload =
             serde_json::from_slice(&fs::read(out.path().join(BLAST_INDEX_FILE)).unwrap()).unwrap();
         assert!(!index.functions.is_empty());

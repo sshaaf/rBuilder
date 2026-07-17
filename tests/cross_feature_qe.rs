@@ -86,9 +86,7 @@ fn assert_success(output: &Output, label: &str) {
 }
 
 fn gql_callers(sandbox: &Sandbox, callee: &str) -> BTreeSet<String> {
-    let q = format!(
-        "MATCH (a:Function)-[:CALLS]->(b:Function) WHERE b.name = '{callee}' RETURN a"
-    );
+    let q = format!("MATCH (a:Function)-[:CALLS]->(b:Function) WHERE b.name = '{callee}' RETURN a");
     let out = sandbox.run(&["-f", "json", "gql", &q]);
     assert_success(&out, &format!("gql callers of {callee}"));
     let doc = sandbox.parse_json(&out);
@@ -107,9 +105,7 @@ fn gql_callers(sandbox: &Sandbox, callee: &str) -> BTreeSet<String> {
 }
 
 fn gql_callees(sandbox: &Sandbox, caller: &str) -> BTreeSet<String> {
-    let q = format!(
-        "MATCH (a:Function)-[:CALLS]->(b:Function) WHERE a.name = '{caller}' RETURN b"
-    );
+    let q = format!("MATCH (a:Function)-[:CALLS]->(b:Function) WHERE a.name = '{caller}' RETURN b");
     let out = sandbox.run(&["-f", "json", "gql", &q]);
     assert_success(&out, &format!("gql callees of {caller}"));
     let doc = sandbox.parse_json(&out);
@@ -146,7 +142,8 @@ fn blast_direct_caller_names(blast: &Value) -> BTreeSet<String> {
 }
 
 fn blast_impact_zone_len(blast: &Value) -> usize {
-    blast.pointer("/topology/impact_zone")
+    blast
+        .pointer("/topology/impact_zone")
         .and_then(|v| v.as_array())
         .map(|a| a.len())
         .or_else(|| {
@@ -390,10 +387,7 @@ fn cross_feature_consistency_after_discover() {
     assert_success(&query, "semantic query expand neighbors");
     let qdoc = sandbox.parse_json(&query);
     let hits = qdoc["hits"].as_array().expect("hits");
-    if let Some(checkout_hit) = hits
-        .iter()
-        .find(|h| h["name"].as_str() == Some("checkout"))
-    {
+    if let Some(checkout_hit) = hits.iter().find(|h| h["name"].as_str() == Some("checkout")) {
         let hit_id = checkout_hit["node_id"].as_str().unwrap_or("");
         let expansion = qdoc
             .get("expansion")

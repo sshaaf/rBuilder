@@ -68,7 +68,10 @@ fn discover_with_dashboard_writes_bundle() {
 
     let dash = repo.join(".rbuilder/dashboard");
     assert!(dash.join("index.html").is_file(), "missing index.html");
-    assert!(dash.join("manifest.json").is_file(), "missing manifest.json");
+    assert!(
+        dash.join("manifest.json").is_file(),
+        "missing manifest.json"
+    );
 }
 
 #[test]
@@ -101,11 +104,7 @@ fn export_migration_plan_alias_still_works() {
     let plan_path = repo.join("legacy_alias.json");
     let output = run_discover(
         &repo,
-        &[
-            "--export-migration-plan",
-            "-o",
-            plan_path.to_str().unwrap(),
-        ],
+        &["--export-migration-plan", "-o", plan_path.to_str().unwrap()],
     );
     assert_ok(&output, "discover --export-migration-plan alias");
     assert!(plan_path.is_file(), "alias must still write plan JSON");
@@ -119,7 +118,10 @@ fn discover_help_documents_dashboard_flags() {
         .expect("spawn help");
     assert_ok(&output, "discover --help");
     let help = String::from_utf8_lossy(&output.stdout);
-    assert!(help.contains("--with-dashboard"), "missing --with-dashboard");
+    assert!(
+        help.contains("--with-dashboard"),
+        "missing --with-dashboard"
+    );
     assert!(
         help.contains("--export-migration-hints"),
         "missing --export-migration-hints"

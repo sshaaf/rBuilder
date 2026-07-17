@@ -63,13 +63,16 @@ rbuilder -r . serve --open
 
 ```bash
 # Add secret scanning on config-like files
-rbuilder discover . --security
+rbuilder discover . --with-security
 
-# Add CFG / PDG / taint analysis (much slower)
-rbuilder discover . --cfg
+# Add CFG / PDG analysis (much slower)
+rbuilder discover . --with-cfg
 
-# Everything: security + CFG/PDG/taint
-rbuilder discover . --all
+# CFG/PDG + discover-time taint
+rbuilder discover . --with-cfg --with-taint
+
+# Former "--all" depth: security + CFG/PDG + taint
+rbuilder discover . --with-cfg --with-security --with-taint
 ```
 
 Filter languages or paths:
@@ -98,7 +101,7 @@ coolstore/.rbuilder/
 ├── analysis_results.bin
 ├── file_hashes.json
 ├── dashboard/              # Static UI bundle (index.html, manifest.json, …)
-└── analysis/               # Per-function CFG/PDG (discover --cfg or --all only)
+└── analysis/               # Per-function CFG/PDG (discover --with-cfg or --with-taint only)
 ```
 
 Point rBuilder at this repo for every subsequent command:
@@ -439,12 +442,13 @@ rbuilder -r . slice src/main/java/com/redhat/coolstore/service/ShoppingCartServi
 | `-l, --languages` | Comma-separated language filter (`java`, `typescript`, …) |
 | `-e, --exclude` | Comma-separated path exclude patterns |
 | `-v, --verbose` | Debug logging |
-| `--security` | Secret scanning |
-| `--cfg` | CFG / PDG / taint analysis |
+| `--with-security` | Secret scanning |
+| `--with-cfg` | CFG / PDG (not taint) |
+| `--with-taint` | Discover-time taint |
 | `--with-harmonic` | Harmonic centrality (HyperBall on large graphs); off by default — use for migration ranking |
 | `--with-dashboard` | Write `.rbuilder/dashboard/` static bundle; off by default |
 | `--export-migration-hints` | Write migration roadmap JSON (alias: `--export-migration-plan`) |
-| `--all` | Security + CFG analysis |
+| `--with-cfg` / `--with-taint` / `--with-security` | Deep analysis (explicit; no umbrella `--all`) |
 
 ### GQL WHERE clauses
 
@@ -490,7 +494,7 @@ Pass `--language java` and `--function <ExactClassName>` explicitly.
 
 **Slow discover**
 
-Use the default mode first. Add `--cfg` or `--all` only when you need slicing, taint, or inspect overlays.
+Use the default mode first. Add `--with-cfg` or `--with-taint` only when you need slicing, taint, or inspect overlays.
 
 On kernel-scale graphs (500k+ nodes), discover uses adaptive centrality gating, parallel HyperBall, on-demand blast reachability, and sparse dashboard export. Profile bottlenecks with:
 

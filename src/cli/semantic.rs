@@ -6,15 +6,13 @@ use super::semantic_output::{
     build_index_response, index_response_to_json, query_response_to_json,
 };
 use crate::analysis::{
-    blast_summary_from_result, build_index, default_tokenizer_path,
-    resolve_embedder, try_load_engine,
-    validate_mrl_dimensions, BlastRadiusEngine, BlastSummaryProvider,
-    EmbedderChoice, SemanticBuildOptions, SemanticExpansion, SemanticIndex,
-    CODE_DAEMON_MRL_DIMS,
+    blast_summary_from_result, build_index, default_tokenizer_path, resolve_embedder,
+    try_load_engine, validate_mrl_dimensions, BlastRadiusEngine, BlastSummaryProvider,
+    EmbedderChoice, SemanticBuildOptions, SemanticExpansion, SemanticIndex, CODE_DAEMON_MRL_DIMS,
 };
+use crate::graph::backend::{GraphBackend, MemoryBackend};
 use anyhow::{bail, Context, Result};
 use clap::ValueEnum;
-use crate::graph::backend::{GraphBackend, MemoryBackend};
 use std::path::{Path, PathBuf};
 use uuid::Uuid;
 
@@ -57,7 +55,7 @@ pub struct SemanticQueryArgs {
 }
 
 pub fn run_index(ctx: &CliContext, args: SemanticIndexArgs) -> Result<()> {
-    if args.dimensions == 0 || args.dimensions % 8 != 0 {
+    if args.dimensions == 0 || !args.dimensions.is_multiple_of(8) {
         bail!("--dimensions must be a positive multiple of 8");
     }
     if args.embedder == CliEmbedderKind::Onnx && args.model.is_none() {
@@ -121,10 +119,7 @@ pub fn run_index(ctx: &CliContext, args: SemanticIndexArgs) -> Result<()> {
     } else {
         println!(
             "Indexed {} functions ({}, {} dims) → {}",
-            response.functions_indexed,
-            response.model_id,
-            response.dimensions,
-            response.path
+            response.functions_indexed, response.model_id, response.dimensions, response.path
         );
         if let Some(build_stats) = &response.build_stats {
             println!(
@@ -160,10 +155,7 @@ pub fn run_query(ctx: &CliContext, args: SemanticQueryArgs) -> Result<()> {
             return Ok(());
         }
         for hit in &response.hits {
-            let label = hit
-                .qualified_name
-                .as_deref()
-                .unwrap_or(&hit.name);
+            let label = hit.qualified_name.as_deref().unwrap_or(&hit.name);
             let file = hit
                 .file_path
                 .as_deref()
@@ -208,9 +200,7 @@ fn resolve_embedder_choice(
                 .clone()
                 .filter(|path| !path.as_os_str().is_empty() && path.is_file());
             Ok((
-                model
-                    .clone()
-                    .unwrap_or_default(),
+                model.clone().unwrap_or_default(),
                 EmbedderChoice::CodeDaemon {
                     model,
                     tokenizer: args.tokenizer.clone(),
@@ -350,10 +340,7 @@ fn print_expansion_text(exp: &SemanticExpansion) {
             for summary in blast {
                 println!(
                     "  {}  callers={} impact={} score={:.1}",
-                    summary.anchor_name,
-                    summary.direct_callers,
-                    summary.impact_zone,
-                    summary.score
+                    summary.anchor_name, summary.direct_callers, summary.impact_zone, summary.score
                 );
             }
         }

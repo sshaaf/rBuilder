@@ -26,8 +26,7 @@ fn cpp_cfg_builds_checkout_from_fixture() {
         return;
     }
     let source = std::fs::read_to_string(&file).unwrap();
-    let cfg =
-        build_cfg_for_function("cpp", &source, "checkout").expect("checkout CFG");
+    let cfg = build_cfg_for_function("cpp", &source, "checkout").expect("checkout CFG");
     assert!(cfg.blocks.len() >= 4, "expected branching CFG for checkout");
 }
 

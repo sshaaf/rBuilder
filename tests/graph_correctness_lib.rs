@@ -331,7 +331,9 @@ fn name_matches(actual: &str, expected: &str) -> bool {
     if a == e {
         return true;
     }
-    short_name(a) == short_name(e) || a.ends_with(&format!(".{e}")) || a.ends_with(&format!("::{e}"))
+    short_name(a) == short_name(e)
+        || a.ends_with(&format!(".{e}"))
+        || a.ends_with(&format!("::{e}"))
 }
 
 fn check(
@@ -398,7 +400,11 @@ fn run_inspect(bin: &Path, cwd: &Path, m: &MatchSpec, layer: &str) -> Option<Val
 
 fn load_graph_index(bin: &Path, cwd: &Path) -> GraphIndex {
     let mut functions = Vec::new();
-    if let Some(data) = run_json(bin, cwd, &["-f", "json", "gql", "MATCH (n:Function) RETURN n"]) {
+    if let Some(data) = run_json(
+        bin,
+        cwd,
+        &["-f", "json", "gql", "MATCH (n:Function) RETURN n"],
+    ) {
         if let Some(rows) = data.get("rows").and_then(|r| r.as_array()) {
             for row in rows {
                 if let Some(arr) = row.as_array() {
@@ -614,11 +620,7 @@ fn check_symbol(
         format!("symbol.{sid}.exists"),
         sev,
         exists_ok,
-        format!(
-            "function '{}' class={class:?} hits={}",
-            m.name,
-            hits.len()
-        ),
+        format!("function '{}' class={class:?} hits={}", m.name, hits.len()),
     ));
     if hits.is_empty() {
         return out;
@@ -1030,7 +1032,10 @@ fn check_identity(
         ));
     }
     if let (Some(want), Some(t)) = (&ident.canonical_fqn, target) {
-        let got = t.get("canonical_fqn").and_then(|v| v.as_str()).unwrap_or("");
+        let got = t
+            .get("canonical_fqn")
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
         out.push(check(
             format!("symbol.{sid}.identity.canonical_fqn"),
             sev,
@@ -1039,7 +1044,10 @@ fn check_identity(
         ));
     }
     if let (Some(want), Some(t)) = (&ident.class_context, target) {
-        let got = t.get("class_context").and_then(|v| v.as_str()).unwrap_or("");
+        let got = t
+            .get("class_context")
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
         out.push(check(
             format!("symbol.{sid}.identity.class_context"),
             sev,
@@ -1099,7 +1107,10 @@ fn check_pdg(sid: &str, ps: &PdgSpec, pdg: &Value) -> Vec<CheckResult> {
         ));
     }
     if let Some(want) = ps.exact_control_deps {
-        let got = pdg.get("control_deps").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
+        let got = pdg
+            .get("control_deps")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(0) as usize;
         out.push(check(
             format!("symbol.{sid}.pdg.exact_control_deps"),
             sev,
@@ -1131,8 +1142,7 @@ fn check_pdg(sid: &str, ps: &PdgSpec, pdg: &Value) -> Vec<CheckResult> {
             let ok = edges.iter().any(|e| {
                 e.get("kind").and_then(|k| k.as_str()) == Some("data")
                     && (es.variable.is_none()
-                        || e.get("variable").and_then(|v| v.as_str())
-                            == es.variable.as_deref())
+                        || e.get("variable").and_then(|v| v.as_str()) == es.variable.as_deref())
             });
             out.push(check(
                 format!("symbol.{sid}.pdg.data_edge"),
@@ -1165,7 +1175,11 @@ fn check_dom(sid: &str, ds: &DomSpec, dom: &Value) -> Vec<CheckResult> {
         .and_then(|n| n.as_array())
         .map(|a| a.len())
         .unwrap_or(0);
-    let idom = dom.get("idom").and_then(|i| i.as_array()).cloned().unwrap_or_default();
+    let idom = dom
+        .get("idom")
+        .and_then(|i| i.as_array())
+        .cloned()
+        .unwrap_or_default();
     if let Some(want) = ds.exact_block_count {
         out.push(check(
             format!("symbol.{sid}.dom.exact_block_count"),
@@ -1328,7 +1342,11 @@ fn check_invariants(
                 expect.extend(peers.iter().map(|p| p.name.clone()));
             }
             if !expect.is_empty() {
-                let missing: Vec<_> = expect.iter().filter(|c| !callees.contains(*c)).cloned().collect();
+                let missing: Vec<_> = expect
+                    .iter()
+                    .filter(|c| !callees.contains(*c))
+                    .cloned()
+                    .collect();
                 let ast_missing: Vec<_> = expect
                     .iter()
                     .filter(|c| !texts.iter().any(|t| t.contains(&format!("{c}("))))
@@ -1338,7 +1356,9 @@ fn check_invariants(
                     format!("invariant.B6.{sid}.callees_in_graph"),
                     &inv.b6.severity,
                     missing.is_empty(),
-                    format!("expected callees missing from CALLS: {missing:?}; cfg_texts={texts:?}"),
+                    format!(
+                        "expected callees missing from CALLS: {missing:?}; cfg_texts={texts:?}"
+                    ),
                 ));
                 out.push(check(
                     format!("invariant.B6.{sid}.callees_in_ast"),

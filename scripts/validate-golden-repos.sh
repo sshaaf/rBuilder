@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Golden-repo validation: release build → discover --all → serve → Playwright.
+# Golden-repo validation: release build → discover --with-cfg --with-security --with-taint → serve → Playwright.
 #
 # Usage:
 #   ./scripts/validate-golden-repos.sh
@@ -30,12 +30,12 @@ require_dir() {
 run_discover_all() {
   local repo="$1"
   local langs="${2:-}"
-  log "discover --all in $repo"
+  log "discover --with-cfg --with-security --with-taint in $repo"
   local start=$SECONDS
   if [[ -n "$langs" ]]; then
-    "$ROOT/target/release/rbuilder" -r "$repo" discover . --all --languages "$langs"
+    "$ROOT/target/release/rbuilder" -r "$repo" discover . --with-cfg --with-security --with-taint --languages "$langs"
   else
-    "$ROOT/target/release/rbuilder" -r "$repo" discover . --all
+    "$ROOT/target/release/rbuilder" -r "$repo" discover . --with-cfg --with-security --with-taint
   fi
   local elapsed=$((SECONDS - start))
   echo "$elapsed"
@@ -43,7 +43,7 @@ run_discover_all() {
 
 append_baseline_row() {
   local repo="$1" discover_s="$2" notes="$3"
-  log "discover --all timing: ${repo} ${discover_s}s (${notes})"
+  log "discover --with-cfg --with-security --with-taint timing: ${repo} ${discover_s}s (${notes})"
 }
 
 log "Building dashboard dist (if script present)..."
@@ -101,10 +101,10 @@ else
 fi
 
 if [[ -n "$GBUILDER_DISCOVER_S" ]]; then
-  append_baseline_row "gbuilder" "$GBUILDER_DISCOVER_S" "validate-golden-repos discover --all"
+  append_baseline_row "gbuilder" "$GBUILDER_DISCOVER_S" "validate-golden-repos discover --with-cfg --with-security --with-taint"
 fi
 if [[ -n "$METASFRESH_DISCOVER_S" ]]; then
-  append_baseline_row "metasfresh" "$METASFRESH_DISCOVER_S" "validate-golden-repos discover --all"
+  append_baseline_row "metasfresh" "$METASFRESH_DISCOVER_S" "validate-golden-repos discover --with-cfg --with-security --with-taint"
 fi
 
 log "Optional: cargo bench --bench graph_benchmarks"

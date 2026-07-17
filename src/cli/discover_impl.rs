@@ -16,9 +16,9 @@ pub(crate) fn run_full_analysis(
     path: &str,
     languages: Option<String>,
     exclude: Option<String>,
-    security: bool,
-    cfg: bool,
-    all: bool,
+    with_security: bool,
+    with_cfg: bool,
+    with_taint: bool,
     write_json_graph: bool,
     with_dashboard: bool,
     export_migration_hints: bool,
@@ -32,8 +32,10 @@ pub(crate) fn run_full_analysis(
     let human_output = !json_output;
     let run_start = Instant::now();
     let mut profile = DiscoverStageReport::default();
-    profile.cfg_enabled = cfg || all;
-    profile.security_enabled = security || all;
+    // Taint needs CFG/PDG; enable the CFG batch when either flag is set.
+    let run_cfg_pass = with_cfg || with_taint;
+    profile.cfg_enabled = run_cfg_pass;
+    profile.security_enabled = with_security;
     use crate::analysis::graph_utils::PetGraphView;
     use crate::analysis::{
         CentralityAnalyzer, CommunityDetector, ComplexityAnalyzer, DependencyAnalyzer,
@@ -82,11 +84,9 @@ pub(crate) fn run_full_analysis(
         info!("==> Analyzing: {}", root.display());
     }
 
-    // Show warning for --all flag
-    if all {
-        warn!("[!] WARNING: --all flag enables all analyses including CFG/PDG.");
-        warn!("   This may take several minutes on large codebases (>50K functions).");
-        warn!("   For faster analysis, run without --all (default mode).");
+    if run_cfg_pass && human_output {
+        warn!("[!] Deep analysis enabled (--with-cfg / --with-taint).");
+        warn!("   CFG/PDG on large codebases (>50K functions) may take several minutes.");
     }
 
     // Initialize memory monitoring
@@ -114,8 +114,7 @@ pub(crate) fn run_full_analysis(
 
     // Index the repository (or hydrate from snapshot when sources are unchanged)
     let index_start = Instant::now();
-    let graph_from_snapshot =
-        file_changes.is_empty() && snapshot_path.is_file();
+    let graph_from_snapshot = file_changes.is_empty() && snapshot_path.is_file();
     let (graph, index_stats) = if graph_from_snapshot {
         let load_start = Instant::now();
         let graph = CodeGraph::open_snapshot(&snapshot_path)?;
@@ -404,8 +403,8 @@ pub(crate) fn run_full_analysis(
         debug!("No circular dependencies found");
     }
 
-    // Security analysis (opt-in with --security or --all)
-    if security || all {
+    // Security analysis (opt-in with --with-security)
+    if with_security {
         let security_start = Instant::now();
         if human_output {
             println!("\n✓ Security analysis:");
@@ -446,17 +445,21 @@ pub(crate) fn run_full_analysis(
 
     profile.functions = functions.len();
 
-    // CFG/PDG/Dominance analysis (opt-in with --cfg or --all)
-    if cfg || all {
+    // CFG/PDG (+ optional taint) — opt-in with --with-cfg / --with-taint
+    if run_cfg_pass {
         let cfg_start = Instant::now();
         if human_output {
             println!("\n✓ Control flow analysis:");
         }
-        use crate::analysis::{cfg_language_list, AnalysisStorage, CfgPdgArchive};
         use super::discover_cfg::{run_cfg_analysis_batch, CfgAnalysisOptions};
+        use crate::analysis::{cfg_language_list, AnalysisStorage, CfgPdgArchive};
 
         let storage = AnalysisStorage::new(&output_dir);
         storage.ensure_dir()?;
+
+        if with_taint && !with_cfg && verbose {
+            debug!("--with-taint implies CFG/PDG pass");
+        }
 
         let batch = run_cfg_analysis_batch(
             &functions,
@@ -465,6 +468,7 @@ pub(crate) fn run_full_analysis(
             CfgAnalysisOptions {
                 verbose,
                 thread_count: None,
+                enable_taint: with_taint,
             },
         );
         let success_count = batch.success_count;
@@ -488,10 +492,15 @@ pub(crate) fn run_full_analysis(
             }
         } else {
             let mut cfg_archive = if batch.archive_records.is_empty() {
-                CfgPdgArchive::open_if_exists(root).ok().flatten().unwrap_or_default()
+                CfgPdgArchive::open_if_exists(root)
+                    .ok()
+                    .flatten()
+                    .unwrap_or_default()
             } else {
-                let mut merged =
-                    CfgPdgArchive::open_if_exists(root).ok().flatten().unwrap_or_default();
+                let mut merged = CfgPdgArchive::open_if_exists(root)
+                    .ok()
+                    .flatten()
+                    .unwrap_or_default();
                 merged.graph_digest = Some(graph_digest.clone());
                 for record in batch.archive_records {
                     merged.insert(record);
@@ -538,10 +547,7 @@ pub(crate) fn run_full_analysis(
                 );
             }
             if verbose {
-                if batch.cache_hits > 0
-                    || batch.recomputed > 0
-                    || batch.skipped_unchanged > 0
-                {
+                if batch.cache_hits > 0 || batch.recomputed > 0 || batch.skipped_unchanged > 0 {
                     println!(
                         "  CFG cache: {} reused ({} unchanged), {} recomputed, {} stale artifacts removed",
                         batch.cache_hits,
@@ -590,13 +596,11 @@ pub(crate) fn run_full_analysis(
     // works via the engine snapshot. See sshaaf/rBuilder#28 (won't fix).
     let query_start = Instant::now();
     let skip_bulk_blast = engine.uses_on_demand_reachability();
-    if skip_bulk_blast {
-        if verbose {
-            debug!(
-                functions = functions.len(),
-                "Flat graph — skipping bulk blast-radius scan (use `blast-radius` for on-demand queries; #28)"
-            );
-        }
+    if skip_bulk_blast && verbose {
+        debug!(
+            functions = functions.len(),
+            "Flat graph — skipping bulk blast-radius scan (use `blast-radius` for on-demand queries; #28)"
+        );
     }
     let blast_results: Vec<(uuid::Uuid, crate::analysis::BlastRadiusResult)> = if skip_bulk_blast {
         Vec::new()
@@ -953,9 +957,7 @@ pub(crate) fn run_full_analysis(
         info!("   rbuilder gql \"MATCH (n:Function) RETURN n\"  # Query the graph");
         info!("   rbuilder slice <file> --line <N> --variable <VAR>");
         if dashboard_dir.join("manifest.json").is_file() {
-            info!(
-                "   rbuilder serve --open   # Dashboard + query API at http://127.0.0.1:8080"
-            );
+            info!("   rbuilder serve --open   # Dashboard + query API at http://127.0.0.1:8080");
         }
     }
 

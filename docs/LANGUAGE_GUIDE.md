@@ -58,7 +58,7 @@ Exact plugin set evolves with releases — search `crates/rbuilder-config-format
 | `discover .` | Fast graph + metrics + dashboard (default) |
 | `discover . --security` | Add secret scanning on config-like files |
 | `discover . --cfg` | Per-function CFG, PDG, slice, inspect, taint |
-| `discover . --all` | Full analysis + migration export + complete dashboard bundles |
+| `discover . --with-cfg --with-security --with-taint` | Full analysis + migration export + complete dashboard bundles |
 
 CFG analysis is **much slower** on large repos (tens of thousands of functions). Run `discover . --cfg` on a small sample first; golden-repo timing checks live in `tests/discover_perf_baselines.rs` (manual, `#[ignore]`).
 

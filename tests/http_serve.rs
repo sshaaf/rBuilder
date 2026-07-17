@@ -60,7 +60,11 @@ fn http_serve_serves_dashboard_and_query_api() {
         return;
     };
     let bin = rbuilder_bin();
-    assert!(bin.is_file(), "missing rbuilder binary at {}", bin.display());
+    assert!(
+        bin.is_file(),
+        "missing rbuilder binary at {}",
+        bin.display()
+    );
 
     let port = pick_port();
     let base = format!("http://127.0.0.1:{port}");
@@ -94,7 +98,11 @@ fn http_serve_serves_dashboard_and_query_api() {
         .expect("GET /")
         .text()
         .expect("dashboard body");
-    assert!(dashboard.contains("rBuilder") || dashboard.contains("rb-app") || dashboard.contains("<!doctype html"));
+    assert!(
+        dashboard.contains("rBuilder")
+            || dashboard.contains("rb-app")
+            || dashboard.contains("<!doctype html")
+    );
 
     let query = client
         .post(format!("{base}/api/query"))
@@ -124,7 +132,10 @@ fn http_serve_serves_dashboard_and_query_api() {
                 .is_some_and(|ext| ext == "wasm")
         }) {
             let resp = client
-                .get(format!("{base}/assets/{}", wasm.file_name().to_string_lossy()))
+                .get(format!(
+                    "{base}/assets/{}",
+                    wasm.file_name().to_string_lossy()
+                ))
                 .send()
                 .expect("GET wasm asset");
             assert!(resp.status().is_success());

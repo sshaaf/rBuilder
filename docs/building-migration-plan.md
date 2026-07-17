@@ -4,7 +4,7 @@
 
 **Goal:** Map out the existing repository to understand its boundaries and size before touching any code.
 
-* **Step 1:** Run `rbuilder discover . --all` to index the entire repository. This creates the foundational map under `.rbuilder/`.
+* **Step 1:** Run `rbuilder discover . --with-cfg --with-security --with-taint` to index the entire repository. This creates the foundational map under `.rbuilder/`.
 * **Step 2:** Use **Graph Queries (GQL)** with macros like `all_functions` and `call_chain` to inventory modules, list cross-boundary dependencies, and get an accurate baseline of the current system architecture.
 * **Step 3:** Open the **Dashboard** with `rbuilder serve --open` (or `cd .rbuilder/dashboard && python3 -m http.server`) to explore package boundaries and coupling interactively.
 
@@ -48,6 +48,6 @@
 |------|------|
 | `.rbuilder/dashboard/migration_graph.json` | Every `discover` (dashboard bundle) |
 | `.rbuilder/dashboard/migration_plan.json` | Every `discover` (default preset) |
-| `.rbuilder/migration_plan.json` | `discover --export-migration-plan` (custom preset via flags) |
+| `.rbuilder/migration_plan.json` | `discover --export-migration-hints` (custom preset via flags) |
 
 See [design/migration-planner-design.md](design/migration-planner-design.md) for scoring and ordering details.

@@ -475,7 +475,13 @@ fn test_all_cli_commands_json_schema_sanity() {
     assert_schema_version(&index_doc, 2);
     assert_keys_present(
         &index_doc,
-        &["model_id", "dimensions", "functions_indexed", "path", "build_stats"],
+        &[
+            "model_id",
+            "dimensions",
+            "functions_indexed",
+            "path",
+            "build_stats",
+        ],
     );
     assert!(
         index_doc["functions_indexed"].as_u64().unwrap() > 0,
@@ -563,9 +569,9 @@ fn test_discover_cli_flags() {
     );
 
     for (label, flag) in [
-        ("security", "--security"),
-        ("cfg", "--cfg"),
-        ("all", "--all"),
+        ("security", "--with-security"),
+        ("cfg", "--with-cfg"),
+        ("taint", "--with-taint"),
     ] {
         let sandbox = Sandbox::new();
         let doc = discover_json_metrics(&sandbox, &[flag]);
@@ -576,4 +582,9 @@ fn test_discover_cli_flags() {
             "discover {label} should produce nodes"
         );
     }
+
+    // Removed umbrella --all (#34)
+    let no_all = Sandbox::new();
+    let bad = no_all.run(&["discover", ".", "--languages", "java,rust", "--all"]);
+    assert!(!bad.status.success(), "--all must be rejected after #34");
 }

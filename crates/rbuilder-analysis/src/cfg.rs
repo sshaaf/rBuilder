@@ -156,13 +156,19 @@ impl ControlFlowGraph {
     /// Predecessor block ids for `block_id`.
     pub fn predecessors(&self, block_id: BlockId) -> &[BlockId] {
         static EMPTY: &[BlockId] = &[];
-        self.pred.get(&block_id).map(|v| v.as_slice()).unwrap_or(EMPTY)
+        self.pred
+            .get(&block_id)
+            .map(|v| v.as_slice())
+            .unwrap_or(EMPTY)
     }
 
     /// Successor block ids for `block_id`.
     pub fn successors(&self, block_id: BlockId) -> &[BlockId] {
         static EMPTY: &[BlockId] = &[];
-        self.succ.get(&block_id).map(|v| v.as_slice()).unwrap_or(EMPTY)
+        self.succ
+            .get(&block_id)
+            .map(|v| v.as_slice())
+            .unwrap_or(EMPTY)
     }
 
     /// Blocks reachable from the entry block.

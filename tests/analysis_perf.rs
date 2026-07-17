@@ -3,7 +3,9 @@
 #[path = "common/analysis_helpers.rs"]
 mod analysis_helpers;
 
-use analysis_helpers::{analyze_taint, build_dominance, build_sample_backend_with_chain, large_graph};
+use analysis_helpers::{
+    analyze_taint, build_dominance, build_sample_backend_with_chain, large_graph,
+};
 use rbuilder::analysis::CallGraph;
 use rbuilder::gql::execute;
 use std::time::Instant;

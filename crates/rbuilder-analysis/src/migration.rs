@@ -8,8 +8,8 @@ use crate::results::AnalysisResults;
 use rbuilder_graph::backend::MemoryBackend;
 use rbuilder_graph::schema::{EdgeType, NodeType};
 use serde::{Deserialize, Serialize};
-use std::collections::{BinaryHeap, HashMap, HashSet};
 use std::cmp::Ordering;
+use std::collections::{BinaryHeap, HashMap, HashSet};
 use uuid::Uuid;
 
 /// JSON schema version for [`MigrationGraphPayload`].
@@ -481,10 +481,18 @@ fn priority_rank_order(
 fn sort_steps(steps: &mut [MigrationPlanStep], order_mode: MigrationOrderMode) {
     match order_mode {
         MigrationOrderMode::Scheduled => {
-            steps.sort_by(|a, b| a.schedule_step.cmp(&b.schedule_step).then(a.community_id.cmp(&b.community_id)));
+            steps.sort_by(|a, b| {
+                a.schedule_step
+                    .cmp(&b.schedule_step)
+                    .then(a.community_id.cmp(&b.community_id))
+            });
         }
         MigrationOrderMode::Priority => {
-            steps.sort_by(|a, b| a.priority_rank.cmp(&b.priority_rank).then(a.community_id.cmp(&b.community_id)));
+            steps.sort_by(|a, b| {
+                a.priority_rank
+                    .cmp(&b.priority_rank)
+                    .then(a.community_id.cmp(&b.community_id))
+            });
         }
     }
 }
@@ -628,8 +636,12 @@ mod tests {
         backend.insert_node(na).unwrap();
         backend.insert_node(nb).unwrap();
         backend.insert_node(nc).unwrap();
-        backend.insert_edge(Edge::new(a, b, EdgeType::Calls)).unwrap();
-        backend.insert_edge(Edge::new(b, c, EdgeType::Calls)).unwrap();
+        backend
+            .insert_edge(Edge::new(a, b, EdgeType::Calls))
+            .unwrap();
+        backend
+            .insert_edge(Edge::new(b, c, EdgeType::Calls))
+            .unwrap();
 
         let mut results = AnalysisResults::new(vec![a, b, c]);
         {
@@ -662,8 +674,16 @@ mod tests {
         assert_eq!(graph.communities.len(), 2);
         assert_eq!(graph.edges.len(), 1);
 
-        let pkg_b = graph.communities.iter().find(|c| c.label == "com.foo.b").unwrap();
-        let pkg_a = graph.communities.iter().find(|c| c.label == "com.foo.a").unwrap();
+        let pkg_b = graph
+            .communities
+            .iter()
+            .find(|c| c.label == "com.foo.b")
+            .unwrap();
+        let pkg_a = graph
+            .communities
+            .iter()
+            .find(|c| c.label == "com.foo.a")
+            .unwrap();
         assert_eq!(pkg_a.member_count, 1);
         assert_eq!(pkg_b.member_count, 2);
         assert!((pkg_b.max_blast - 80.0).abs() < f64::EPSILON);

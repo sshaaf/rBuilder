@@ -34,7 +34,7 @@ rbuilder -r "$REPO" -f json gql 'MATCH (n:Function) RETURN n LIMIT 20'
 | Impact before editing | `rbuilder -f json blast-radius <Symbol> [--depth N]` |
 | Architectural hotspots | `rbuilder -f json metrics --pagerank` |
 | Call neighborhood | `rbuilder -f json gql "MATCH (a:Function)-[:CALLS*1..3]->(b:Function) RETURN a,b LIMIT 50"` |
-| Migration plan | `rbuilder discover . --all --with-dashboard --with-harmonic --export-migration-hints` then read `.rbuilder/migration_plan.json` (or dashboard copy) |
+| Migration plan | `rbuilder discover . --with-cfg --with-security --with-taint --with-dashboard --with-harmonic --export-migration-hints` then read `.rbuilder/migration_plan.json` (or dashboard copy) |
 | CI gate on changes | `rbuilder -f json check --policy-file policy.json` (exit 1 = violations) |
 
 ---
@@ -66,7 +66,7 @@ rbuilder -r "$REPO" serve --daemon
 3. **`inspect` takes a symbol only** — no `--class` (use `blast-radius` for disambiguation).
 4. **`slice --function`** is the **method/function name**, not the class name.
 5. **`export --query`** uses filter syntax (`name:Foo`, `type:Function`, `all`) — not full GQL `MATCH`.
-6. **Deep analysis** needs `discover --cfg` or `--all` (slice, inspect, taint).
+6. **Deep analysis** needs `discover --with-cfg` (and `--with-taint` for discover-time taint) (slice, inspect, taint).
 7. **Semantic search** needs `semantic index` (separate from discover); default embedder requires LFS weights when building from source.
 8. **Profile discover** — `discover -v` with `RUST_LOG=profile=info` for `[profile] stage` and centrality sub-phase timings (see [analysis-architecture.md](docs/analysis-architecture.md)).
 

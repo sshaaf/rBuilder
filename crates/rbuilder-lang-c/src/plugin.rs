@@ -143,7 +143,8 @@ impl CPlugin {
                 "type_definition" => {
                     let mut cursor = node.walk();
                     for child in node.children(&mut cursor) {
-                        if child.kind() == "struct_specifier" && struct_name(child, source).is_some()
+                        if child.kind() == "struct_specifier"
+                            && struct_name(child, source).is_some()
                         {
                             symbols.push(self.extract_struct(child, source, file_path)?);
                         } else if child.kind() == "enum_specifier"
@@ -332,9 +333,7 @@ int add(int a, int b) {
 }
 "#;
         let plugin = CPlugin::new().unwrap();
-        let symbols = plugin
-            .extract_symbols(Path::new("cart.c"), source)
-            .unwrap();
+        let symbols = plugin.extract_symbols(Path::new("cart.c"), source).unwrap();
         assert!(symbols.iter().any(|s| s.name == "add"));
         assert!(symbols.iter().any(|s| s.name == "Cart"));
     }

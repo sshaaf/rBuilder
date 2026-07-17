@@ -27,7 +27,7 @@ Users can tune a **multi-objective score** with presets or custom α/β/γ weigh
 
 ```mermaid
 flowchart TB
-  subgraph discover["discover --all"]
+  subgraph discover["discover --with-cfg --with-security --with-taint"]
     IDX[Graph index + call edges]
     ANA[AnalysisResults.bin]
     IDX --> ANA
@@ -367,7 +367,7 @@ Top → bottom:
 
 ```bash
 # Full analysis + dashboard bundle (includes migration_graph.json + default plan)
-rbuilder discover . --all
+rbuilder discover . --with-cfg --with-security --with-taint
 
 # Export plan to file (harmonic required for β term in ranking)
 rbuilder discover . --with-harmonic --export-migration-hints \
@@ -388,7 +388,7 @@ Flags:
 |------|---------|-------------|
 | `--with-harmonic` | off | Compute harmonic centrality (needed for migration β / dense_cluster) |
 | `--with-dashboard` | off | Write `.rbuilder/dashboard/` bundle |
-| `--export-migration-hints` | off | Write plan JSON (alias: `--export-migration-plan`) |
+| `--export-migration-hints` | off | Write plan JSON (alias: `--export-migration-hints`) |
 | `--migration-preset` | `hybrid_default` | Strategy preset |
 | `--migration-order` | `scheduled` | `scheduled` or `priority` |
 | `-o` | `.rbuilder/migration_plan.json` | Output path (`--export-migration-hints`) |
@@ -424,7 +424,7 @@ After dashboard UI changes:
 ```bash
 cd dashboard && npm run build
 cargo build --release   # embeds dashboard/dist
-rbuilder discover . --all   # refresh .rbuilder/dashboard static JSON
+rbuilder discover . --with-cfg --with-security --with-taint   # refresh .rbuilder/dashboard static JSON
 ```
 
 ---
@@ -504,7 +504,7 @@ tests/migration_plan_cli.rs
 
 ```bash
 cargo build --release
-rbuilder -r ~/git/java/gbuilder discover . --all
+rbuilder -r ~/git/java/gbuilder discover . --with-cfg --with-security --with-taint
 # → migration_graph.json: ~30 packages, mode package_macro
 rbuilder serve -r ~/git/java/gbuilder
 # Migration tab → tune presets → inspect package graph + paginated table

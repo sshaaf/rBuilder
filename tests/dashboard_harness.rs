@@ -121,19 +121,19 @@ pub fn run_discover(repo: &Path, languages: &str) -> Output {
     run_discover_with_flags(repo, Some(languages), false)
 }
 
-/// Run `discover . --all` (CFG/PDG, security scan, full dashboard analysis exports).
+/// Run discover with CFG + security + taint + dashboard (former `--all` depth + dashboard).
 pub fn run_discover_all(repo: &Path, languages: Option<&str>) -> Output {
     run_discover_with_flags(repo, languages, true)
 }
 
-/// Run `discover . --all` and return wall-clock duration alongside process output.
+/// Run deep discover and return wall-clock duration alongside process output.
 pub fn run_discover_all_timed(repo: &Path, languages: Option<&str>) -> (Output, Duration) {
     let start = Instant::now();
     let output = run_discover_all(repo, languages);
     (output, start.elapsed())
 }
 
-fn run_discover_with_flags(repo: &Path, languages: Option<&str>, all: bool) -> Output {
+fn run_discover_with_flags(repo: &Path, languages: Option<&str>, deep: bool) -> Output {
     let bin = rbuilder_bin();
     assert!(
         bin.is_file(),
@@ -149,8 +149,9 @@ fn run_discover_with_flags(repo: &Path, languages: Option<&str>, all: bool) -> O
         ".",
         "--with-dashboard",
     ]);
-    if all {
-        cmd.arg("--all");
+    if deep {
+        // Former `--all` ≡ security + cfg + taint (#34).
+        cmd.args(["--with-cfg", "--with-security", "--with-taint"]);
     }
     if let Some(langs) = languages {
         cmd.args(["--languages", langs]);
@@ -282,7 +283,10 @@ pub fn assert_dashboard_bundle_with_meta(repo: &Path, min_nodes: u64, min_metano
         "missing cfg_index.json (Phase 4)"
     );
     let cfg_sv = cfg_index["schema_version"].as_u64().unwrap_or(0);
-    assert!(cfg_sv >= 1, "cfg_index schema_version must be >= 1, got {cfg_sv}");
+    assert!(
+        cfg_sv >= 1,
+        "cfg_index schema_version must be >= 1, got {cfg_sv}"
+    );
     if !cfg_available {
         assert_eq!(
             cfg_index["available"], false,
@@ -319,7 +323,10 @@ pub fn assert_dashboard_bundle_with_meta(repo: &Path, min_nodes: u64, min_metano
         serde_json::from_slice(&std::fs::read(dash.join("communities.json")).unwrap()).unwrap();
     assert_eq!(communities["schema_version"], 1);
     assert!(
-        communities["communities"].as_array().map(|a| !a.is_empty()).unwrap_or(false),
+        communities["communities"]
+            .as_array()
+            .map(|a| !a.is_empty())
+            .unwrap_or(false),
         "communities.json must list at least one community"
     );
     assert_eq!(view["communities_path"], "communities.json");
@@ -351,8 +358,12 @@ pub fn assert_dashboard_bundle_with_meta(repo: &Path, min_nodes: u64, min_metano
     assert_eq!(migration_plan["schema_version"], 2);
     assert_eq!(migration_plan["order_mode"], "scheduled");
     assert!(
-        migration_plan["steps"][0]["schedule_step"].as_u64().is_some()
-            && migration_plan["steps"][0]["priority_rank"].as_u64().is_some(),
+        migration_plan["steps"][0]["schedule_step"]
+            .as_u64()
+            .is_some()
+            && migration_plan["steps"][0]["priority_rank"]
+                .as_u64()
+                .is_some(),
         "migration plan steps must include schedule_step and priority_rank"
     );
 
@@ -452,7 +463,7 @@ pub fn assert_dashboard_bundle_with_meta(repo: &Path, min_nodes: u64, min_metano
     }
 }
 
-/// Assert dashboard bundle after `discover --all` (CFG, slice, dataflow must be present).
+/// Assert dashboard bundle after `discover --with-cfg --with-security --with-taint` (CFG, slice, dataflow must be present).
 pub fn assert_dashboard_bundle_all_analysis(repo: &Path, min_nodes: u64, min_metanodes: u64) {
     assert_dashboard_bundle_with_meta(repo, min_nodes, min_metanodes);
 
@@ -479,7 +490,7 @@ pub fn assert_dashboard_bundle_all_analysis(repo: &Path, min_nodes: u64, min_met
 
     assert!(
         dash.join("cfg_pdg.archive.bin").is_file(),
-        "cfg_pdg.archive.bin expected in dashboard bundle after discover --all"
+        "cfg_pdg.archive.bin expected in dashboard bundle after discover --with-cfg --with-security --with-taint"
     );
 
     let cfg_index: Value =

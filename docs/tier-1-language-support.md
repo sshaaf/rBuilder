@@ -53,7 +53,7 @@ A language is **fully supported** when all rows are ✅ and backed by automated 
 | B5 | CFG builders for language-specific control flow (e.g. `switch`, `select`, `match`, `try`) | `cfg_builder.rs` |
 | B6 | Definition-use extraction for assignments / declarations | `crates/rbuilder-analysis/src/def_use.rs` |
 | B7 | PDG builds from CFG + source (automatic once CFG + def/use work) | `crates/rbuilder-analysis/src/pdg.rs` |
-| B8 | `discover --cfg` / `discover --all` includes `.ext` files | Automatic via `cfg_language_id_from_path` in `discover_impl.rs` |
+| B8 | `discover --cfg` / `discover --with-cfg --with-security --with-taint` includes `.ext` files | Automatic via `cfg_language_id_from_path` in `discover_impl.rs` |
 
 ### Layer C — Security & interprocedural
 
@@ -69,7 +69,7 @@ A language is **fully supported** when all rows are ✅ and backed by automated 
 
 | # | Requirement | Where |
 |---|-------------|--------|
-| D1 | `discover --all` writes `.rbuilder/dashboard/` with CFG index populated | `cfg_index.json` `available: true` |
+| D1 | `discover --with-cfg --with-security --with-taint` writes `.rbuilder/dashboard/` with CFG index populated | `cfg_index.json` `available: true` |
 | D2 | Per-function CFG + dominance render in dashboard | Manual smoke or Playwright |
 | D3 | Dataflow / taint tabs show data when flows exist | PDG + taint archive export |
 | D4 | Blast radius lists functions with non-zero scores when call graph exists | `manifest.json` `calls_count` > 0 |
@@ -82,7 +82,7 @@ A language is **fully supported** when all rows are ✅ and backed by automated 
 | E2 | CFG unit tests: branching function + loop cycle | `crates/rbuilder-analysis/src/cfg_builder.rs` tests |
 | E3 | Taint unit/integration test: at least one source→sink path | `tests/taint_analysis.rs` or `tests/{lang}_taint.rs` |
 | E4 | Fixture integration test on a small real repo | e.g. `tests/go_cfg_analysis.rs` |
-| E5 | Dashboard golden gate: `discover --all` + bundle assertions | e.g. `tests/dashboard_ecommerce_go.rs` + `tests/dashboard_harness.rs` |
+| E5 | Dashboard golden gate: `discover --with-cfg --with-security --with-taint` + bundle assertions | e.g. `tests/dashboard_ecommerce_go.rs` + `tests/dashboard_harness.rs` |
 | E6 | `cargo test` + `cargo clippy` clean for touched crates | CI |
 
 ---
@@ -110,7 +110,7 @@ crates/
 tests/
   {lang}_cfg_analysis.rs                # Fixture CFG tests
   {lang}_taint.rs                     # Taint + calls integration
-  dashboard_{fixture}.rs                # discover --all dashboard gate
+  dashboard_{fixture}.rs                # discover --with-cfg --with-security --with-taint dashboard gate
 ```
 
 ### Crate naming rules
@@ -279,7 +279,7 @@ crates/rbuilder-analysis/src/cfg_builder.rs # unit: CFG shape
 crates/rbuilder-analysis/src/language_profile.rs # unit: path → id
 tests/{id}_cfg_analysis.rs                # integration: real fixture file
 tests/{id}_taint.rs                     # taint + calls smoke
-tests/dashboard_{fixture}.rs              # discover --all + manifest/cfg_index
+tests/dashboard_{fixture}.rs              # discover --with-cfg --with-security --with-taint + manifest/cfg_index
 ```
 
 Reuse `tests/dashboard_harness.rs` helpers (`run_discover_all`, `assert_dashboard_bundle_all_analysis`).
@@ -292,7 +292,7 @@ Provide a **small fixture repo** under `rbuilder-tests/` or document `RBUILDER_{
 cargo build --release
 ./scripts/build-dashboard.sh && cargo build --release   # if dashboard dist changed
 
-rbuilder discover --all -r /path/to/fixture-repo -l {id} -v
+rbuilder discover --with-cfg --with-security --with-taint -r /path/to/fixture-repo -l {id} -v
 rbuilder serve -r /path/to/fixture-repo --host 127.0.0.1 --port 8080
 # Open http://127.0.0.1:8080 — check Graph, CFG, Dataflow, Taint, Blast Radius tabs
 ```
@@ -341,7 +341,7 @@ Copy into your PR description:
 - [ ] `taint.rs` `detect_{id}_patterns`
 - [ ] `extract_relations` emits `Calls` (and inheritance if applicable)
 - [ ] Integration test + dashboard gate (or documented fixture path)
-- [ ] `discover --all` smoke on fixture repo documented in test
+- [ ] `discover --with-cfg --with-security --with-taint` smoke on fixture repo documented in test
 - [ ] No new CDN / online-only dashboard dependencies
 
 ---

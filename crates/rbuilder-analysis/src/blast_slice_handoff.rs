@@ -263,13 +263,14 @@ pub fn trace_blast_to_slices_with_blast(
     let archive = crate::cfg_pdg_archive::CfgPdgArchive::open_if_exists(repo_root)?;
     let icfg_view;
     let icfg_owned;
-    let icfg: &dyn crate::interprocedural_cfg::InterproceduralCfgAccess = if let Some(ref archive) = archive {
-        icfg_view = archive.interprocedural_cfg_view(backend)?;
-        &icfg_view
-    } else {
-        icfg_owned = InterproceduralCFG::build(backend, &source_files)?;
-        &icfg_owned
-    };
+    let icfg: &dyn crate::interprocedural_cfg::InterproceduralCfgAccess =
+        if let Some(ref archive) = archive {
+            icfg_view = archive.interprocedural_cfg_view(backend)?;
+            &icfg_view
+        } else {
+            icfg_owned = InterproceduralCFG::build(backend, &source_files)?;
+            &icfg_owned
+        };
     let slicer = InterproceduralSlicer::new(icfg, backend, &source_files)?;
     if let Some(ref archive) = archive {
         slicer.preload_pdgs(archive);

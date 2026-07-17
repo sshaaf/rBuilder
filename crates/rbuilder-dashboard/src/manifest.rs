@@ -189,7 +189,9 @@ impl DashboardManifest {
             slice_function_count: slice.function_count,
             blast_available: blast.available,
             blast_index_path: crate::blast_export::BLAST_INDEX_FILE.into(),
-            function_metrics_path: Some(crate::function_metrics_export::FUNCTION_METRICS_FILE.into()),
+            function_metrics_path: Some(
+                crate::function_metrics_export::FUNCTION_METRICS_FILE.into(),
+            ),
             blast_snapshot_path: if blast.snapshot_copied {
                 Some(crate::blast_export::BLAST_SNAPSHOT_BUNDLE_NAME.into())
             } else {
@@ -283,8 +285,8 @@ fn chrono_now_rfc3339() -> String {
 mod tests {
     use super::*;
     use crate::communities::CommunitiesPayload;
-    use crate::migration_export::MigrationExportSummary;
     use crate::metagraph::{MetagraphExport, MetagraphPayload, Metanode, COMMUNITY_ONLY_THRESHOLD};
+    use crate::migration_export::MigrationExportSummary;
 
     #[test]
     fn manifest_includes_view_section() {

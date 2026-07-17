@@ -94,14 +94,7 @@ fn ambiguous_bare_name_fails_closed() {
 #[test]
 fn discover_fixture_bare_collide_is_ambiguous() {
     let sandbox = Sandbox::new();
-    let discover = sandbox.run(&[
-        "-f",
-        "json",
-        "discover",
-        ".",
-        "--languages",
-        "java,rust",
-    ]);
+    let discover = sandbox.run(&["-f", "json", "discover", ".", "--languages", "java,rust"]);
     assert!(
         discover.status.success(),
         "discover failed:\n{}",
@@ -151,14 +144,7 @@ fn rust_twin_short_name_is_ambiguous() {
 #[test]
 fn duplicate_bare_names_both_nodes_survive_discover() {
     let sandbox = Sandbox::new();
-    let discover = sandbox.run(&[
-        "-f",
-        "json",
-        "discover",
-        ".",
-        "--languages",
-        "java",
-    ]);
+    let discover = sandbox.run(&["-f", "json", "discover", ".", "--languages", "java"]);
     assert!(discover.status.success());
 
     let gql = sandbox.run(&[

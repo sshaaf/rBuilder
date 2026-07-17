@@ -7,9 +7,12 @@ pub struct DiscoverArgs {
     pub path: Option<String>,
     pub languages: Option<String>,
     pub exclude: Option<String>,
-    pub security: bool,
-    pub cfg: bool,
-    pub all: bool,
+    /// Secret scanning. Default off.
+    pub with_security: bool,
+    /// CFG / dominators / PDG. Default off.
+    pub with_cfg: bool,
+    /// Discover-time taint (implies CFG pass). Default off.
+    pub with_taint: bool,
     /// Also write legacy JSON graph files (`graph.db` / `graph.json`).
     pub write_json_graph: bool,
     /// Export `.rbuilder/dashboard/` bundle. Default off.
@@ -42,9 +45,9 @@ pub fn run(ctx: &CliContext, args: DiscoverArgs) -> Result<()> {
         &path,
         args.languages,
         args.exclude,
-        args.security,
-        args.cfg,
-        args.all,
+        args.with_security,
+        args.with_cfg,
+        args.with_taint,
         args.write_json_graph,
         args.with_dashboard,
         args.export_migration_hints,

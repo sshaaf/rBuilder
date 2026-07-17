@@ -1,8 +1,8 @@
 //! Phase 13-style Go analysis: CFG depth, taint, and call relations.
 
 use rbuilder::analysis::{
-    build_cfg_for_function, canonical_language_id, cfg_language_id_from_path, ProgramDependenceGraph,
-    TaintAnalyzer, TaintSink, TaintSource,
+    build_cfg_for_function, canonical_language_id, cfg_language_id_from_path,
+    ProgramDependenceGraph, TaintAnalyzer, TaintSink, TaintSource,
 };
 use rbuilder_lang_go::GoPlugin;
 use rbuilder_plugin_api::{LanguagePlugin, RelationType, SymbolType};
@@ -68,7 +68,10 @@ func persist() {}
         calls.iter().any(|r| r.to == "validate"),
         "missing validate call"
     );
-    assert!(calls.iter().any(|r| r.to == "persist"), "missing persist call");
+    assert!(
+        calls.iter().any(|r| r.to == "persist"),
+        "missing persist call"
+    );
     assert!(
         symbols
             .iter()

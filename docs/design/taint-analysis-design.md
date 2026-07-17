@@ -17,7 +17,7 @@
 | Dashboard triage | Function sidebar + flows table |
 | CLI verification | `slice --taint` and exported `taint/*.json` |
 
-Enabled by `discover --cfg` / `--all` (language-dependent pattern catalogs).
+Enabled by `discover --with-cfg` / `--with-taint` (language-dependent pattern catalogs).
 
 ---
 
@@ -92,7 +92,7 @@ Dashboard: filter **vulnerable only**; click a flow for path detail.
 ## 6. CLI usage
 
 ```bash
-rbuilder discover . --all
+rbuilder discover . --with-cfg --with-security --with-taint
 rbuilder slice src/Endpoint.java --line 20 --variable request --function handle --taint
 # Inspect exported flows under .rbuilder/analysis/ or dashboard taint/*.json
 ```

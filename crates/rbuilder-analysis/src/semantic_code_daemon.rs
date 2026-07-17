@@ -1,9 +1,9 @@
 //! [`faxenoff/code-daemon-embed-v1`](https://huggingface.co/faxenoff/code-daemon-embed-v1) embedder.
 
 #[cfg(feature = "semantic-onnx")]
-use crate::semantic_onnx_tokenizer::{resolve_sentencepiece_path, OnnxTokenizer};
-#[cfg(feature = "semantic-onnx")]
 use crate::semantic_onnx::{Postprocess, SharedOnnxEmbedder};
+#[cfg(feature = "semantic-onnx")]
+use crate::semantic_onnx_tokenizer::{resolve_sentencepiece_path, OnnxTokenizer};
 use rbuilder_error::{Error, Result};
 use std::path::{Path, PathBuf};
 
@@ -50,7 +50,7 @@ pub fn validate_mrl_dimensions(dimensions: usize) -> Result<()> {
             "code-daemon supports at most {CODE_DAEMON_NATIVE_DIMS} dimensions (MRL); got {dimensions}"
         )));
     }
-    if dimensions % 8 != 0 {
+    if !dimensions.is_multiple_of(8) {
         return Err(Error::ConfigError(
             "code-daemon dimensions must be a multiple of 8 for binary quantization".into(),
         ));

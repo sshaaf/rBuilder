@@ -1,6 +1,8 @@
 //! JavaScript CFG analysis against the ecommerce-javascript fixture.
 
-use rbuilder::analysis::{build_cfg_for_function, cfg_language_id_from_path, ProgramDependenceGraph};
+use rbuilder::analysis::{
+    build_cfg_for_function, cfg_language_id_from_path, ProgramDependenceGraph,
+};
 use std::path::Path;
 
 const JS_REPO: &str = "/Users/sshaaf/git/rust/rbuilder-tests/ecommerce-javascript";
@@ -46,6 +48,10 @@ fn javascript_cfg_builds_require_auth_from_fixture() {
     }
 
     let source = std::fs::read_to_string(&file).unwrap();
-    let cfg = build_cfg_for_function("javascript", &source, "requireAuth").expect("requireAuth CFG");
-    assert!(cfg.blocks.len() >= 2, "expected branching CFG for requireAuth");
+    let cfg =
+        build_cfg_for_function("javascript", &source, "requireAuth").expect("requireAuth CFG");
+    assert!(
+        cfg.blocks.len() >= 2,
+        "expected branching CFG for requireAuth"
+    );
 }

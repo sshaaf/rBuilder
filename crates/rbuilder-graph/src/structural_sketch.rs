@@ -18,7 +18,12 @@ pub const MIN_TOKEN_LEN: usize = 3;
 pub type TokenBloom = [u64; TOKEN_BLOOM_WORDS];
 
 /// Build a token bloom from declaration metadata and optional body text.
-pub fn build_token_bloom(name: &str, qualified_name: Option<&str>, signature: Option<&str>, body: Option<&str>) -> TokenBloom {
+pub fn build_token_bloom(
+    name: &str,
+    qualified_name: Option<&str>,
+    signature: Option<&str>,
+    body: Option<&str>,
+) -> TokenBloom {
     let mut bloom = empty_bloom();
     let mut tokens = HashSet::new();
     tokenize_string_into(name, &mut tokens);
@@ -59,7 +64,9 @@ pub fn satisfies_keyword_and(keywords: &[String], bloom: &TokenBloom) -> bool {
     if keywords.is_empty() {
         return true;
     }
-    keywords.iter().all(|keyword| keyword_in_bloom(keyword, bloom))
+    keywords
+        .iter()
+        .all(|keyword| keyword_in_bloom(keyword, bloom))
 }
 
 /// Fraction of query keywords matched in the bloom sketch.

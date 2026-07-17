@@ -64,13 +64,13 @@ fn discover_all_writes_typescript_cfg_dashboard_bundle() {
     );
 
     let calls = manifest["metrics"]["calls_count"].as_u64().unwrap_or(0);
-    assert!(calls > 0, "expected call relations in TypeScript graph, got {calls}");
+    assert!(
+        calls > 0,
+        "expected call relations in TypeScript graph, got {calls}"
+    );
 
     eprintln!(
         "ecommerce-typescript OK: {} nodes, {} functions, {} cfg functions, {} calls",
-        manifest["graph"]["node_count"],
-        functions,
-        cfg_index["function_count"],
-        calls
+        manifest["graph"]["node_count"], functions, cfg_index["function_count"], calls
     );
 }

@@ -110,7 +110,7 @@ Execution order inside the test (each phase uses a fresh discover ingest unless 
 | 10 | blast-radius `--with-slices publishEvent` | non-empty `gatekeeping.handoffs` |
 | 11 | blast-radius policy violation | exit 1 + `VIOLATED` |
 
-**Separate test:** `test_discover_cli_flags` — `--exclude`, `-v`, `--security`, `--cfg`, `--all`.
+**Separate test:** `test_discover_cli_flags` — `--exclude`, `-v`, `--security`, `--with-cfg`, `--with-taint`.
 
 **CLI note:** `inspect` takes a **layer subcommand** (`inspect SYMBOL dom`), not `--layer dom`.
 

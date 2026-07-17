@@ -39,8 +39,8 @@ struct CfgEdgeView {
 /// Decode one CFG detail record fetched from `cfg_pdg.record_data.bin`.
 #[wasm_bindgen(js_name = parseCfgDetail)]
 pub fn parse_cfg_detail(bytes: &[u8]) -> Result<String, JsValue> {
-    let detail: CfgDetailPayload =
-        serde_json::from_slice(bytes).map_err(|e| JsValue::from_str(&format!("cfg detail decode: {e}")))?;
+    let detail: CfgDetailPayload = serde_json::from_slice(bytes)
+        .map_err(|e| JsValue::from_str(&format!("cfg detail decode: {e}")))?;
     serde_json::to_string(&detail).map_err(|e| JsValue::from_str(&e.to_string()))
 }
 

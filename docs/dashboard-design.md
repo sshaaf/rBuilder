@@ -273,7 +273,7 @@ _Update this table when a phase lands._
 | Taint index + detail export | 8 | **done** | `taint_index.json`, `taint/*.json` from `.rbuilder/analysis/` |
 | Taint tab (flows table) | 8 | **done** | `TaintView.tsx` — source→sink paths from archive |
 | `tests/dashboard_harness.rs` | 8 | **done** | phase 8 + `taint_index.json` |
-| `tests/dashboard_metasfresh.rs` | 8+ | **manual** | metasfresh `discover --all`; `./scripts/test-dashboard-metasfresh.sh` |
+| `tests/dashboard_metasfresh.rs` | 8+ | **manual** | metasfresh `discover --with-cfg --with-security --with-taint`; `./scripts/test-dashboard-metasfresh.sh` |
 | Query Guide tab | 9 | **done** | `GuideView.tsx` + `guideCliWorkflows.ts`; validated by `validate-guide-cli-gbuilder.sh` |
 | HTTP `serve` integration | 9 | **done** | `rbuilder serve` serves bundle + `/api/query`; see [http-api.md](http-api.md) |
 | Migration tab live weights | 9 | **done** | `MigrationView.tsx` mirrors Rust scoring; exports in `.rbuilder/dashboard/` |

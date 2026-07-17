@@ -387,11 +387,7 @@ impl HarmonicCentrality {
             return HashMap::new();
         }
 
-        let norm_factor = if n <= 1 {
-            0.0
-        } else {
-            1.0 / (n as f64 - 1.0)
-        };
+        let norm_factor = if n <= 1 { 0.0 } else { 1.0 / (n as f64 - 1.0) };
 
         let mut result = HashMap::with_capacity(n);
         for start in view.directed.node_indices() {
@@ -679,7 +675,11 @@ impl CentralityAnalyzer {
     fn compute_flat_centrality(
         &self,
         view: &PetGraphView,
-    ) -> Result<(FlatGraphIndex, FlatCentralityArrays, crate::centrality_approx::CentralityApproxStats)> {
+    ) -> Result<(
+        FlatGraphIndex,
+        FlatCentralityArrays,
+        crate::centrality_approx::CentralityApproxStats,
+    )> {
         use crate::centrality_approx::{
             BetweennessMode, CentralityApproxStats, HarmonicMode, HyperBallHarmonic,
             SampledBetweenness,
@@ -691,8 +691,10 @@ impl CentralityAnalyzer {
 
         let index_start = Instant::now();
         let index = FlatGraphIndex::from_view(view, allowed);
-        let mut approx_stats = CentralityApproxStats::default();
-        approx_stats.flat_index_ms = index_start.elapsed().as_millis() as u64;
+        let mut approx_stats = CentralityApproxStats {
+            flat_index_ms: index_start.elapsed().as_millis() as u64,
+            ..CentralityApproxStats::default()
+        };
 
         let degrees_start = Instant::now();
         let (in_degree, out_degree) = index.filtered_degrees();
@@ -710,8 +712,7 @@ impl CentralityAnalyzer {
         }
 
         let pagerank_start = Instant::now();
-        let pagerank_engine =
-            FastPageRank::new(max_iters, self.damping).with_tolerance(tolerance);
+        let pagerank_engine = FastPageRank::new(max_iters, self.damping).with_tolerance(tolerance);
         let pagerank = pagerank_engine.compute_flat_only(&index);
         approx_stats.pagerank_ms = pagerank_start.elapsed().as_millis() as u64;
 

@@ -124,14 +124,7 @@ fn semantic_index_query_invariants_and_oracles() {
     let spec: OracleFile = serde_json::from_str(&raw).expect("parse oracles");
 
     let sandbox = Sandbox::new();
-    let discover = sandbox.run(&[
-        "-f",
-        "json",
-        "discover",
-        ".",
-        "--languages",
-        "java,rust",
-    ]);
+    let discover = sandbox.run(&["-f", "json", "discover", ".", "--languages", "java,rust"]);
     assert_success(&discover, "discover");
 
     let index = sandbox.run(&[

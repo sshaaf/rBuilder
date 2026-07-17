@@ -1,15 +1,15 @@
-//! Parallel CFG/PDG/taint analysis for discover `--cfg` / `--all`.
+//! Parallel CFG/PDG/taint analysis for discover `--with-cfg` / `--with-taint`.
 
+use crate::analysis::storage::stable_function_key;
 use crate::analysis::{
     build_cfg_for_function, cfg_language_id_from_path, AnalysisIndexEntry, AnalysisStorage,
     CfgPdgRecord, ControlFlowGraph, DominatorTree, FunctionAnalysis, FunctionIdSyncEntry,
     ParsedSourceFile, ProgramDependenceGraph, TaintAnalyzer,
 };
-use crate::analysis::storage::stable_function_key;
+use rayon::prelude::*;
 use rbuilder_graph::code_index::hash_code;
 use rbuilder_graph::schema::Node;
 use rbuilder_pipeline::with_pool;
-use rayon::prelude::*;
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -24,6 +24,8 @@ pub struct CfgAnalysisOptions {
     pub verbose: bool,
     /// Optional Rayon thread count (`None` = global pool default).
     pub thread_count: Option<usize>,
+    /// Run discover-time taint after PDG (`--with-taint`).
+    pub enable_taint: bool,
 }
 
 /// Wall-clock totals for CFG sub-stages (sum of per-function work).
@@ -96,6 +98,7 @@ struct CfgWorkContext<'a> {
     cache: &'a CfgIncrementalCache,
     stage: Option<&'a CfgStageTimings>,
     timings: Option<&'a Mutex<Vec<CfgFunctionTiming>>>,
+    enable_taint: bool,
 }
 
 /// Analyze all repository functions in parallel with incremental reuse and bincode persistence.
@@ -121,7 +124,9 @@ pub fn run_cfg_analysis_batch(
     let work_items = flatten_work_items(functions);
     let stage = options.verbose.then(CfgStageTimings::default);
     let stage_ref = stage.as_ref();
-    let timing_log = options.verbose.then(|| Mutex::new(Vec::<CfgFunctionTiming>::new()));
+    let timing_log = options
+        .verbose
+        .then(|| Mutex::new(Vec::<CfgFunctionTiming>::new()));
     let timing_ref = timing_log.as_ref();
 
     let ctx = CfgWorkContext {
@@ -130,13 +135,14 @@ pub fn run_cfg_analysis_batch(
         cache: &cache,
         stage: stage_ref,
         timings: timing_ref,
+        enable_taint: options.enable_taint,
     };
 
     let flat: Vec<Option<CfgFunctionWork>> = with_pool(options.thread_count, || {
         work_items
             .par_iter()
             .map_init(
-                || HashMap::<String, ParsedSourceFile>::new(),
+                HashMap::<String, ParsedSourceFile>::new,
                 |parse_cache, item| process_function_work_item(parse_cache, item, &ctx),
             )
             .collect()
@@ -239,7 +245,7 @@ fn emit_tail_profile(log: &Mutex<Vec<CfgFunctionTiming>>) {
     if entries.is_empty() {
         return;
     }
-    entries.sort_by(|a, b| b.total_ns.cmp(&a.total_ns));
+    entries.sort_by_key(|b| std::cmp::Reverse(b.total_ns));
     let p99_idx = ((entries.len() as f64 * 0.99).ceil() as usize).saturating_sub(1);
     let p99 = entries[p99_idx].total_ns as f64 / 1_000_000.0;
     info!(
@@ -297,6 +303,7 @@ fn process_function_work_item(
         ctx.cache,
         ctx.stage,
         ctx.timings,
+        ctx.enable_taint,
     )
 }
 
@@ -321,7 +328,10 @@ fn load_incremental_cache(storage: &AnalysisStorage, _repo_root: &Path) -> CfgIn
 }
 
 fn preload_file_sources(functions: &[Node], thread_count: Option<usize>) -> FileSourceCache {
-    let paths: HashSet<String> = functions.iter().filter_map(|n| n.file_path.clone()).collect();
+    let paths: HashSet<String> = functions
+        .iter()
+        .filter_map(|n| n.file_path.clone())
+        .collect();
     let sources: HashMap<String, Arc<String>> = with_pool(thread_count, || {
         paths
             .par_iter()
@@ -334,10 +344,7 @@ fn preload_file_sources(functions: &[Node], thread_count: Option<usize>) -> File
     FileSourceCache { sources }
 }
 
-fn active_stable_keys(
-    functions: &[Node],
-    sources: Option<&FileSourceCache>,
-) -> HashSet<String> {
+fn active_stable_keys(functions: &[Node], sources: Option<&FileSourceCache>) -> HashSet<String> {
     let mut keys = HashSet::new();
     for func in functions {
         let Some(file_path) = func.file_path.as_ref() else {
@@ -365,6 +372,7 @@ fn resolve_code_hash(func_node: &Node, source: &str) -> String {
         .unwrap_or_else(|| hash_code(source))
 }
 
+#[allow(clippy::too_many_arguments)]
 fn analyze_function_in_file(
     func_node: &Node,
     language: &str,
@@ -374,6 +382,7 @@ fn analyze_function_in_file(
     cache: &CfgIncrementalCache,
     stage: Option<&CfgStageTimings>,
     timings: Option<&Mutex<Vec<CfgFunctionTiming>>>,
+    enable_taint: bool,
 ) -> Option<CfgFunctionWork> {
     let code_hash = resolve_code_hash(func_node, source);
 
@@ -396,6 +405,7 @@ fn analyze_function_in_file(
         false,
         stage,
         timings,
+        enable_taint,
     )
 }
 
@@ -441,6 +451,7 @@ fn try_remap_cached(
     })
 }
 
+#[allow(clippy::too_many_arguments)]
 fn compute_function_cfg(
     func_node: &Node,
     language: &str,
@@ -451,15 +462,14 @@ fn compute_function_cfg(
     from_cache: bool,
     stage: Option<&CfgStageTimings>,
     timings: Option<&Mutex<Vec<CfgFunctionTiming>>>,
+    enable_taint: bool,
 ) -> Option<CfgFunctionWork> {
     let total_start = timings.is_some().then(Instant::now);
 
     let build_start = stage.map(|_| Instant::now());
     let bytes = source.as_bytes();
     let cfg_data = if let Some(parsed) = parse_cache.get(file_path) {
-        parsed
-            .build_cfg(language, bytes, &func_node.name)
-            .ok()
+        parsed.build_cfg(language, bytes, &func_node.name).ok()
     } else {
         None
     }
@@ -488,6 +498,7 @@ fn compute_function_cfg(
         cfg_data,
         from_cache,
         stage,
+        enable_taint,
     )?;
 
     if let (Some(start), Some(log)) = (total_start, timings) {
@@ -509,6 +520,7 @@ fn compute_function_cfg(
     Some(work)
 }
 
+#[allow(clippy::too_many_arguments)]
 fn compute_from_cfg(
     func_node: &Node,
     file_path: &str,
@@ -518,6 +530,7 @@ fn compute_from_cfg(
     cfg_data: ControlFlowGraph,
     from_cache: bool,
     stage: Option<&CfgStageTimings>,
+    enable_taint: bool,
 ) -> Option<CfgFunctionWork> {
     if let Some(stage) = stage {
         stage.functions.fetch_add(1, Ordering::Relaxed);
@@ -541,21 +554,27 @@ fn compute_from_cfg(
     }
 
     let taint_start = stage.map(|_| Instant::now());
-    let (taint_data, flow_count, vulnerable_count) = if let Some(ref pdg) = pdg_data {
-        let mut analyzer = TaintAnalyzer::with_dominator(pdg, &cfg_data, dom_data);
-        analyzer.detect_patterns(language);
-        let flows = analyzer.analyze();
-        let vulnerable = flows.iter().filter(|f| f.is_vulnerable()).count();
-        let count = flows.len();
-        let taint = if flows.is_empty() { None } else { Some(flows) };
-        (taint, count, vulnerable)
+    let (taint_data, flow_count, vulnerable_count) = if enable_taint {
+        if let Some(ref pdg) = pdg_data {
+            let mut analyzer = TaintAnalyzer::with_dominator(pdg, &cfg_data, dom_data);
+            analyzer.detect_patterns(language);
+            let flows = analyzer.analyze();
+            let vulnerable = flows.iter().filter(|f| f.is_vulnerable()).count();
+            let count = flows.len();
+            let taint = if flows.is_empty() { None } else { Some(flows) };
+            (taint, count, vulnerable)
+        } else {
+            (None, 0, 0)
+        }
     } else {
         (None, 0, 0)
     };
-    if let (Some(stage), Some(start)) = (stage, taint_start) {
-        stage
-            .taint_ns
-            .fetch_add(start.elapsed().as_nanos() as u64, Ordering::Relaxed);
+    if enable_taint {
+        if let (Some(stage), Some(start)) = (stage, taint_start) {
+            stage
+                .taint_ns
+                .fetch_add(start.elapsed().as_nanos() as u64, Ordering::Relaxed);
+        }
     }
 
     let analysis = FunctionAnalysis {

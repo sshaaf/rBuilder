@@ -9,8 +9,7 @@ use std::result::Result as StdResult;
 use std::sync::OnceLock;
 
 /// ONNX graph definition (external weights in [`EMBEDDED_MODEL_DATA`]).
-pub const EMBEDDED_MODEL_ONNX: &[u8] =
-    include_bytes!("../assets/code-daemon-embed-v1/model.onnx");
+pub const EMBEDDED_MODEL_ONNX: &[u8] = include_bytes!("../assets/code-daemon-embed-v1/model.onnx");
 
 /// FP32 weight blob referenced by the ONNX graph.
 pub const EMBEDDED_MODEL_DATA: &[u8] =

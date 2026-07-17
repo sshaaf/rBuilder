@@ -255,6 +255,10 @@ name = "with_dashboard_cli"
 path = "tests/with_dashboard_cli.rs"
 
 [[test]]
+name = "with_cfg_cli"
+path = "tests/with_cfg_cli.rs"
+
+[[test]]
 name = "dashboard_ecommerce_go"
 path = "tests/dashboard_ecommerce_go.rs"
 

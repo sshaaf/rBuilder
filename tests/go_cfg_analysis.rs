@@ -1,6 +1,8 @@
 //! Go CFG analysis against the ecommerce-go fixture (no embedded dashboard required).
 
-use rbuilder::analysis::{build_cfg_for_function, cfg_language_id_from_path, ProgramDependenceGraph};
+use rbuilder::analysis::{
+    build_cfg_for_function, cfg_language_id_from_path, ProgramDependenceGraph,
+};
 use std::path::Path;
 
 const GO_REPO: &str = "/Users/sshaaf/git/rust/rbuilder-tests/ecommerce-go";

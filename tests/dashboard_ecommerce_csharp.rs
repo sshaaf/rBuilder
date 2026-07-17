@@ -65,8 +65,6 @@ fn discover_all_writes_csharp_cfg_dashboard_bundle() {
 
     eprintln!(
         "ecommerce-csharp OK: {} nodes, {} functions, {} cfg functions",
-        manifest["graph"]["node_count"],
-        functions,
-        cfg_index["function_count"]
+        manifest["graph"]["node_count"], functions, cfg_index["function_count"]
     );
 }

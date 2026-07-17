@@ -132,7 +132,14 @@ mod tests {
         let id = node.id;
         backend.insert_node(node).unwrap();
         let cache = function_meta_map(std::env::temp_dir().as_path(), &backend);
-        let (name, _) = resolve_function_meta(&id, "", &None, std::env::temp_dir().as_path(), &backend, &cache);
+        let (name, _) = resolve_function_meta(
+            &id,
+            "",
+            &None,
+            std::env::temp_dir().as_path(),
+            &backend,
+            &cache,
+        );
         assert_eq!(name, "main");
     }
 }

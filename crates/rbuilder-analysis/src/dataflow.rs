@@ -119,10 +119,7 @@ pub fn compute_reaching_definitions(
     ReachingDefs { in_set, out_set }
 }
 
-fn collect_block_definitions(
-    block: &BasicBlock,
-    pdg: &ProgramDependenceGraph,
-) -> Vec<Definition> {
+fn collect_block_definitions(block: &BasicBlock, pdg: &ProgramDependenceGraph) -> Vec<Definition> {
     let mut defs = Vec::new();
     for (idx, stmt) in block.statements.iter().enumerate() {
         if let Some(pdg_node) = pdg.find_node_by_block_and_line(block.id, stmt.line) {

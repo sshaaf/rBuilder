@@ -50,7 +50,9 @@ pub fn node_to_location(node: Node, file: &str) -> SourceLocation {
 pub fn extract_name_from_node(node: Node, source: &[u8]) -> Result<Option<String>> {
     if matches!(
         node.kind(),
-        "method_declaration" | "local_function_statement" | "constructor_declaration"
+        "method_declaration"
+            | "local_function_statement"
+            | "constructor_declaration"
             | "function_definition"
     ) {
         if let Some(name) = node.child_by_field_name("name") {
@@ -116,7 +118,9 @@ fn extract_c_function_name(node: Node, source: &[u8]) -> Option<String> {
         "qualified_identifier" => node
             .child_by_field_name("name")
             .and_then(|n| n.utf8_text(source).ok().map(str::to_string)),
-        "function_declarator" | "pointer_declarator" | "reference_declarator"
+        "function_declarator"
+        | "pointer_declarator"
+        | "reference_declarator"
         | "parenthesized_declarator" => node
             .child_by_field_name("declarator")
             .and_then(|inner| extract_c_function_name(inner, source)),

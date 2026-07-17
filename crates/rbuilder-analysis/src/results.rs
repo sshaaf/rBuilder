@@ -224,7 +224,9 @@ impl StructuralSketchTable {
     /// Read the bloom sketch for `compact_id`.
     pub fn bloom(&self, compact_id: CompactId) -> Option<rbuilder_graph::TokenBloom> {
         let offset = compact_id as usize * rbuilder_graph::TOKEN_BLOOM_WORDS;
-        let words = self.token_blooms.get(offset..offset + rbuilder_graph::TOKEN_BLOOM_WORDS)?;
+        let words = self
+            .token_blooms
+            .get(offset..offset + rbuilder_graph::TOKEN_BLOOM_WORDS)?;
         Some([words[0], words[1], words[2], words[3]])
     }
 
@@ -339,9 +341,8 @@ impl AnalysisResults {
         let table = self
             .centrality
             .get_or_insert_with(|| CentralityTable::with_capacity(node_count));
-        for slot in 0..node_count {
-            let uuid = compact_to_uuid[slot];
-            let Some(node_idx) = view.uuid_to_index.get(&uuid) else {
+        for (slot, uuid) in compact_to_uuid.iter().enumerate() {
+            let Some(node_idx) = view.uuid_to_index.get(uuid) else {
                 continue;
             };
             let flat_id = node_idx.index();

@@ -18,8 +18,9 @@ pub fn build_cfg_for_function(
     let bytes = source.as_bytes();
     let tree = parse_language(language, bytes)?;
     let function_kinds = function_kinds_for(language)?;
-    let func_node = find_function_by_name(tree.root_node(), bytes, function_name, function_kinds)
-        .ok_or_else(|| Error::NotFound(format!("function '{function_name}' not found")))?;
+    let func_node =
+        find_function_by_name(tree.root_node(), bytes, function_name, function_kinds)
+            .ok_or_else(|| Error::NotFound(format!("function '{function_name}' not found")))?;
     build_cfg_from_function_node(language, func_node, bytes)
 }
 
@@ -42,7 +43,12 @@ impl ParsedSourceFile {
     }
 
     /// Build CFG for a named function using the cached parse tree.
-    pub fn build_cfg(&self, language: &str, source: &[u8], function_name: &str) -> Result<ControlFlowGraph> {
+    pub fn build_cfg(
+        &self,
+        language: &str,
+        source: &[u8],
+        function_name: &str,
+    ) -> Result<ControlFlowGraph> {
         build_cfg_for_function_in_tree(language, &self.tree, source, function_name)
     }
 }
@@ -77,12 +83,7 @@ pub fn index_function_locations(
     let tree = parse_language(language, source)?;
     let function_kinds = function_kinds_for(language)?;
     let mut index = HashMap::new();
-    collect_function_locations(
-        tree.root_node(),
-        source,
-        function_kinds,
-        &mut index,
-    );
+    collect_function_locations(tree.root_node(), source, function_kinds, &mut index);
     Ok((tree, index))
 }
 
@@ -252,9 +253,7 @@ impl<'a> CfgBuilder<'a> {
             "while_statement" | "while_expression" => self.visit_while(node, source),
             "do_statement" => self.visit_do(node, source),
             "for_statement" | "for_expression" | "for_in_expression" | "foreach_statement"
-            | "for_range_loop" => {
-                self.visit_for(node, source)
-            }
+            | "for_range_loop" => self.visit_for(node, source),
             "loop_expression" => self.visit_loop(node, source),
 
             // Returns
@@ -269,8 +268,12 @@ impl<'a> CfgBuilder<'a> {
                 self.add_statement(node, source, StatementKind::Declaration)?;
                 Ok(())
             }
-            "short_var_declaration" | "var_declaration" | "const_declaration"
-            | "variable_declaration" | "local_declaration_statement" | "declaration" => {
+            "short_var_declaration"
+            | "var_declaration"
+            | "const_declaration"
+            | "variable_declaration"
+            | "local_declaration_statement"
+            | "declaration" => {
                 self.add_statement(node, source, StatementKind::Declaration)?;
                 Ok(())
             }
@@ -658,8 +661,7 @@ impl<'a> CfgBuilder<'a> {
             let default_block = self.new_block();
             self.cfg
                 .add_edge(cond_block, default_block, CfgEdgeType::IfFalse);
-            self.cfg
-                .add_edge(default_block, merge, CfgEdgeType::Next);
+            self.cfg.add_edge(default_block, merge, CfgEdgeType::Next);
         }
 
         self.current_block = merge;
@@ -732,15 +734,8 @@ fn find_child_kind<'a>(node: Node<'a>, kind: &str) -> Option<Node<'a>> {
 
 fn collect_switch_cases<'a>(node: Node<'a>, cases: &mut Vec<Node<'a>>) {
     match node.kind() {
-        "expression_case"
-        | "type_case"
-        | "case_clause"
-        | "default_case"
-        | "default_statement"
-        | "case_statement"
-        | "communication_case"
-        | "switch_section"
-        | "switch_case"
+        "expression_case" | "type_case" | "case_clause" | "default_case" | "default_statement"
+        | "case_statement" | "communication_case" | "switch_section" | "switch_case"
         | "switch_default" => cases.push(node),
         _ => {
             let mut cursor = node.walk();

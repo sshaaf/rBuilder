@@ -10,7 +10,6 @@ mod discover;
 mod discover_cfg;
 mod discover_impl;
 pub mod discover_output;
-mod stage_profile;
 mod export;
 mod gql;
 pub mod gql_output;
@@ -21,11 +20,12 @@ mod metrics;
 pub mod metrics_output;
 mod policy_file;
 mod query_daemon;
-mod semantic_api;
 mod semantic;
+mod semantic_api;
 pub mod semantic_output;
 mod slice;
 pub mod slice_output;
+mod stage_profile;
 
 pub use args::OutputFormat;
 
@@ -76,14 +76,19 @@ pub enum Commands {
         #[arg(short = 'v', long = "verbose")]
         verbose: bool,
 
-        #[arg(long = "security")]
-        security: bool,
+        /// Secret scanning (SecretDetector). Off by default.
+        #[arg(long = "with-security", visible_alias = "security")]
+        with_security: bool,
 
-        #[arg(long = "cfg")]
-        cfg: bool,
+        /// Per-function CFG, dominators, and PDG → `.rbuilder/analysis/` + cfg_pdg archive.
+        /// Off by default. Does **not** include discover-time taint (see `--with-taint`).
+        #[arg(long = "with-cfg", visible_alias = "cfg")]
+        with_cfg: bool,
 
-        #[arg(long = "all")]
-        all: bool,
+        /// Discover-time taint analysis (requires CFG/PDG; implies CFG pass if needed).
+        /// Off by default. On-demand: `slice ... --taint`.
+        #[arg(long = "with-taint")]
+        with_taint: bool,
 
         /// Write legacy JSON graph files (`graph.db` / `graph.json`); default is snapshot-only.
         #[arg(long = "write-json-graph")]
@@ -364,9 +369,9 @@ impl Cli {
                 languages,
                 exclude,
                 verbose: _,
-                security,
-                cfg,
-                all,
+                with_security,
+                with_cfg,
+                with_taint,
                 write_json_graph,
                 with_dashboard,
                 export_migration_hints,
@@ -379,9 +384,9 @@ impl Cli {
                     path,
                     languages,
                     exclude,
-                    security,
-                    cfg,
-                    all,
+                    with_security,
+                    with_cfg,
+                    with_taint,
                     write_json_graph,
                     with_dashboard,
                     export_migration_hints,

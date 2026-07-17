@@ -8,7 +8,6 @@ use rbuilder_error::Result;
 use rbuilder_graph::{keyword_overlap_score, satisfies_keyword_and, TokenBloom};
 use std::collections::HashSet;
 use std::path::Path;
-use uuid::Uuid;
 
 /// Default Hamming candidate pool size before late fusion.
 pub const DEFAULT_CANDIDATE_POOL: usize = 256;
@@ -112,9 +111,7 @@ pub fn keyword_and_matches_metadata(entry: &SemanticEntry, keywords: &[String]) 
         .unwrap_or_default();
 
     keywords.iter().all(|keyword| {
-        tokens.contains(keyword)
-            || name_lower.contains(keyword)
-            || qname_lower.contains(keyword)
+        tokens.contains(keyword) || name_lower.contains(keyword) || qname_lower.contains(keyword)
     })
 }
 
@@ -173,14 +170,11 @@ pub fn fuse_candidates(
     for candidate in candidates.iter_mut() {
         let node_bloom = analysis
             .and_then(|results| results.get_compact_id(candidate.entry.node_id))
-            .and_then(|compact_id| {
-                analysis?
-                    .structural_sketch
-                    .as_ref()?
-                    .bloom(compact_id)
-            });
+            .and_then(|compact_id| analysis?.structural_sketch.as_ref()?.bloom(compact_id));
 
-        if config.keyword_and && !keyword_and_matches(&candidate.entry, keywords, node_bloom.as_ref()) {
+        if config.keyword_and
+            && !keyword_and_matches(&candidate.entry, keywords, node_bloom.as_ref())
+        {
             candidate.fused_score = f64::NEG_INFINITY;
             continue;
         }
@@ -306,7 +300,11 @@ mod tests {
     #[test]
     fn keyword_and_requires_all_terms() {
         let entry = sample_entry("processInvoice", "InvoiceService.processInvoice");
-        assert!(keyword_and_matches(&entry, &["invoice".into(), "process".into()], None));
+        assert!(keyword_and_matches(
+            &entry,
+            &["invoice".into(), "process".into()],
+            None
+        ));
         assert!(!keyword_and_matches(
             &entry,
             &["invoice".into(), "payment".into()],
@@ -397,13 +395,7 @@ mod tests {
             w_sketch: 0.0,
             ..Default::default()
         };
-        fuse_candidates(
-            &mut candidates,
-            &[],
-            256,
-            Some(&results),
-            &config,
-        );
+        fuse_candidates(&mut candidates, &[], 256, Some(&results), &config);
         assert!(candidates[0].fused_score > 0.8);
     }
 

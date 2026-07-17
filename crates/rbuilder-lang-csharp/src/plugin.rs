@@ -317,7 +317,13 @@ fn collect_base_list_relations(
     }
 }
 
-fn relation(from: &str, to: &str, relation_type: RelationType, node: Node, file_path: &Path) -> Relation {
+fn relation(
+    from: &str,
+    to: &str,
+    relation_type: RelationType,
+    node: Node,
+    file_path: &Path,
+) -> Relation {
     Relation {
         from: from.to_string(),
         to: to.to_string(),

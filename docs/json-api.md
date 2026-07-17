@@ -105,7 +105,7 @@ if (doc.schema_version !== 2) {
 ## 4. `discover`
 
 ```bash
-rbuilder -f json discover PATH [-l LANGS] [-e PATTERNS] [--cfg] [--all]
+rbuilder -f json discover PATH [-l LANGS] [-e PATTERNS] [--with-cfg] [--with-taint]
 ```
 
 ### TypeScript shape

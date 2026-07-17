@@ -171,7 +171,10 @@ impl ProgramDependenceGraph {
     fn rebuild_block_nodes(&mut self) {
         self.block_nodes.clear();
         for node in self.nodes.values() {
-            self.block_nodes.entry(node.block).or_default().push(node.id);
+            self.block_nodes
+                .entry(node.block)
+                .or_default()
+                .push(node.id);
         }
     }
 
@@ -432,11 +435,7 @@ impl ProgramDependenceGraph {
     /// Downstream nodes depending on `node_id`.
     pub fn get_dependents(&self, node_id: PdgNodeId) -> Vec<PdgNodeId> {
         if !self.data_succ.is_empty() {
-            return self
-                .data_succ
-                .get(&node_id)
-                .cloned()
-                .unwrap_or_default();
+            return self.data_succ.get(&node_id).cloned().unwrap_or_default();
         }
         self.data_deps
             .iter()
@@ -537,7 +536,12 @@ fn compute_post_dominators(cfg: &ControlFlowGraph) -> PostDominatorTree {
     PostDominatorTree {
         ipdom: post_dom
             .into_iter()
-            .map(|(block, set)| (block, Arc::try_unwrap(set).unwrap_or_else(|arc| (*arc).clone())))
+            .map(|(block, set)| {
+                (
+                    block,
+                    Arc::try_unwrap(set).unwrap_or_else(|arc| (*arc).clone()),
+                )
+            })
             .collect(),
     }
 }
@@ -561,7 +565,10 @@ fn intersect_post_dom_sets(
         .collect()
 }
 
-fn post_dom_sets_equal(current: Option<&Arc<HashSet<BlockId>>>, next: &Arc<HashSet<BlockId>>) -> bool {
+fn post_dom_sets_equal(
+    current: Option<&Arc<HashSet<BlockId>>>,
+    next: &Arc<HashSet<BlockId>>,
+) -> bool {
     match current {
         None => false,
         Some(cur) if Arc::ptr_eq(cur, next) => true,
@@ -642,10 +649,9 @@ fn chain(a: i32) -> i32 {
         assert!(!pdg.data_succ.is_empty());
         assert!(pdg.data_flow_depth_for_symbol("a") >= 2);
 
-        let mut reloaded: ProgramDependenceGraph = bincode::deserialize(
-            &bincode::serialize(&pdg).expect("serialize pdg"),
-        )
-        .expect("deserialize pdg");
+        let mut reloaded: ProgramDependenceGraph =
+            bincode::deserialize(&bincode::serialize(&pdg).expect("serialize pdg"))
+                .expect("deserialize pdg");
         reloaded.data_succ.clear();
         assert!(pdg.data_flow_depth_for_symbol("a") >= 2);
         assert!(reloaded.data_flow_depth_for_symbol("a") >= 2);
