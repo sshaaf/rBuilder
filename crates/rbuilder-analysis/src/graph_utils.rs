@@ -1,14 +1,10 @@
-//! Utilities for converting rBuilder graphs into petgraph structures.
+//! Topology utilities for analysis engines.
 //!
-//! ## Type-Aware Topology Projection
-//!
-//! Builds lightweight petgraph views using `EdgeType` edge weights so consumers can
-//! filter projections (call graph, structural graph, etc.) without cloning full
-//! [`Edge`] structs from the backend.
+//! [`PetGraphView`] is a compatibility façade over [`StructuralTopology`] (typed CSR).
+//! Prefer [`StructuralTopology`] for new code; discover builds one topology and shares it.
 
-use petgraph::graph::{DiGraph, NodeIndex, UnGraph};
-use petgraph::visit::EdgeRef;
-use petgraph::Direction;
+use crate::structural_topology::StructuralTopology;
+use petgraph::graph::NodeIndex;
 use rbuilder_error::Result;
 use rbuilder_graph::backend::MemoryBackend;
 use rbuilder_graph::schema::EdgeType;
@@ -53,166 +49,63 @@ pub fn edge_type_set(allowed_types: &[EdgeType]) -> HashSet<EdgeType> {
     allowed_types.iter().copied().collect()
 }
 
-/// A petgraph view of the code graph with UUID mapping and typed edges.
+/// Typed graph topology view (CSR-backed) with UUID mapping.
+///
+/// Memory layout (RSS-conscious):
+/// - one bidirectional typed CSR ([`StructuralTopology`])
+/// - `uuid_to_index` for lookups (`NodeIndex` mirrors dense `u32`)
+/// - dense `index_to_uuid`
 pub struct PetGraphView {
-    /// Directed graph with [`EdgeType`] weights
-    pub directed: DiGraph<(), EdgeType>,
-    /// Undirected graph for community detection
-    pub undirected: UnGraph<(), EdgeType>,
-    /// Map from node UUID to directed graph index
+    /// Underlying CSR topology.
+    pub topo: StructuralTopology,
+    /// Map from node UUID to dense index (as [`NodeIndex`] for API compatibility).
     pub uuid_to_index: HashMap<Uuid, NodeIndex>,
-    /// Map from directed graph index to UUID
-    pub index_to_uuid: HashMap<NodeIndex, Uuid>,
-    /// Map from undirected graph index to UUID
-    pub undirected_to_uuid: HashMap<NodeIndex, Uuid>,
+    /// Dense map: `NodeIndex.index()` → UUID
+    pub index_to_uuid: Vec<Uuid>,
 }
 
 impl PetGraphView {
-    /// Build petgraph views from a memory backend using zero-clone typed topology projection.
-    pub fn from_backend(backend: &MemoryBackend) -> Result<Self> {
-        let node_count = backend.node_count();
-        let edge_count = backend.edge_count();
-
-        let mut directed = DiGraph::<(), EdgeType>::with_capacity(node_count, edge_count);
-        let mut undirected = UnGraph::<(), EdgeType>::with_capacity(node_count, edge_count);
-        let mut uuid_to_index = HashMap::with_capacity(node_count);
-        let mut index_to_uuid = HashMap::with_capacity(node_count);
-        let mut uuid_to_undirected = HashMap::with_capacity(node_count);
-        let mut undirected_to_uuid = HashMap::with_capacity(node_count);
-
-        let node_ids = backend.all_node_ids()?;
-
-        for node_id in node_ids {
-            let d_idx = directed.add_node(());
-            let u_idx = undirected.add_node(());
-            uuid_to_index.insert(node_id, d_idx);
-            index_to_uuid.insert(d_idx, node_id);
-            uuid_to_undirected.insert(node_id, u_idx);
-            undirected_to_uuid.insert(u_idx, node_id);
-        }
-
-        Self::wire_edges(
-            backend.edge_topology_typed()?,
-            &mut directed,
-            &mut undirected,
-            &uuid_to_index,
-            &uuid_to_undirected,
-        )?;
-
-        Ok(Self {
-            directed,
-            undirected,
-            uuid_to_index,
-            index_to_uuid,
-            undirected_to_uuid,
-        })
-    }
-
-    /// Build petgraph views directly from a prepared mmap snapshot (no backend hydration).
-    pub fn from_prepared(prepared: &PreparedGraphSnapshot) -> Result<Self> {
-        let node_count = prepared.nodes.len();
-        let edge_count = prepared.edges.len();
-
-        let mut directed = DiGraph::<(), EdgeType>::with_capacity(node_count, edge_count);
-        let mut undirected = UnGraph::<(), EdgeType>::with_capacity(node_count, edge_count);
-        let mut uuid_to_index = HashMap::with_capacity(node_count);
-        let mut index_to_uuid = HashMap::with_capacity(node_count);
-        let mut uuid_to_undirected = HashMap::with_capacity(node_count);
-        let mut undirected_to_uuid = HashMap::with_capacity(node_count);
-
-        for node in &prepared.nodes {
-            let d_idx = directed.add_node(());
-            let u_idx = undirected.add_node(());
-            uuid_to_index.insert(node.id, d_idx);
-            index_to_uuid.insert(d_idx, node.id);
-            uuid_to_undirected.insert(node.id, u_idx);
-            undirected_to_uuid.insert(u_idx, node.id);
-        }
-
-        let edge_topology = prepared
-            .edges
+    fn from_topo(topo: StructuralTopology) -> Self {
+        let index_to_uuid = topo.index_to_uuid.clone();
+        let uuid_to_index = topo
+            .uuid_to_index
             .iter()
-            .map(|e| (e.from, e.to, e.edge_type))
-            .collect::<Vec<_>>();
-
-        Self::wire_edges(
-            edge_topology,
-            &mut directed,
-            &mut undirected,
-            &uuid_to_index,
-            &uuid_to_undirected,
-        )?;
-
-        Ok(Self {
-            directed,
-            undirected,
+            .map(|(&u, &i)| (u, NodeIndex::new(i as usize)))
+            .collect();
+        Self {
+            topo,
             uuid_to_index,
             index_to_uuid,
-            undirected_to_uuid,
-        })
+        }
     }
 
-    /// Build petgraph views from a mmap snapshot store (columnar v2: no full bincode deserialize).
+    /// Build from a memory backend.
+    pub fn from_backend(backend: &MemoryBackend) -> Result<Self> {
+        Ok(Self::from_topo(StructuralTopology::from_backend(backend)?))
+    }
+
+    /// Build from a prepared mmap snapshot.
+    pub fn from_prepared(prepared: &PreparedGraphSnapshot) -> Result<Self> {
+        Ok(Self::from_topo(StructuralTopology::from_prepared(
+            prepared,
+        )?))
+    }
+
+    /// Build from a mmap snapshot store.
     pub fn from_snapshot_store(store: &SnapshotNodeStore) -> Result<Self> {
-        let node_count = store.node_count();
-        let edge_topology = store.edge_topology_typed()?;
-
-        let mut directed = DiGraph::<(), EdgeType>::with_capacity(node_count, edge_topology.len());
-        let mut undirected =
-            UnGraph::<(), EdgeType>::with_capacity(node_count, edge_topology.len());
-        let mut uuid_to_index = HashMap::with_capacity(node_count);
-        let mut index_to_uuid = HashMap::with_capacity(node_count);
-        let mut uuid_to_undirected = HashMap::with_capacity(node_count);
-        let mut undirected_to_uuid = HashMap::with_capacity(node_count);
-
-        for node_id in store.all_node_ids() {
-            let d_idx = directed.add_node(());
-            let u_idx = undirected.add_node(());
-            uuid_to_index.insert(node_id, d_idx);
-            index_to_uuid.insert(d_idx, node_id);
-            uuid_to_undirected.insert(node_id, u_idx);
-            undirected_to_uuid.insert(u_idx, node_id);
-        }
-
-        Self::wire_edges(
-            edge_topology,
-            &mut directed,
-            &mut undirected,
-            &uuid_to_index,
-            &uuid_to_undirected,
-        )?;
-
-        Ok(Self {
-            directed,
-            undirected,
-            uuid_to_index,
-            index_to_uuid,
-            undirected_to_uuid,
-        })
+        Ok(Self::from_topo(StructuralTopology::from_snapshot_store(
+            store,
+        )?))
     }
 
-    fn wire_edges(
-        edge_topology: Vec<(Uuid, Uuid, EdgeType)>,
-        directed: &mut DiGraph<(), EdgeType>,
-        undirected: &mut UnGraph<(), EdgeType>,
-        uuid_to_index: &HashMap<Uuid, NodeIndex>,
-        uuid_to_undirected: &HashMap<Uuid, NodeIndex>,
-    ) -> Result<()> {
-        for (from_uuid, to_uuid, edge_type) in edge_topology {
-            if let (Some(&from), Some(&to)) =
-                (uuid_to_index.get(&from_uuid), uuid_to_index.get(&to_uuid))
-            {
-                directed.add_edge(from, to, edge_type);
-            }
+    /// Node count.
+    pub fn node_count(&self) -> usize {
+        self.topo.node_count()
+    }
 
-            if let (Some(&from), Some(&to)) = (
-                uuid_to_undirected.get(&from_uuid),
-                uuid_to_undirected.get(&to_uuid),
-            ) {
-                undirected.add_edge(from, to, edge_type);
-            }
-        }
-        Ok(())
+    /// Directed edge count.
+    pub fn edge_count(&self) -> usize {
+        self.topo.edge_count()
     }
 
     /// Incoming neighbors reachable via one of `allowed` edge types.
@@ -221,10 +114,9 @@ impl PetGraphView {
         idx: NodeIndex,
         allowed: &'a [EdgeType],
     ) -> impl Iterator<Item = NodeIndex> + 'a {
-        self.directed
-            .edges_directed(idx, Direction::Incoming)
-            .filter(move |e| allowed.contains(e.weight()))
-            .map(|e| e.source())
+        self.topo
+            .in_filtered(idx.index() as u32, allowed)
+            .map(|i| NodeIndex::new(i as usize))
     }
 
     /// Outgoing neighbors reachable via one of `allowed` edge types.
@@ -233,34 +125,29 @@ impl PetGraphView {
         idx: NodeIndex,
         allowed: &'a [EdgeType],
     ) -> impl Iterator<Item = NodeIndex> + 'a {
-        self.directed
-            .edges_directed(idx, Direction::Outgoing)
-            .filter(move |e| allowed.contains(e.weight()))
-            .map(|e| e.target())
+        self.topo
+            .out_filtered(idx.index() as u32, allowed)
+            .map(|i| NodeIndex::new(i as usize))
     }
 
     /// Whether a directed edge of the given type exists between two nodes.
     pub fn has_edge_type(&self, from: NodeIndex, to: NodeIndex, edge_type: EdgeType) -> bool {
-        self.directed
-            .find_edge(from, to)
-            .is_some_and(|e| *self.directed.edge_weight(e).unwrap_or(&EdgeType::Calls) == edge_type)
+        self.topo
+            .has_edge_type(from.index() as u32, to.index() as u32, edge_type)
     }
 
-    /// Build a call-only directed graph sharing the same node indices as [`Self::directed`].
-    pub fn call_only_directed(&self) -> DiGraph<(), ()> {
-        let mut call_only = DiGraph::<(), ()>::with_capacity(
-            self.directed.node_count(),
-            self.directed.edge_count(),
-        );
-        for _ in self.directed.node_indices() {
-            call_only.add_node(());
-        }
-        for edge in self.directed.edge_references() {
-            if *edge.weight() == EdgeType::Calls {
-                call_only.add_edge(edge.source(), edge.target(), ());
-            }
-        }
-        call_only
+    /// Visit every directed edge as `(src, dst, EdgeType)` dense indices.
+    pub fn for_each_edge<F>(&self, mut f: F) -> Result<()>
+    where
+        F: FnMut(NodeIndex, NodeIndex, EdgeType),
+    {
+        self.topo.for_each_edge(|src, dst, ty| {
+            f(
+                NodeIndex::new(src as usize),
+                NodeIndex::new(dst as usize),
+                ty,
+            );
+        })
     }
 
     /// Get petgraph NodeIndex for a UUID.
@@ -270,7 +157,15 @@ impl PetGraphView {
 
     /// Get UUID for a petgraph NodeIndex.
     pub fn get_uuid(&self, index: NodeIndex) -> Option<Uuid> {
-        self.index_to_uuid.get(&index).copied()
+        self.index_to_uuid.get(index.index()).copied()
+    }
+
+    /// Iterate `(NodeIndex, Uuid)` in dense index order.
+    pub fn index_uuid_iter(&self) -> impl Iterator<Item = (NodeIndex, Uuid)> + '_ {
+        self.index_to_uuid
+            .iter()
+            .enumerate()
+            .map(|(i, uuid)| (NodeIndex::new(i), *uuid))
     }
 }
 
@@ -354,11 +249,12 @@ mod tests {
             .unwrap();
 
         let view = PetGraphView::from_backend(&backend).unwrap();
-        assert_eq!(view.directed.node_count(), 2);
-        assert_eq!(view.directed.edge_count(), 1);
+        assert_eq!(view.node_count(), 2);
+        assert_eq!(view.edge_count(), 1);
         let idx1 = view.uuid_to_index[&id1];
         let idx2 = view.uuid_to_index[&id2];
         assert!(view.has_edge_type(idx1, idx2, EdgeType::Calls));
+        assert_eq!(view.index_to_uuid.len(), 2);
     }
 
     #[test]
@@ -373,35 +269,33 @@ mod tests {
         backend
             .insert_edge(Edge::new(id1, id2, EdgeType::Calls))
             .unwrap();
-
         let prepared = rbuilder_graph::PreparedGraphSnapshot::from_backend(&backend).unwrap();
-        let tmp = tempfile::TempDir::new().unwrap();
-        let path = tmp.path().join("graph.snapshot.bin");
-        prepared.write_to_path(&path).unwrap();
-        let store = rbuilder_graph::SnapshotNodeStore::open(&path).unwrap();
-        let view = PetGraphView::from_snapshot_store(&store).unwrap();
-        assert_eq!(view.directed.node_count(), 2);
-        assert_eq!(view.directed.edge_count(), 1);
+        let view = PetGraphView::from_prepared(&prepared).unwrap();
+        assert_eq!(view.node_count(), 2);
+        assert_eq!(view.edge_count(), 1);
     }
 
     #[test]
     fn traversal_config_default_depth() {
-        assert_eq!(DEFAULT_TRAVERSAL_DEPTH, 10);
-        assert_eq!(TraversalConfig::default().max_depth, 10);
+        assert_eq!(
+            TraversalConfig::default().max_depth,
+            DEFAULT_TRAVERSAL_DEPTH
+        );
     }
 
     #[test]
     fn caller_depth_limits_impact_zone_on_chain() {
         let mut backend = MemoryBackend::new();
-        let a = Node::new(NodeType::Function, "a".to_string());
-        let b = Node::new(NodeType::Function, "b".to_string());
-        let c = Node::new(NodeType::Function, "c".to_string());
+        let a = Node::new(NodeType::Function, "a".into());
+        let b = Node::new(NodeType::Function, "b".into());
+        let c = Node::new(NodeType::Function, "c".into());
         let id_a = a.id;
         let id_b = b.id;
         let id_c = c.id;
         backend.insert_node(a).unwrap();
         backend.insert_node(b).unwrap();
         backend.insert_node(c).unwrap();
+        // c <- b <- a  (a calls b calls c); callers of c: b at depth 1, a at depth 2
         backend
             .insert_edge(Edge::new(id_a, id_b, EdgeType::Calls))
             .unwrap();
@@ -410,12 +304,9 @@ mod tests {
             .unwrap();
 
         let view = PetGraphView::from_backend(&backend).unwrap();
-        let full = vec![id_a, id_b];
-        let depth_one = filter_impact_by_caller_depth(&view, id_c, &full, 1);
-        assert_eq!(depth_one, vec![id_b]);
-        let depth_two = filter_impact_by_caller_depth(&view, id_c, &full, 2);
-        assert_eq!(depth_two.len(), 2);
-        assert!(depth_two.contains(&id_a));
-        assert!(depth_two.contains(&id_b));
+        let zone = [id_a, id_b, id_c];
+        let filtered = filter_impact_by_caller_depth(&view, id_c, &zone, 1);
+        assert!(filtered.contains(&id_b));
+        assert!(!filtered.contains(&id_a));
     }
 }

@@ -36,7 +36,12 @@ pub struct DiscoverStageReport {
     pub save_snapshot: StageTiming,
     pub save_dashboard: StageTiming,
     pub migration_plan: StageTiming,
+    /// Absolute high-water RSS for the whole discover run (ingest + analysis).
     pub peak_rss_mb: f64,
+    /// Peak RSS during ingest (index → early mmap → complexity → CSR → drop backend).
+    pub ingest_peak_rss_mb: f64,
+    /// Peak RSS during analysis after fat `CodeGraph` drop (community → save).
+    pub analysis_peak_rss_mb: f64,
     pub functions: usize,
     pub nodes: usize,
     pub cfg_enabled: bool,
@@ -90,6 +95,8 @@ impl DiscoverStageReport {
             index_secs = self.index_pipeline.secs,
             post_index_secs = post_index,
             peak_rss_mb = self.peak_rss_mb,
+            ingest_peak_rss_mb = self.ingest_peak_rss_mb,
+            analysis_peak_rss_mb = self.analysis_peak_rss_mb,
             functions = self.functions,
             nodes = self.nodes,
             cfg = self.cfg_enabled,

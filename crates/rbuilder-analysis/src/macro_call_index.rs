@@ -32,13 +32,22 @@ impl GraphFingerprint {
     }
 
     /// Capture fingerprint from topology counts and optional snapshot digest (no JSON file required).
-    pub fn from_topology(backend: &MemoryBackend, graph_digest: Option<String>) -> Self {
+    pub fn from_topology_counts(
+        node_count: usize,
+        edge_count: usize,
+        graph_digest: Option<String>,
+    ) -> Self {
         Self {
             file_size: 0,
-            node_count: backend.node_count(),
-            edge_count: backend.edge_count(),
+            node_count,
+            edge_count,
             graph_digest,
         }
+    }
+
+    /// Capture fingerprint from topology counts and optional snapshot digest (no JSON file required).
+    pub fn from_topology(backend: &MemoryBackend, graph_digest: Option<String>) -> Self {
+        Self::from_topology_counts(backend.node_count(), backend.edge_count(), graph_digest)
     }
 
     /// Capture fingerprint with optional binary snapshot digest.
@@ -165,10 +174,19 @@ impl MacroCallIndex {
         }
     }
 
+    #[allow(dead_code)]
     fn node_name(backend: &MemoryBackend, id: Uuid) -> Option<String> {
         backend.get_node(id).ok().flatten().map(|n| n.name.clone())
     }
 
+    fn node_name_lookup<L: crate::node_lookup::NodeLookup + ?Sized>(
+        lookup: &L,
+        id: Uuid,
+    ) -> Option<String> {
+        lookup.get_node(id).ok().flatten().map(|n| n.name.clone())
+    }
+
+    #[allow(dead_code)]
     fn entry_from_result(
         backend: &MemoryBackend,
         result: &BlastRadiusResult,
@@ -199,6 +217,44 @@ impl MacroCallIndex {
         }
     }
 
+    fn entry_from_result_lookup<L: crate::node_lookup::NodeLookup + ?Sized>(
+        lookup: &L,
+        result: &BlastRadiusResult,
+    ) -> MacroCallIndexEntry {
+        use rbuilder_graph::schema::NodeType;
+
+        let direct_caller_names: Vec<String> = result
+            .direct_caller_ids
+            .iter()
+            .filter_map(|id| Self::node_name_lookup(lookup, *id))
+            .collect();
+
+        let mut impact_function_names: Vec<String> = result
+            .impact_zone_ids
+            .iter()
+            .filter_map(|id| {
+                lookup.get_node(*id).ok().flatten().and_then(|n| {
+                    if n.node_type == NodeType::Function {
+                        Some(n.name)
+                    } else {
+                        None
+                    }
+                })
+            })
+            .collect();
+        impact_function_names.sort();
+
+        MacroCallIndexEntry {
+            score: result.score,
+            direct_caller_ids: result.direct_caller_ids.clone(),
+            impact_zone_ids: result.impact_zone_ids.clone(),
+            direct_caller_names,
+            impact_function_names,
+            scc_id: result.scc_id,
+            scc_size: result.scc_size,
+        }
+    }
+
     /// Build an index from discover-time blast-radius results.
     pub fn from_results(
         graph_db_path: &Path,
@@ -211,11 +267,12 @@ impl MacroCallIndex {
         } else {
             GraphFingerprint::from_topology(backend, graph_digest)
         };
-        Self::from_results_with_fingerprint(backend, results, fingerprint)
+        Self::from_results_with_lookup(backend, results, fingerprint)
     }
 
-    fn from_results_with_fingerprint(
-        backend: &MemoryBackend,
+    /// Build an index using cold or live [`crate::node_lookup::NodeLookup`].
+    pub fn from_results_with_lookup<L: crate::node_lookup::NodeLookup + ?Sized>(
+        lookup: &L,
         results: &[(Uuid, BlastRadiusResult)],
         graph_fingerprint: GraphFingerprint,
     ) -> Result<Self> {
@@ -224,8 +281,8 @@ impl MacroCallIndex {
         let mut symbol_context = HashMap::with_capacity(results.len());
 
         for (id, result) in results {
-            entries.insert(*id, Self::entry_from_result(backend, result));
-            if let Some(node) = backend.get_node(*id).ok().flatten() {
+            entries.insert(*id, Self::entry_from_result_lookup(lookup, result));
+            if let Some(node) = lookup.get_node(*id).ok().flatten() {
                 symbol_context.insert(*id, Self::symbol_context_from_node(&node));
                 name_index.entry(node.name.clone()).or_default().push(*id);
             }
@@ -233,8 +290,8 @@ impl MacroCallIndex {
 
         Ok(Self {
             graph_fingerprint,
-            node_count: backend.node_count(),
-            edge_count: backend.edge_count(),
+            node_count: lookup.node_count(),
+            edge_count: lookup.edge_count(),
             name_index,
             entries,
             symbol_context,
@@ -255,8 +312,27 @@ impl MacroCallIndex {
     pub fn caches_are_current(
         macro_path: &Path,
         lookup_db_path: &Path,
-        _repo_root: &Path,
+        repo_root: &Path,
         backend: &MemoryBackend,
+        graph_digest: &str,
+    ) -> Result<bool> {
+        Self::caches_are_current_counts(
+            macro_path,
+            lookup_db_path,
+            repo_root,
+            backend.node_count(),
+            backend.edge_count(),
+            graph_digest,
+        )
+    }
+
+    /// Same as [`Self::caches_are_current`] with explicit topology counts (cold path).
+    pub fn caches_are_current_counts(
+        macro_path: &Path,
+        lookup_db_path: &Path,
+        _repo_root: &Path,
+        node_count: usize,
+        edge_count: usize,
         graph_digest: &str,
     ) -> Result<bool> {
         if !macro_path.exists() {
@@ -265,8 +341,8 @@ impl MacroCallIndex {
         crate::macro_call_lookup::MacroCallLookupDb::matches_digest_and_counts(
             lookup_db_path,
             graph_digest,
-            backend.node_count(),
-            backend.edge_count(),
+            node_count,
+            edge_count,
         )
     }
 

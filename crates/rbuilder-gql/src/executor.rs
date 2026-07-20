@@ -213,9 +213,7 @@ impl<'a> QueryExecutor<'a> {
 
                 for end_idx in traverse_edge(view, start_idx, edge) {
                     let end_uuid = view
-                        .index_to_uuid
-                        .get(&end_idx)
-                        .copied()
+                        .get_uuid(end_idx)
                         .ok_or_else(|| Error::GraphError("missing node".into()))?;
                     let end_node = self
                         .backend

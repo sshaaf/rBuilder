@@ -1,9 +1,10 @@
 //! Maps extracted symbols and relations into graph nodes and edges.
 
-use rbuilder_error::Result;
+use rbuilder_error::{Error, Result};
 use rbuilder_graph::code_index::{hash_code, CodeIndex};
 use rbuilder_graph::migration::graph_parameter_from_plugin;
 use rbuilder_graph::schema::{Edge, EdgeType, Node, NodeType};
+use rbuilder_graph::segmented_spill::{FinishedSpill, SegmentedSpill};
 use rbuilder_graph::structural_sketch::build_token_bloom;
 use rbuilder_plugin_api::{
     ComplexityMetrics, ConfigKey, Relation, RelationType, Symbol, SymbolType,
@@ -12,8 +13,15 @@ use std::collections::HashMap;
 use std::path::Path;
 use uuid::Uuid;
 
+#[derive(Debug, Clone, Copy)]
+struct LineSpan {
+    start: usize,
+    end: usize,
+    id: Uuid,
+}
+
 /// Builds graph nodes and edges from extracted data.
-#[derive(Debug, Default)]
+#[derive(Default)]
 pub struct GraphBuilder {
     symbol_index: HashMap<String, Uuid>,
     file_nodes: HashMap<String, Uuid>,
@@ -21,11 +29,19 @@ pub struct GraphBuilder {
     env_nodes: HashMap<String, Uuid>,
     nodes: Vec<Node>,
     edges: Vec<Edge>,
+    /// Optional disk spill — when set, nodes/edges are not kept in `Vec`s.
+    spill: Option<SegmentedSpill>,
+    spill_error: Option<String>,
+    spilled_nodes: usize,
+    spilled_edges: usize,
+    /// Line ranges for config-usage resolution when nodes are spilled.
+    file_line_spans: HashMap<String, Vec<LineSpan>>,
     code_index: Option<CodeIndex>,
     // Resolution performance tracking
     resolution_stats: ResolutionStats,
     // Fast resolution indexes (built on demand)
-    symbols_by_qualified: HashMap<String, Uuid>,
+    /// Qualified name → candidate UUIDs (may be ambiguous when FQNs collide).
+    symbols_by_qualified: HashMap<String, Vec<Uuid>>,
     symbols_by_suffix: HashMap<String, Vec<Uuid>>,
     indexes_built: bool,
 }
@@ -51,14 +67,97 @@ impl GraphBuilder {
         Self::default()
     }
 
+    /// Create a builder that spills nodes/edges to `spill_dir` instead of retaining Vecs.
+    pub fn with_spill(spill_dir: impl AsRef<Path>) -> Result<Self> {
+        let mut builder = Self::new();
+        builder.spill = Some(SegmentedSpill::create(spill_dir)?);
+        Ok(builder)
+    }
+
+    /// Whether this builder is spilling to disk.
+    pub fn is_spilling(&self) -> bool {
+        self.spill.is_some()
+    }
+
     /// Number of nodes built so far.
     pub fn node_count(&self) -> usize {
-        self.nodes.len()
+        if self.spill.is_some() {
+            self.spilled_nodes
+        } else {
+            self.nodes.len()
+        }
     }
 
     /// Number of edges built so far.
     pub fn edge_count(&self) -> usize {
-        self.edges.len()
+        if self.spill.is_some() {
+            self.spilled_edges
+        } else {
+            self.edges.len()
+        }
+    }
+
+    fn record_line_span(&mut self, node: &Node) {
+        let Some(file) = node.file_path.as_deref() else {
+            return;
+        };
+        let Some(start) = node.start_line else {
+            return;
+        };
+        let end = node.end_line.unwrap_or(start);
+        self.file_line_spans
+            .entry(file.to_string())
+            .or_default()
+            .push(LineSpan {
+                start,
+                end,
+                id: node.id,
+            });
+    }
+
+    fn index_symbol_resolution(&mut self, key: &str, node: &Node) {
+        if let Some(qualified) = &node.qualified_name {
+            let entry = self
+                .symbols_by_qualified
+                .entry(qualified.clone())
+                .or_default();
+            if !entry.contains(&node.id) {
+                entry.push(node.id);
+            }
+        }
+        let parts: Vec<&str> = key.split("::").collect();
+        for i in 1..parts.len() {
+            let suffix = parts[i..].join("::");
+            let entry = self.symbols_by_suffix.entry(suffix).or_default();
+            if !entry.contains(&node.id) {
+                entry.push(node.id);
+            }
+        }
+    }
+
+    fn commit_node(&mut self, node: Node) {
+        self.record_line_span(&node);
+        if let Some(spill) = self.spill.as_mut() {
+            if let Err(e) = spill.append_node(&node) {
+                self.spill_error = Some(e.to_string());
+            } else {
+                self.spilled_nodes += 1;
+            }
+        } else {
+            self.nodes.push(node);
+        }
+    }
+
+    fn commit_edge(&mut self, edge: Edge) {
+        if let Some(spill) = self.spill.as_mut() {
+            if let Err(e) = spill.append_edge(&edge) {
+                self.spill_error = Some(e.to_string());
+            } else {
+                self.spilled_edges += 1;
+            }
+        } else {
+            self.edges.push(edge);
+        }
     }
 
     /// Ensure a file node exists and return its ID.
@@ -71,7 +170,7 @@ impl GraphBuilder {
         let node = Node::new(NodeType::File, file_path.clone()).with_file_path(file_path.clone());
         let id = node.id;
         self.file_nodes.insert(file_path, id);
-        self.nodes.push(node);
+        self.commit_node(node);
         id
     }
 
@@ -171,15 +270,21 @@ impl GraphBuilder {
         }
 
         let id = node.id;
-        self.symbol_index.insert(key, id);
-        self.nodes.push(node);
+        self.symbol_index.insert(key.clone(), id);
+        self.index_symbol_resolution(&key, &node);
+        self.commit_node(node);
         self.add_edge(id, file_id, EdgeType::DefinedIn);
         self.add_edge(file_id, id, EdgeType::Contains);
         id
     }
 
     /// Attach complexity metrics to an existing symbol node.
+    ///
+    /// Only supported in in-memory mode (not when spilling).
     pub fn add_complexity(&mut self, symbol: &Symbol, metrics: &ComplexityMetrics) {
+        if self.spill.is_some() {
+            return;
+        }
         let key = symbol_key(
             &symbol.location.file,
             &symbol.name,
@@ -204,52 +309,37 @@ impl GraphBuilder {
     /// Build reverse indexes for fast symbol resolution.
     ///
     /// Call this after all symbols are added but before processing relations.
-    /// This converts O(n) linear scans into O(1) HashMap lookups.
+    /// Indexes are maintained incrementally at insert; this finalizes the flag.
     pub fn build_resolution_indexes(&mut self) {
-        use std::time::Instant;
         use tracing::info;
 
         if self.indexes_built {
-            return; // Already built
+            return;
         }
 
-        let start = Instant::now();
-        let symbol_count = self.symbol_index.len();
-
-        // Build UUID → Node index for O(1) lookups (eliminates O(n²) nested loop)
-        let uuid_to_node: HashMap<Uuid, &Node> = self.nodes.iter().map(|n| (n.id, n)).collect();
-
-        // Build qualified name index and suffix index
-        for (key, uuid) in &self.symbol_index {
-            // Find the node to get its qualified_name (now O(1) instead of O(n))
-            if let Some(node) = uuid_to_node.get(uuid) {
-                // Index by qualified_name if present
-                if let Some(qualified) = &node.qualified_name {
-                    self.symbols_by_qualified.insert(qualified.clone(), *uuid);
+        // Suffix / qualified indexes are filled in `index_symbol_resolution` at insert.
+        // Rebuild suffix from symbol_index only if somehow empty (legacy / partial path).
+        if self.symbols_by_suffix.is_empty() && !self.symbol_index.is_empty() {
+            for key in self.symbol_index.keys() {
+                let parts: Vec<&str> = key.split("::").collect();
+                for i in 1..parts.len() {
+                    let suffix = parts[i..].join("::");
+                    if let Some(uuid) = self.symbol_index.get(key) {
+                        let entry = self.symbols_by_suffix.entry(suffix).or_default();
+                        if !entry.contains(uuid) {
+                            entry.push(*uuid);
+                        }
+                    }
                 }
-            }
-
-            // Build suffix index for "ends_with" queries
-            // Split "file.rs::Module::function" into suffixes:
-            // - "Module::function"
-            // - "function"
-            let parts: Vec<&str> = key.split("::").collect();
-            for i in 1..parts.len() {
-                let suffix = parts[i..].join("::");
-                self.symbols_by_suffix
-                    .entry(suffix)
-                    .or_default()
-                    .push(*uuid);
             }
         }
 
         self.indexes_built = true;
 
         info!(
-            symbol_count,
+            symbol_count = self.symbol_index.len(),
             qualified_count = self.symbols_by_qualified.len(),
             suffix_count = self.symbols_by_suffix.len(),
-            elapsed_ms = start.elapsed().as_millis(),
             "built resolution indexes"
         );
     }
@@ -268,7 +358,7 @@ impl GraphBuilder {
 
         let id = node.id;
         self.config_key_nodes.insert(lookup, id);
-        self.nodes.push(node);
+        self.commit_node(node);
         self.add_edge(id, file_id, EdgeType::DefinedIn);
         self.add_edge(file_id, id, EdgeType::Contains);
         id
@@ -297,7 +387,7 @@ impl GraphBuilder {
                     relation.location.start_line.to_string(),
                 );
             }
-            self.edges.push(edge);
+            self.commit_edge(edge);
         }
         Ok(())
     }
@@ -338,7 +428,7 @@ impl GraphBuilder {
 
         let id = node.id;
         self.env_nodes.insert(key.to_string(), id);
-        self.nodes.push(node);
+        self.commit_node(node);
         id
     }
 
@@ -352,7 +442,7 @@ impl GraphBuilder {
             Node::new(NodeType::ConfigKey, key.to_string()).with_file_path(file_path.to_string());
         let id = node.id;
         self.config_key_nodes.insert(lookup, id);
-        self.nodes.push(node);
+        self.commit_node(node);
         id
     }
 
@@ -362,17 +452,28 @@ impl GraphBuilder {
         let start = Instant::now();
         self.resolution_stats.line_lookups += 1;
 
-        let result = self
-            .nodes
-            .iter()
-            .filter(|n| n.file_path.as_deref() == Some(file_path))
-            .filter(|n| {
-                n.start_line
-                    .map(|start| start <= line && n.end_line.unwrap_or(start) >= line)
-                    .unwrap_or(false)
-            })
-            .max_by_key(|n| n.start_line.unwrap_or(0))
-            .map(|n| n.id);
+        let result = if self.spill.is_some() {
+            self.file_line_spans
+                .get(file_path)
+                .and_then(|spans| {
+                    spans
+                        .iter()
+                        .filter(|s| s.start <= line && s.end >= line)
+                        .max_by_key(|s| s.start)
+                        .map(|s| s.id)
+                })
+        } else {
+            self.nodes
+                .iter()
+                .filter(|n| n.file_path.as_deref() == Some(file_path))
+                .filter(|n| {
+                    n.start_line
+                        .map(|start| start <= line && n.end_line.unwrap_or(start) >= line)
+                        .unwrap_or(false)
+                })
+                .max_by_key(|n| n.start_line.unwrap_or(0))
+                .map(|n| n.id)
+        };
 
         self.resolution_stats.line_lookup_time += start.elapsed();
         result
@@ -380,6 +481,15 @@ impl GraphBuilder {
 
     #[allow(dead_code)]
     fn find_symbol_at_line(&self, file_path: &str, line: usize) -> Option<Uuid> {
+        if self.spill.is_some() {
+            return self.file_line_spans.get(file_path).and_then(|spans| {
+                spans
+                    .iter()
+                    .filter(|s| s.start <= line && s.end >= line)
+                    .max_by_key(|s| s.start)
+                    .map(|s| s.id)
+            });
+        }
         self.nodes
             .iter()
             .filter(|n| n.file_path.as_deref() == Some(file_path))
@@ -393,6 +503,8 @@ impl GraphBuilder {
     }
 
     /// Resolve a symbol name to its UUID with performance tracking.
+    ///
+    /// Ambiguous qualified-name or suffix matches return `None` (do not pick arbitrarily).
     fn resolve_symbol_tracked(
         &mut self,
         name: &str,
@@ -413,51 +525,54 @@ impl GraphBuilder {
             return Some(*id);
         }
 
-        // 2. Try qualified hint direct lookup (O(1))
+        // 2. Try qualified hint direct lookup (O(1)); only if uniquely resolved
         if let Some(hint) = qualified_hint {
             self.resolution_stats.qualified_hint_scans += 1;
 
-            // First try direct qualified name lookup
-            if let Some(id) = self.symbols_by_qualified.get(hint) {
+            if let Some(id) = self
+                .symbols_by_qualified
+                .get(hint)
+                .and_then(|ids| unique_resolved(ids))
+            {
                 self.resolution_stats.qualified_hint_hits += 1;
                 self.resolution_stats.total_time += start.elapsed();
-                return Some(*id);
+                return Some(id);
             }
 
-            // Then try suffix index
-            if let Some(ids) = self.symbols_by_suffix.get(hint) {
-                if let Some(id) = ids.first() {
-                    self.resolution_stats.qualified_hint_hits += 1;
-                    self.resolution_stats.total_time += start.elapsed();
-                    return Some(*id);
-                }
+            if let Some(id) = self
+                .symbols_by_suffix
+                .get(hint)
+                .and_then(|ids| unique_resolved(ids))
+            {
+                self.resolution_stats.qualified_hint_hits += 1;
+                self.resolution_stats.total_time += start.elapsed();
+                return Some(id);
             }
         }
 
-        // 3. Try type hint + simple name (O(1))
+        // 3. Try type hint + simple name (O(1)); only if uniquely resolved
         if let Some(type_name) = type_hint {
             self.resolution_stats.type_hint_scans += 1;
-            // Extract simple name from qualified name if needed
             let simple_name = name.split('.').next_back().unwrap_or(name);
             let type_qualified = format!("{type_name}.{simple_name}");
 
-            // Try suffix index lookup
-            if let Some(ids) = self.symbols_by_suffix.get(&type_qualified) {
-                if let Some(id) = ids.first() {
-                    self.resolution_stats.type_hint_hits += 1;
-                    self.resolution_stats.total_time += start.elapsed();
-                    return Some(*id);
-                }
+            if let Some(id) = self
+                .symbols_by_suffix
+                .get(&type_qualified)
+                .and_then(|ids| unique_resolved(ids))
+            {
+                self.resolution_stats.type_hint_hits += 1;
+                self.resolution_stats.total_time += start.elapsed();
+                return Some(id);
             }
         }
 
-        // 4. Fallback: suffix index lookup (O(1))
+        // 4. Fallback: suffix index — None when zero or multiple candidates
         self.resolution_stats.fuzzy_scans += 1;
         let result = self
             .symbols_by_suffix
             .get(name)
-            .and_then(|ids| ids.first())
-            .copied();
+            .and_then(|ids| unique_resolved(ids));
 
         if result.is_some() {
             self.resolution_stats.fuzzy_hits += 1;
@@ -471,12 +586,11 @@ impl GraphBuilder {
     ///
     /// Resolution strategy (in order):
     /// 1. Try exact match in current file: `{file}::{name}`
-    /// 2. If qualified_hint provided, try: `*::{qualified_hint}` (e.g., "Helper.transform")
-    /// 3. If type_hint provided, try: `*::{type_hint}.{simple_name}` (e.g., "Helper.transform")
-    /// 4. Fallback to fuzzy match: any key ending with `::{name}`
+    /// 2. If qualified_hint provided, try unique match on qualified / suffix indexes
+    /// 3. If type_hint provided, try unique suffix match for `{type}.{name}`
+    /// 4. Fallback to unique fuzzy suffix match on `name`
     ///
-    /// Hints are best-effort guesses from language plugins based on local context
-    /// (variable types, field declarations, etc.) and may not always be accurate.
+    /// Ambiguous matches return `None`.
     #[allow(dead_code)]
     fn resolve_symbol(
         &self,
@@ -485,46 +599,43 @@ impl GraphBuilder {
         qualified_hint: Option<&str>,
         type_hint: Option<&str>,
     ) -> Option<Uuid> {
-        // 1. Try exact match in current file
         let qualified = format!("{file}::{name}");
         if let Some(id) = self.symbol_index.get(&qualified) {
             return Some(*id);
         }
 
-        // 2. Try qualified hint (e.g., "Helper.transform")
         if let Some(hint) = qualified_hint {
-            // Look for any key ending with the hint
-            let hint_suffix = format!("::{hint}");
-            if let Some((_, id)) = self
-                .symbol_index
-                .iter()
-                .find(|(k, _)| k.ends_with(&hint_suffix))
+            if let Some(id) = self
+                .symbols_by_qualified
+                .get(hint)
+                .and_then(|ids| unique_resolved(ids))
             {
-                return Some(*id);
+                return Some(id);
+            }
+            if let Some(id) = self
+                .symbols_by_suffix
+                .get(hint)
+                .and_then(|ids| unique_resolved(ids))
+            {
+                return Some(id);
             }
         }
 
-        // 3. Try type hint + simple name
         if let Some(type_name) = type_hint {
-            // Extract simple name from qualified name if needed
             let simple_name = name.split('.').next_back().unwrap_or(name);
             let type_qualified = format!("{type_name}.{simple_name}");
-            let hint_suffix = format!("::{type_qualified}");
-            if let Some((_, id)) = self
-                .symbol_index
-                .iter()
-                .find(|(k, _)| k.ends_with(&hint_suffix))
+            if let Some(id) = self
+                .symbols_by_suffix
+                .get(&type_qualified)
+                .and_then(|ids| unique_resolved(ids))
             {
-                return Some(*id);
+                return Some(id);
             }
         }
 
-        // 4. Fallback: fuzzy match any key ending with the name
-        let fuzzy_suffix = format!("::{name}");
-        self.symbol_index
-            .iter()
-            .find(|(k, _)| k.ends_with(&fuzzy_suffix))
-            .map(|(_, id)| *id)
+        self.symbols_by_suffix
+            .get(name)
+            .and_then(|ids| unique_resolved(ids))
     }
 
     /// Log resolution performance statistics.
@@ -575,17 +686,36 @@ impl GraphBuilder {
     }
 
     fn add_edge(&mut self, from: Uuid, to: Uuid, edge_type: EdgeType) {
-        self.edges.push(Edge::new(from, to, edge_type));
+        self.commit_edge(Edge::new(from, to, edge_type));
     }
 
-    /// Borrow built nodes (testing / inspection).
+    /// Borrow built nodes (testing / inspection). Empty when spilling.
     pub fn nodes(&self) -> &[Node] {
         &self.nodes
     }
 
     /// Consume the builder and return all nodes and edges.
+    ///
+    /// Panics if the builder was created with [`Self::with_spill`] — use
+    /// [`Self::finish_spill`] instead.
     pub fn into_graph(self) -> (Vec<Node>, Vec<Edge>) {
+        assert!(
+            self.spill.is_none(),
+            "into_graph called on spilling GraphBuilder; use finish_spill"
+        );
         (self.nodes, self.edges)
+    }
+
+    /// Finish spill writers and return a [`FinishedSpill`] for columnar compile.
+    pub fn finish_spill(mut self) -> Result<FinishedSpill> {
+        if let Some(err) = self.spill_error.take() {
+            return Err(Error::SerdeError(err));
+        }
+        let spill = self
+            .spill
+            .take()
+            .ok_or_else(|| Error::SerdeError("finish_spill called without spill mode".into()))?;
+        spill.finish()
     }
 }
 
@@ -600,6 +730,15 @@ pub enum ConfigUsageKind {
 
 fn symbol_key(file: &str, name: &str, qualified: Option<&str>) -> String {
     format!("{file}::{}", qualified.unwrap_or(name))
+}
+
+/// Return the sole candidate UUID, or `None` when zero or multiple distinct IDs.
+fn unique_resolved(ids: &[Uuid]) -> Option<Uuid> {
+    match ids {
+        [id] => Some(*id),
+        [first, rest @ ..] if rest.iter().all(|id| id == first) => Some(*first),
+        _ => None,
+    }
 }
 
 fn should_sketch_symbol(symbol_type: SymbolType) -> bool {
@@ -786,9 +925,7 @@ mod tests {
         }
     }
 
-    /// QE desired policy: duplicate FQN must not resolve as a single definitive UUID.
-    /// Currently `symbols_by_qualified.insert` overwrites — required-red until fixed
-    /// ([sshaaf/rBuilder#27](https://github.com/sshaaf/rBuilder/issues/27)).
+    /// Ambiguous FQN must not resolve as a single definitive UUID (#27).
     #[test]
     fn qe_duplicate_qualified_name_must_not_collapse_index() {
         let mut builder = GraphBuilder::new();
@@ -815,6 +952,16 @@ mod tests {
             "suffix index should retain both UUIDs (got {suffix_n})"
         );
 
+        let qn_n = builder
+            .symbols_by_qualified
+            .get("Helper.transform")
+            .map(|v| v.len())
+            .unwrap_or(0);
+        assert!(
+            qn_n >= 2,
+            "qualified index should retain both UUIDs (got {qn_n})"
+        );
+
         let resolved = builder.resolve_symbol_tracked(
             "transform",
             "caller.rs",
@@ -828,8 +975,7 @@ mod tests {
         );
     }
 
-    /// QE desired policy: suffix multi-match must not silently pick `.first()`
-    /// ([sshaaf/rBuilder#27](https://github.com/sshaaf/rBuilder/issues/27)).
+    /// Suffix multi-match must not silently pick `.first()` (#27).
     #[test]
     fn qe_suffix_multimatch_must_not_pick_first_silently() {
         let mut builder = GraphBuilder::new();

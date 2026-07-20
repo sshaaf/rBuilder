@@ -164,6 +164,35 @@ Currently hard-coded via `DEFAULT_*` and `LARGE_GRAPH_*` constants.
 > Expected cold wall ≈ **~130–135s** (r3 no-harmonic ~142s minus ~8–9s `save_dashboard`).
 > Use `--with-harmonic` / `--with-dashboard` to restore those stages.
 
+#### Cold profile after CSR + backend drop (2026-07-20)
+
+`RUST_LOG=info,profile=info` cold discover (no harmonic / no dashboard), log:
+`example/linux/discover-profile-cold-csr.log`.
+
+| Metric | Result |
+|--------|--------|
+| **Wall** | **147.8 s** (index 95s, post-index 34s) |
+| **Peak RSS** | **15.8 GB** (periodic sampler high-water) |
+| Topology (CSR build) | 1.13 s |
+| Complexity | 1.30 s |
+| Community | 4.89 s |
+| Centrality (no harmonic) | 2.26 s (betweenness 1.9s) |
+| Dependency | 4.71 s |
+| Blast build | 3.46 s |
+| Macro index | 0.008 s (bulk blast skipped on flat graph) |
+
+**Reading the peak:** Lever 1 removed `MemoryBackend` co-residency; Lever 1.5
+(segmented spill) removes full `Vec<Node>`/`Vec<Edge>` staging during discover ingest.
+Extract appends length-prefixed bincode to `.rbuilder/spill/`, then externally sorts and
+compiles columnar. Absolute peak should move toward **resolution-map RAM + sort/compile
+buffers** (not linear full-graph struct heap). Remaining multi-GB on Linux is largely
+`symbol_index` / suffix maps until those are slimmed or spilled.
+
+Discover `-v` reports **`ingest_peak_rss_mb`** vs **`analysis_peak_rss_mb`** separately
+(`[profile] discover summary`).
+
+Artifacts after this run: `.rbuilder` ≈ 2.0 GB (`graph.snapshot.bin` 1.2G, `analysis_results.bin` 354M, `blast_engine.snapshot.bin` 259M).
+
 Sub-phase profile (`RUST_LOG=profile=info discover -v`):
 
 | Sub-phase | Before optimizations | After (parallel HyperBall + gating) | Default (no `--with-harmonic`) |
@@ -174,7 +203,26 @@ Sub-phase profile (`RUST_LOG=profile=info discover -v`):
 | **Centrality total** | **~87 s** | **~33 s** | **~3 s** (PR + betweenness) |
 | **Discover wall (incremental)** | **~140 s** | **~84 s** | lower by ~harmonic |
 | **Discover wall (cold)** | **~354 s** | **~231 s** → re-profile **~169–172 s**; expected **~140 s** without harmonic | target after #29 |
-| Peak RSS | 13.3 GB | **5.5 GB** documented / **~17 GB** measured with HyperBall | expect much lower without harmonic |
+| Peak RSS | 13.3 GB | **~14–17 GB** with HyperBall (old “5.5 GB after columnar” claim was about avoiding UUID HashMap centrality, **not** eliminating dual full-graph residency) | mid‑teens without harmonic until #33 materialization fixes |
+
+### RSS materialization (#33) — Jul 2026
+
+High RSS is **duplicate graph residency** (backend + prepared clone + petgraph view), not too many analysis passes.
+
+| Fix | Status |
+|-----|--------|
+| Periodic peak RSS sampler (`MemoryMonitor::start_periodic_sampling`) | done |
+| Write columnar snapshot from backend **without** `PreparedGraphSnapshot` clone | done (`write_columnar_from_backend`) |
+| Drop undirected `UnGraph` + UUID HashMap→dense `Vec`; EdgeFiltered SCC (no call-only DiGraph clone) | done |
+| Early mmap write → drop prepared; drop topology view after blast engine build | done |
+| Full CSR topology replacing typed `DiGraph` for community/centrality/blast | **done** (`CodeGraphCsr` + `StructuralTopology`; `PetGraphView` is CSR façade) |
+| Release backend edge storage after CSR build | **done** (`MemoryBackend::release_edge_storage`) |
+| ColdMetadataDb (mmap) opened after early snapshot; **drop `CodeGraph` before community/centrality/blast** | **done** (hydrate only for `--with-dashboard` / migration / JSON) |
+| **Lever 1: discover ingest skips `MemoryBackend`** — `write_columnar_from_nodes_edges` | **done** |
+| **Lever 1.5: segmented disk spill** — `SegmentedSpill` + external sort + `write_columnar_from_spill`; `GraphBuilder::with_spill` | **done** (resolution HashMaps still in RAM; delta-merge incremental deferred) |
+| HyperBall harmonic | **opt-in** via `--with-harmonic` (keep) |
+
+Do **not** invest in merging community+centrality+blast into one algorithm pass for RSS — invest in representation / lifetimes.
 
 Top PageRank hotspot remained **BIT** (stable rank order).
 

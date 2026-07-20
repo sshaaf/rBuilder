@@ -6,9 +6,8 @@
 //! high-degree utility nodes, and deterministic importance-weighted tie-breaking.
 
 use crate::centrality::FastPageRank;
-use crate::graph_utils::{edge_type_set, PetGraphView};
+use crate::graph_utils::PetGraphView;
 use petgraph::graph::NodeIndex;
-use petgraph::visit::EdgeRef;
 use rbuilder_error::Result;
 use rbuilder_graph::backend::MemoryBackend;
 use rbuilder_graph::schema::{EdgeType, NodeType};
@@ -157,7 +156,7 @@ impl CommunityDetector {
         allowed_types: &[EdgeType],
         importance: Option<&HashMap<Uuid, f64>>,
     ) -> Result<CommunityResult> {
-        let node_count = view.directed.node_count();
+        let node_count = view.node_count();
         if node_count == 0 {
             return Ok(empty_community_result());
         }
@@ -180,8 +179,7 @@ impl CommunityDetector {
         for _ in 0..self.max_iterations {
             let mut changed = false;
 
-            for node_idx in view.directed.node_indices() {
-                let u = node_idx.index();
+            for u in 0..node_count {
                 if is_hub[u] {
                     continue;
                 }
@@ -243,10 +241,8 @@ impl CommunityDetector {
             }
         }
 
-        let label_map: HashMap<NodeIndex, usize> = view
-            .directed
-            .node_indices()
-            .map(|idx| (idx, labels[idx.index()]))
+        let label_map: HashMap<NodeIndex, usize> = (0..node_count)
+            .map(|i| (NodeIndex::new(i), labels[i]))
             .collect();
 
         let modularity = self.calculate_modularity(view, &label_map, allowed_types);
@@ -255,10 +251,11 @@ impl CommunityDetector {
             assign_infrastructure_hubs(&mut labels, &is_hub, node_count);
 
         let mut community_members: HashMap<usize, Vec<Uuid>> = HashMap::new();
-        for (idx, label) in view.directed.node_indices().map(|i| (i, labels[i.index()])) {
-            if let Some(uuid) = view.index_to_uuid.get(&idx) {
-                community_members.entry(label).or_default().push(*uuid);
-            }
+        for (idx, uuid) in view.index_uuid_iter() {
+            community_members
+                .entry(labels[idx.index()])
+                .or_default()
+                .push(uuid);
         }
 
         let communities = community_members
@@ -267,13 +264,8 @@ impl CommunityDetector {
             .collect();
 
         let assignments = view
-            .directed
-            .node_indices()
-            .filter_map(|idx| {
-                view.index_to_uuid
-                    .get(&idx)
-                    .map(|uuid| (*uuid, labels[idx.index()]))
-            })
+            .index_uuid_iter()
+            .map(|(idx, uuid)| (uuid, labels[idx.index()]))
             .collect();
 
         Ok(CommunityResult {
@@ -300,7 +292,7 @@ impl CommunityDetector {
         labels: &HashMap<NodeIndex, usize>,
         allowed_types: &[EdgeType],
     ) -> f64 {
-        let node_count = view.directed.node_count();
+        let node_count = view.node_count();
         let mut m = 0.0;
         let mut degrees = vec![0.0; node_count];
         let mut node_community = vec![0usize; node_count];
@@ -311,19 +303,19 @@ impl CommunityDetector {
 
         let mut internal_by_community: HashMap<usize, f64> = HashMap::new();
 
-        for edge in view.directed.edge_references() {
-            if !allowed_types.contains(edge.weight()) {
-                continue;
+        let _ = view.for_each_edge(|src, dst, ty| {
+            if !allowed_types.contains(&ty) {
+                return;
             }
             m += 1.0;
-            let s = edge.source().index();
-            let t = edge.target().index();
+            let s = src.index();
+            let t = dst.index();
             degrees[s] += 1.0;
             degrees[t] += 1.0;
             if node_community[s] == node_community[t] {
                 *internal_by_community.entry(node_community[s]).or_default() += 1.0;
             }
-        }
+        });
 
         if m == 0.0 {
             return 0.0;
@@ -434,7 +426,7 @@ fn resolve_importance_flat(
     tie_break: TieBreakStrategy,
     importance: Option<&HashMap<Uuid, f64>>,
 ) -> Vec<f64> {
-    let node_count = view.directed.node_count();
+    let node_count = view.node_count();
     if tie_break == TieBreakStrategy::LabelId {
         return vec![0.0; node_count];
     }
@@ -446,8 +438,8 @@ fn resolve_importance_flat(
     };
 
     let mut flat = vec![0.0; node_count];
-    for (idx, uuid) in &view.index_to_uuid {
-        if let Some(score) = score_map.get(uuid) {
+    for (idx, uuid) in view.index_uuid_iter() {
+        if let Some(score) = score_map.get(&uuid) {
             flat[idx.index()] = *score;
         }
     }
@@ -492,22 +484,7 @@ fn build_filtered_neighbor_lists(
     view: &PetGraphView,
     allowed_types: &[EdgeType],
 ) -> Vec<Vec<usize>> {
-    let node_count = view.directed.node_count();
-    let mut neighbors = vec![Vec::new(); node_count];
-    let allowed = edge_type_set(allowed_types);
-
-    for edge in view.directed.edge_references() {
-        if allowed.contains(edge.weight()) {
-            let s = edge.source().index();
-            let t = edge.target().index();
-            neighbors[s].push(t);
-            if s != t {
-                neighbors[t].push(s);
-            }
-        }
-    }
-
-    neighbors
+    view.topo.undirected_filtered_neighbors(allowed_types)
 }
 
 /// Dashboard community with inferred metadata (Phase 14 A+).

@@ -95,6 +95,26 @@ impl FileTracker {
         Ok(())
     }
 
+    /// Index files using a precomputed node→file mapping (cold discover path).
+    pub fn index_files_with_mapping(
+        &mut self,
+        files: &[PathBuf],
+        node_mapping: HashMap<String, Vec<Uuid>>,
+    ) -> Result<()> {
+        self.metadata.files.clear();
+        self.metadata.node_mapping = node_mapping;
+
+        for file in files {
+            let rel = relative_path(&self.repo_root, file)?;
+            self.metadata.files.insert(rel, Self::hash_file(file)?);
+        }
+
+        self.metadata.indexed_at = chrono_lite_now();
+        self.metadata.last_commit = current_git_commit(&self.repo_root);
+        self.metadata.version = env!("CARGO_PKG_VERSION").to_string();
+        Ok(())
+    }
+
     /// Compare current file hashes against stored metadata.
     pub fn detect_changes(&self, files: &[PathBuf]) -> Result<ChangeSet> {
         let current: HashMap<String, String> = files

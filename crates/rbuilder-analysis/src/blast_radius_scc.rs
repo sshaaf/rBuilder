@@ -12,7 +12,7 @@
 //! - Memory: O(V² / 64) for dense bitsets (~3.4 GB for 150K nodes)
 
 use bit_set::BitSet;
-use petgraph::algo::{kosaraju_scc, toposort};
+use petgraph::algo::toposort;
 use petgraph::graph::{DiGraph, NodeIndex};
 use petgraph::visit::EdgeRef;
 use rbuilder_error::{Error, Result};
@@ -71,17 +71,27 @@ impl BlastRadiusEngine {
         backend: &MemoryBackend,
         view: &crate::graph_utils::PetGraphView,
     ) -> Result<Self> {
-        let graph = view.call_only_directed();
+        Self::build_from_view_lookup(backend, view)
+    }
 
-        // Step 1: Find strongly connected components (call graph only)
-        let sccs = kosaraju_scc(&graph);
+    /// Build from topology + any [`crate::node_lookup::NodeLookup`] (cold mmap or live backend).
+    pub fn build_from_view_lookup<L: crate::node_lookup::NodeLookup + ?Sized>(
+        lookup: &L,
+        view: &crate::graph_utils::PetGraphView,
+    ) -> Result<Self> {
+        use rbuilder_graph::schema::EdgeType;
+
+        let node_count = view.node_count();
+
+        // Step 1: SCC on Calls-filtered CSR (no DiGraph materialization).
+        let sccs = view.topo.kosaraju_scc_filtered(&[EdgeType::Calls]);
         let scc_count = sccs.len();
 
         tracing::info!(
             scc_count,
-            original_nodes = graph.node_count(),
+            original_nodes = node_count,
             reduction_percent =
-                ((graph.node_count() - scc_count) as f64 / graph.node_count() as f64 * 100.0),
+                ((node_count - scc_count) as f64 / node_count.max(1) as f64 * 100.0),
             "SCC decomposition complete"
         );
 
@@ -90,10 +100,11 @@ impl BlastRadiusEngine {
         let mut scc_members: Vec<Vec<Uuid>> = vec![Vec::new(); scc_count];
 
         for (scc_id, component) in sccs.iter().enumerate() {
-            for &node_idx in component {
+            for &node_u32 in component {
+                let node_idx = NodeIndex::new(node_u32 as usize);
                 node_to_scc_idx.insert(node_idx, scc_id);
-                if let Some(uuid) = view.index_to_uuid.get(&node_idx) {
-                    scc_members[scc_id].push(*uuid);
+                if let Some(uuid) = view.get_uuid(node_idx) {
+                    scc_members[scc_id].push(uuid);
                 }
             }
         }
@@ -113,11 +124,10 @@ impl BlastRadiusEngine {
         for (scc_id, members) in scc_members.iter().enumerate() {
             // Choose representative name
             let name = if !members.is_empty() {
-                // Find first function node, or use first member
                 members
                     .iter()
                     .find_map(|uuid| {
-                        backend
+                        lookup
                             .get_node(*uuid)
                             .ok()
                             .flatten()
@@ -125,7 +135,7 @@ impl BlastRadiusEngine {
                             .map(|n| n.name.clone())
                     })
                     .unwrap_or_else(|| {
-                        backend
+                        lookup
                             .get_node(members[0])
                             .ok()
                             .flatten()
@@ -146,21 +156,23 @@ impl BlastRadiusEngine {
             scc_node_indices.push(idx);
         }
 
-        // Step 5: Add call edges between SCCs (call-only graph already filtered)
+        // Step 5: Add call edges between SCCs
         let mut added_edges: HashMap<(usize, usize), ()> = HashMap::new();
 
-        for edge in graph.edge_references() {
-            let from_scc = node_to_scc_idx[&edge.source()];
-            let to_scc = node_to_scc_idx[&edge.target()];
+        let _ = view.for_each_edge(|src, dst, ty| {
+            if ty != EdgeType::Calls {
+                return;
+            }
+            let from_scc = node_to_scc_idx[&src];
+            let to_scc = node_to_scc_idx[&dst];
 
-            // Only add edges between different SCCs (skip self-loops)
             if from_scc != to_scc {
                 let edge_key = (from_scc, to_scc);
                 added_edges.entry(edge_key).or_insert_with(|| {
                     dag.add_edge(scc_node_indices[from_scc], scc_node_indices[to_scc], ());
                 });
             }
-        }
+        });
 
         tracing::info!(
             dag_nodes = dag.node_count(),
@@ -169,7 +181,7 @@ impl BlastRadiusEngine {
         );
 
         // Step 7: Reachability — eager bitsets for condensed graphs; on-demand DAG for flat graphs.
-        let scc_fraction = scc_count as f64 / graph.node_count().max(1) as f64;
+        let scc_fraction = scc_count as f64 / node_count.max(1) as f64;
         let reachability = if scc_fraction >= FLAT_SCC_COMPRESSION_THRESHOLD {
             tracing::info!(
                 scc_fraction = %format!("{:.3}", scc_fraction),

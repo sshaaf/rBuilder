@@ -9,6 +9,7 @@ use rbuilder_extraction::discovery::{DiscoveryConfig, FileDiscoverer};
 use rbuilder_extraction::{Extractor, GraphBuilder};
 use rbuilder_graph::code_graph::CodeGraph;
 use rbuilder_graph::schema::{Edge, Node};
+use rbuilder_graph::write_columnar_from_spill;
 use rbuilder_registry::LanguageRegistry;
 use std::path::Path;
 use std::sync::Arc;
@@ -85,12 +86,89 @@ impl ProcessingPipeline {
     /// Discover, extract, and build a graph for a repository.
     pub fn process_repository(&self, root: &Path) -> Result<(CodeGraph, PipelineStats)> {
         let start = Instant::now();
+        let (nodes, edges, mut stats) = self.extract_repository(root)?;
+        let load_start = Instant::now();
+        let mut graph = CodeGraph::new();
+        graph.load(nodes, edges)?;
+        stats.graph_build_duration += load_start.elapsed();
+        stats.duration = start.elapsed();
+        Ok((graph, stats))
+    }
+
+    /// Discover, extract, and write a columnar snapshot without building [`CodeGraph`].
+    ///
+    /// Spills nodes/edges to disk during extract, then externally sorts and compiles
+    /// the columnar snapshot (no full `Vec<Node>` / `Vec<Edge>` residency).
+    pub fn process_repository_to_snapshot(
+        &self,
+        root: &Path,
+        snapshot_path: &Path,
+    ) -> Result<(PipelineStats, String)> {
+        let start = Instant::now();
         let discoverer =
             FileDiscoverer::with_config(Arc::clone(&self.registry), self.config.discovery.clone());
         let files = discoverer.discover(root)?;
         let files_discovered = files.len();
 
-        let progress = if self.config.show_progress && files_discovered > 0 {
+        let progress = self.make_progress(files_discovered);
+        let extractor = Extractor::new(Arc::clone(&self.registry));
+        let extract_start = Instant::now();
+
+        let spill_dir = root.join(".rbuilder").join("spill");
+        if spill_dir.exists() {
+            std::fs::remove_dir_all(&spill_dir)?;
+        }
+        std::fs::create_dir_all(&spill_dir)?;
+        let mut builder = GraphBuilder::with_spill(&spill_dir)?;
+
+        let progress_for_stream = progress.clone();
+        let (files_processed, tails) = stream_into_graph(
+            self.config.thread_count,
+            &extractor,
+            Arc::clone(&self.registry),
+            &files,
+            self.config.stream_channel_capacity,
+            &mut builder,
+            move || {
+                if let Some(pb) = &progress_for_stream {
+                    pb.inc(1);
+                }
+            },
+        )?;
+        let extract_duration = extract_start.elapsed();
+
+        if let Some(pb) = progress {
+            pb.finish_with_message("done");
+        }
+
+        let files_failed = files_discovered.saturating_sub(files_processed);
+
+        let graph_start = Instant::now();
+        builder.build_resolution_indexes();
+        extractor.populate_pass2(&tails, &mut builder)?;
+        let nodes_created = builder.node_count();
+        let edges_created = builder.edge_count();
+        let finished = builder.finish_spill()?;
+        let digest = write_columnar_from_spill(finished, snapshot_path)?;
+        let graph_build_duration = graph_start.elapsed();
+
+        Ok((
+            PipelineStats {
+                files_discovered,
+                files_processed,
+                files_failed,
+                nodes_created,
+                edges_created,
+                duration: start.elapsed(),
+                extract_duration,
+                graph_build_duration,
+            },
+            digest,
+        ))
+    }
+
+    fn make_progress(&self, files_discovered: usize) -> Option<ProgressBar> {
+        if self.config.show_progress && files_discovered > 0 {
             let pb = ProgressBar::new(files_discovered as u64);
             pb.set_style(
                 ProgressStyle::with_template(
@@ -103,8 +181,17 @@ impl ProcessingPipeline {
             Some(pb)
         } else {
             None
-        };
+        }
+    }
 
+    fn extract_repository(&self, root: &Path) -> Result<(Vec<Node>, Vec<Edge>, PipelineStats)> {
+        let start = Instant::now();
+        let discoverer =
+            FileDiscoverer::with_config(Arc::clone(&self.registry), self.config.discovery.clone());
+        let files = discoverer.discover(root)?;
+        let files_discovered = files.len();
+
+        let progress = self.make_progress(files_discovered);
         let extractor = Extractor::new(Arc::clone(&self.registry));
         let extract_start = Instant::now();
         let mut builder = GraphBuilder::new();
@@ -134,15 +221,13 @@ impl ProcessingPipeline {
         builder.build_resolution_indexes();
         extractor.populate_pass2(&tails, &mut builder)?;
         let (nodes, edges): (Vec<Node>, Vec<Edge>) = builder.into_graph();
+        let graph_build_duration = graph_start.elapsed();
 
         let nodes_created = nodes.len();
         let edges_created = edges.len();
-        let mut graph = CodeGraph::new();
-        graph.load(nodes, edges)?;
-        let graph_build_duration = graph_start.elapsed();
-
         Ok((
-            graph,
+            nodes,
+            edges,
             PipelineStats {
                 files_discovered,
                 files_processed,

@@ -159,12 +159,12 @@ impl<'a> BlastRadiusAnalyzer<'a> {
                 continue;
             };
             for pred in view.incoming_filtered(caller_idx, CALL_EDGES) {
-                if let Some(uuid) = view.index_to_uuid.get(&pred) {
-                    if let Ok(Some(node)) = self.backend.get_node(*uuid) {
-                        if node.node_type == NodeType::Function && *uuid != symbol_id {
+                if let Some(uuid) = view.get_uuid(pred) {
+                    if let Ok(Some(node)) = self.backend.get_node(uuid) {
+                        if node.node_type == NodeType::Function && uuid != symbol_id {
                             let next_depth = depth + 1;
                             if next_depth <= self.max_depth {
-                                queue.push_back((*uuid, next_depth));
+                                queue.push_back((uuid, next_depth));
                             }
                         }
                     }
@@ -226,7 +226,7 @@ fn incoming_callers(
 ) -> Vec<Uuid> {
     view.incoming_filtered(target_idx, CALL_EDGES)
         .filter_map(|idx| {
-            let uuid = view.index_to_uuid.get(&idx).copied()?;
+            let uuid = view.get_uuid(idx)?;
             let node = backend.get_node(uuid).ok()??;
             if node.node_type == NodeType::Function {
                 Some(uuid)

@@ -371,8 +371,16 @@ impl AnalysisResults {
         &mut self,
         backend: &rbuilder_graph::backend::MemoryBackend,
     ) -> rbuilder_error::Result<()> {
+        self.fill_structural_sketch_from_lookup(backend)
+    }
+
+    /// Fill structural sketch blooms from any [`crate::node_lookup::NodeLookup`].
+    pub fn fill_structural_sketch_from_lookup<L: crate::node_lookup::NodeLookup + ?Sized>(
+        &mut self,
+        lookup: &L,
+    ) -> rbuilder_error::Result<()> {
         let mut rows = Vec::new();
-        backend.for_each_node(|node| {
+        lookup.for_each_node(&mut |node| {
             if let Some(bloom) = node.token_bloom {
                 if let Some(compact_id) = self.get_compact_id(node.id) {
                     rows.push((compact_id, bloom));

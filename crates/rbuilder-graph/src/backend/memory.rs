@@ -164,6 +164,23 @@ impl MemoryBackend {
         Ok(())
     }
 
+    /// Drop directed edge storage and edge-type indexes after a CSR topology has been built.
+    ///
+    /// Call once topology algorithms no longer need [`Self::edge_topology_typed`]. Node
+    /// payloads and name/type indexes remain available for complexity / display / export.
+    pub fn release_edge_storage(&self) -> Result<()> {
+        {
+            let mut edges = write_lock(&self.edges)?;
+            edges.clear();
+            edges.shrink_to_fit();
+        }
+        {
+            let mut edge_type_index = write_lock(&self.edge_type_index)?;
+            edge_type_index.clear();
+        }
+        Ok(())
+    }
+
     /// Scoped read-only access to a single node. Returns result of closure.
     pub fn with_node<F, R>(&self, id: Uuid, f: F) -> Result<Option<R>>
     where

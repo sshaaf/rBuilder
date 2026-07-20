@@ -9,6 +9,8 @@ pub mod code_graph;
 pub mod code_index;
 /// Columnar mmap snapshot format (v2).
 pub mod columnar_snapshot;
+/// Typed bidirectional CSR topology.
+pub mod csr;
 /// JSON import/export for graph snapshots.
 pub mod export;
 /// String interning for index keys.
@@ -19,16 +21,25 @@ pub mod migration;
 pub mod query;
 /// Node, edge, and graph schema types.
 pub mod schema;
+/// Append-only extract spill + external-sort compile to columnar.
+pub mod segmented_spill;
 /// Prepared and memory-mapped snapshot I/O.
 pub mod snapshot;
 pub mod structural_sketch;
 
 pub use code_graph::CodeGraph;
 pub use code_index::{hash_code, CodeIndex, CodeLocation};
-pub use columnar_snapshot::{ColumnarGraphMmap, COLUMNAR_SNAPSHOT_VERSION};
+pub use columnar_snapshot::{
+    write_columnar_from_backend, write_columnar_from_nodes_edges, ColumnarGraphMmap,
+    COLUMNAR_SNAPSHOT_VERSION,
+};
+pub use csr::{edge_type_from_u8, edge_type_to_u8, CodeGraphCsr};
 pub use export::{export_json, import_json, GraphSnapshot};
 pub use migration::{migrate_snapshot, migrate_v1_to_v2};
 pub use schema::{AccessType, CallType, GraphParameter, GRAPH_SCHEMA_VERSION};
+pub use segmented_spill::{
+    write_columnar_from_spill, FinishedSpill, SegmentedSpill, DEFAULT_SORT_RUN_BYTES,
+};
 pub use snapshot::{
     MmappedGraphSnapshot, PreparedGraphSnapshot, PreparedIndexes, SnapshotNodeStore, SNAPSHOT_FILE,
 };

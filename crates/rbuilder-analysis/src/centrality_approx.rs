@@ -174,10 +174,8 @@ impl SampledBetweenness {
     ) -> HashMap<Uuid, f64> {
         let index = FlatGraphIndex::from_view(view, allowed_types);
         let flat = Self::compute_flat(&index, pivot_count, seed);
-        view.index_to_uuid
-            .iter()
-            .map(|(idx, uuid)| (idx.index(), *uuid))
-            .filter_map(|(flat_id, uuid)| flat.get(flat_id).copied().map(|s| (uuid, s)))
+        view.index_uuid_iter()
+            .filter_map(|(idx, uuid)| flat.get(idx.index()).copied().map(|s| (uuid, s)))
             .collect()
     }
 }
@@ -223,10 +221,8 @@ impl HyperBallHarmonic {
     ) -> HashMap<Uuid, f64> {
         let index = FlatGraphIndex::from_view(view, allowed_types);
         let flat = Self::compute_flat(&index, max_rounds);
-        view.index_to_uuid
-            .iter()
-            .map(|(idx, uuid)| (idx.index(), *uuid))
-            .filter_map(|(flat_id, uuid)| flat.get(flat_id).copied().map(|s| (uuid, s)))
+        view.index_uuid_iter()
+            .filter_map(|(idx, uuid)| flat.get(idx.index()).copied().map(|s| (uuid, s)))
             .collect()
     }
 }
@@ -654,8 +650,8 @@ mod tests {
         let sampled = SampledBetweenness::compute_flat(&index, 16, 7);
         let exact_map = BetweennessCentrality::compute_unbounded(&view, &[EdgeType::Calls]);
         let mut exact = vec![0.0; index.node_count];
-        for (idx, uuid) in &view.index_to_uuid {
-            exact[idx.index()] = exact_map.get(uuid).copied().unwrap_or(0.0);
+        for (idx, uuid) in view.index_uuid_iter() {
+            exact[idx.index()] = exact_map.get(&uuid).copied().unwrap_or(0.0);
         }
 
         let corr = spearman_correlation(&sampled, &exact);

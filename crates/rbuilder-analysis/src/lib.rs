@@ -12,6 +12,7 @@ pub mod centrality_approx;
 pub mod cfg;
 pub mod cfg_builder;
 pub mod cfg_pdg_archive;
+pub mod cold_metadata;
 pub mod community;
 pub mod complexity;
 pub mod dataflow;
@@ -26,6 +27,7 @@ pub mod language_profile;
 pub mod macro_call_index;
 pub mod macro_call_lookup;
 pub mod migration;
+pub mod node_lookup;
 pub mod pdg;
 pub mod policy;
 pub mod results;
@@ -42,6 +44,7 @@ pub mod semantic_onnx_tokenizer;
 pub mod semantic_search;
 pub mod slicing;
 pub mod storage;
+pub mod structural_topology;
 pub mod taint;
 pub mod type_inference;
 
@@ -79,6 +82,7 @@ pub use cfg_builder::{
     FunctionLocation, ParsedSourceFile,
 };
 pub use cfg_pdg_archive::{CfgPdgArchive, CfgPdgRecord, CFG_PDG_ARCHIVE_FILE};
+pub use cold_metadata::ColdMetadataDb;
 pub use community::{
     default_community_edge_types, detect_communities, Community, CommunityDetector,
     CommunityResult, DashboardCommunity, HubStripPolicy, TieBreakStrategy, DEFAULT_HUB_SIGMA_K,
@@ -115,6 +119,7 @@ pub use migration::{
     MigrationGraphPayload, MigrationOrderMode, MigrationPlanPayload, MigrationPlanStep,
     MigrationWeights, MIGRATION_GRAPH_SCHEMA_VERSION, MIGRATION_PLAN_SCHEMA_VERSION,
 };
+pub use node_lookup::NodeLookup;
 pub use pdg::{
     ControlDependency, DataDepType, DataDependency, PdgNode, PdgNodeId, ProgramDependenceGraph,
 };
@@ -157,5 +162,6 @@ pub use semantic_search::{
 };
 pub use slicing::{BackwardSlicer, CodeSlice, SliceCriterion};
 pub use storage::{AnalysisIndexEntry, AnalysisStorage, FunctionAnalysis, FunctionIdSyncEntry};
+pub use structural_topology::StructuralTopology;
 pub use taint::{Sanitizer, TaintAnalyzer, TaintFlow, TaintSink, TaintSource};
 pub use type_inference::{confidence_for, InferredType, TypeInferenceEngine, VariableType};

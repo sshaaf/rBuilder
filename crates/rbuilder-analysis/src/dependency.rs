@@ -4,10 +4,10 @@
 //! **Complexity:** O(V + E) per analysis; impact radius bounded by [`TraversalConfig`].
 
 use crate::graph_utils::{PetGraphView, TraversalConfig};
-use petgraph::algo::kosaraju_scc;
-use petgraph::visit::EdgeRef;
+use crate::node_lookup::NodeLookup;
 use rbuilder_error::{Error, Result};
 use rbuilder_graph::backend::{GraphBackend, MemoryBackend};
+use rbuilder_graph::schema::EdgeType;
 use std::collections::{HashMap, HashSet, VecDeque};
 use uuid::Uuid;
 
@@ -50,17 +50,26 @@ impl DependencyAnalyzer {
         view: &PetGraphView,
         backend: &MemoryBackend,
     ) -> Result<Vec<CircularDependency>> {
-        let sccs = kosaraju_scc(&view.directed);
+        Self::find_circular_dependencies_with_lookup(view, backend)
+    }
+
+    /// Find circular dependencies using topology + [`NodeLookup`] (cold or live).
+    pub fn find_circular_dependencies_with_lookup<L: NodeLookup + ?Sized>(
+        view: &PetGraphView,
+        lookup: &L,
+    ) -> Result<Vec<CircularDependency>> {
+        let sccs = view.topo.kosaraju_scc_all();
 
         let mut cycles = Vec::new();
         for component in sccs {
             if component.len() <= 1 {
                 continue;
             }
+            let component_set: HashSet<u32> = component.iter().copied().collect();
             let has_call_edge = component.iter().any(|&a| {
-                view.directed
-                    .edges(a)
-                    .any(|e| component.contains(&e.target()))
+                view.topo
+                    .out_filtered(a, &[EdgeType::Calls])
+                    .any(|t| component_set.contains(&t))
             });
             if !has_call_edge {
                 continue;
@@ -68,11 +77,11 @@ impl DependencyAnalyzer {
 
             let uuids: Vec<Uuid> = component
                 .iter()
-                .filter_map(|idx| view.index_to_uuid.get(idx).copied())
+                .filter_map(|&idx| view.get_uuid(petgraph::graph::NodeIndex::new(idx as usize)))
                 .collect();
             let names: Vec<String> = uuids
                 .iter()
-                .filter_map(|id| backend.get_node(*id).ok().flatten().map(|n| n.name.clone()))
+                .filter_map(|id| lookup.get_node(*id).ok().flatten().map(|n| n.name.clone()))
                 .collect();
 
             if uuids.len() >= 2 {
@@ -131,20 +140,18 @@ impl DependencyAnalyzer {
             }
             max_depth = max_depth.max(depth);
 
-            for neighbor in view
-                .directed
-                .neighbors_directed(idx, petgraph::Direction::Incoming)
-            {
-                if let Some(uuid) = view.index_to_uuid.get(&neighbor) {
-                    if *uuid == source {
+            for &pred in view.topo.csr.in_neighbors(idx.index() as u32).0 {
+                let neighbor = petgraph::graph::NodeIndex::new(pred as usize);
+                if let Some(uuid) = view.get_uuid(neighbor) {
+                    if uuid == source {
                         continue;
                     }
                     let next_depth = depth + 1;
                     if next_depth > config.max_depth {
                         continue;
                     }
-                    if affected.insert(*uuid) {
-                        _depths.insert(*uuid, next_depth);
+                    if affected.insert(uuid) {
+                        _depths.insert(uuid, next_depth);
                         queue.push_back((neighbor, next_depth));
                     }
                 }
@@ -153,7 +160,12 @@ impl DependencyAnalyzer {
 
         let affected_names: Vec<String> = affected
             .iter()
-            .filter_map(|id| backend.get_node(*id).ok().flatten().map(|n| n.name.clone()))
+            .filter_map(|id| {
+                GraphBackend::get_node(backend, *id)
+                    .ok()
+                    .flatten()
+                    .map(|n| n.name.clone())
+            })
             .collect();
 
         Ok(ImpactResult {
@@ -176,12 +188,14 @@ impl DependencyAnalyzer {
         let target_idx = view.uuid_to_index[&target];
 
         let callers: Vec<String> = view
-            .directed
-            .neighbors_directed(target_idx, petgraph::Direction::Incoming)
-            .filter_map(|idx| view.index_to_uuid.get(&idx))
+            .topo
+            .csr
+            .in_neighbors(target_idx.index() as u32)
+            .0
+            .iter()
+            .filter_map(|&pred| view.get_uuid(petgraph::graph::NodeIndex::new(pred as usize)))
             .filter_map(|uuid| {
-                backend
-                    .get_node(*uuid)
+                GraphBackend::get_node(backend, uuid)
                     .ok()
                     .flatten()
                     .map(|n| n.name.clone())

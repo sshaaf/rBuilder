@@ -6,7 +6,6 @@
 
 use crate::graph_utils::{edge_type_set, PetGraphView};
 use petgraph::graph::NodeIndex;
-use petgraph::visit::EdgeRef;
 use rbuilder_error::Result;
 use rbuilder_graph::backend::MemoryBackend;
 use rbuilder_graph::schema::{EdgeType, NodeType};
@@ -94,22 +93,22 @@ pub struct FlatGraphIndex {
 }
 
 impl FlatGraphIndex {
-    /// Build a contiguous flat edge list from a typed petgraph view.
+    /// Build a contiguous flat edge list from a typed CSR topology view.
     pub fn from_view(view: &PetGraphView, allowed_types: &[EdgeType]) -> Self {
-        let node_count = view.directed.node_count();
+        let node_count = view.node_count();
         let mut flat_edges = Vec::new();
         let mut participates = vec![false; node_count];
         let allowed = edge_type_set(allowed_types);
 
-        for edge in view.directed.edge_references() {
-            if allowed.contains(edge.weight()) {
-                let src = edge.source().index();
-                let dst = edge.target().index();
-                flat_edges.push((src, dst));
-                participates[src] = true;
-                participates[dst] = true;
+        let _ = view.for_each_edge(|src, dst, ty| {
+            if allowed.contains(&ty) {
+                let s = src.index();
+                let t = dst.index();
+                flat_edges.push((s, t));
+                participates[s] = true;
+                participates[t] = true;
             }
-        }
+        });
 
         Self {
             node_count,
@@ -173,14 +172,14 @@ impl FastPageRank {
         let (ranks, stats) = self.compute_flat(&index);
         let mut scores = HashMap::new();
 
-        for (idx, uuid) in &view.index_to_uuid {
+        for (idx, uuid) in view.index_uuid_iter() {
             let flat = idx.index();
             let score = if index.participates.get(flat).copied().unwrap_or(false) {
                 ranks.get(flat).copied().unwrap_or(0.0)
             } else {
                 0.0
             };
-            scores.insert(*uuid, score);
+            scores.insert(uuid, score);
         }
 
         (scores, stats)
@@ -288,7 +287,7 @@ impl BetweennessCentrality {
         allowed_types: &[EdgeType],
         max_nodes: usize,
     ) -> HashMap<Uuid, f64> {
-        let n = view.directed.node_count();
+        let n = view.node_count();
         if n == 0 || n > max_nodes {
             return HashMap::new();
         }
@@ -302,21 +301,22 @@ impl BetweennessCentrality {
     ) -> HashMap<Uuid, f64> {
         use std::collections::VecDeque;
 
-        let n = view.directed.node_count();
+        let n = view.node_count();
         if n == 0 {
             return HashMap::new();
         }
 
         let mut betweenness: HashMap<NodeIndex, f64> = HashMap::new();
+        let node_indices: Vec<NodeIndex> = (0..n).map(NodeIndex::new).collect();
 
-        for start in view.directed.node_indices() {
+        for &start in &node_indices {
             let mut stack = Vec::new();
             let mut pred: HashMap<_, Vec<_>> = HashMap::new();
             let mut sigma: HashMap<_, f64> = HashMap::new();
             let mut dist: HashMap<_, i32> = HashMap::new();
             let mut delta: HashMap<_, f64> = HashMap::new();
 
-            for v in view.directed.node_indices() {
+            for &v in &node_indices {
                 pred.insert(v, vec![]);
                 sigma.insert(v, 0.0);
                 dist.insert(v, -1);
@@ -361,11 +361,7 @@ impl BetweennessCentrality {
 
         betweenness
             .into_iter()
-            .filter_map(|(idx, score)| {
-                view.index_to_uuid
-                    .get(&idx)
-                    .map(|uuid| (*uuid, score * scale))
-            })
+            .filter_map(|(idx, score)| view.get_uuid(idx).map(|uuid| (uuid, score * scale)))
             .collect()
     }
 }
@@ -382,7 +378,7 @@ impl HarmonicCentrality {
     ) -> HashMap<Uuid, f64> {
         use std::collections::VecDeque;
 
-        let n = view.directed.node_count();
+        let n = view.node_count();
         if n == 0 || n > max_nodes {
             return HashMap::new();
         }
@@ -390,7 +386,8 @@ impl HarmonicCentrality {
         let norm_factor = if n <= 1 { 0.0 } else { 1.0 / (n as f64 - 1.0) };
 
         let mut result = HashMap::with_capacity(n);
-        for start in view.directed.node_indices() {
+        for start_i in 0..n {
+            let start = NodeIndex::new(start_i);
             let mut sum_reciprocal = 0.0;
             let mut visited = vec![false; n];
             let mut queue = VecDeque::new();
@@ -428,10 +425,10 @@ impl DegreeCentrality {
         allowed_types: &[EdgeType],
     ) -> HashMap<Uuid, (usize, usize)> {
         let mut degrees = HashMap::new();
-        for (idx, uuid) in &view.index_to_uuid {
-            let in_degree = view.incoming_filtered(*idx, allowed_types).count();
-            let out_degree = view.outgoing_filtered(*idx, allowed_types).count();
-            degrees.insert(*uuid, (in_degree, out_degree));
+        for (idx, uuid) in view.index_uuid_iter() {
+            let in_degree = view.incoming_filtered(idx, allowed_types).count();
+            let out_degree = view.outgoing_filtered(idx, allowed_types).count();
+            degrees.insert(uuid, (in_degree, out_degree));
         }
         degrees
     }
@@ -464,8 +461,8 @@ fn is_structural_container(node_type: NodeType) -> bool {
 
 /// Align a UUID-keyed score map onto petgraph node indices.
 fn align_map_to_flat(view: &PetGraphView, map: &HashMap<Uuid, f64>) -> Vec<f64> {
-    let mut flat = vec![0.0; view.directed.node_count()];
-    for (node_idx, &uuid) in &view.index_to_uuid {
+    let mut flat = vec![0.0; view.node_count()];
+    for (node_idx, uuid) in view.index_uuid_iter() {
         if let Some(&score) = map.get(&uuid) {
             flat[node_idx.index()] = score;
         }
@@ -639,7 +636,7 @@ impl CentralityAnalyzer {
     ) -> Result<CentralityRunSummary> {
         use std::time::Instant;
 
-        let node_count = view.directed.node_count();
+        let node_count = view.node_count();
         if node_count == 0 {
             return Ok(CentralityRunSummary {
                 top_pagerank: Vec::new(),
@@ -687,7 +684,7 @@ impl CentralityAnalyzer {
         use std::time::Instant;
 
         let allowed = &self.allowed_types;
-        let n = view.directed.node_count();
+        let n = view.node_count();
 
         let index_start = Instant::now();
         let index = FlatGraphIndex::from_view(view, allowed);
@@ -765,7 +762,7 @@ impl CentralityAnalyzer {
 
     /// Calculate centrality metrics for all nodes using the configured edge filter.
     pub fn analyze_with_view(&self, view: &PetGraphView) -> Result<CentralityReport> {
-        let n = view.directed.node_count();
+        let n = view.node_count();
         if n == 0 {
             return Ok(CentralityReport {
                 scores: HashMap::new(),
@@ -778,7 +775,7 @@ impl CentralityAnalyzer {
         let (index, arrays, approx_stats) = self.compute_flat_centrality(view)?;
 
         let mut scores: HashMap<Uuid, CentralityScores> = HashMap::with_capacity(n);
-        for (node_idx, &uuid) in &view.index_to_uuid {
+        for (node_idx, uuid) in view.index_uuid_iter() {
             let flat_id = node_idx.index();
             scores.insert(
                 uuid,

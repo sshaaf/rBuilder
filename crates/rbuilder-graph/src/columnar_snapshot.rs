@@ -6,7 +6,11 @@
 //! **Complexity:** open is O(N) for id→index map only; `find_nodes_by_name` uses the embedded
 //! name index without hydrating a [`MemoryBackend`] or calling [`Self::to_prepared`].
 
+use crate::backend::trait_def::GraphBackend;
+use crate::backend::MemoryBackend;
+use crate::csr::{edge_type_from_u8, edge_type_to_u8};
 use crate::schema::{Edge, EdgeType, GraphParameter, Node, NodeType};
+use crate::snapshot::{PreparedGraphSnapshot, PreparedIndexes, SNAPSHOT_MAGIC};
 use memmap2::Mmap;
 use rbuilder_error::{Error, Result};
 use serde::{Deserialize, Serialize};
@@ -14,9 +18,6 @@ use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Arc;
 use uuid::Uuid;
-
-use crate::snapshot::{PreparedGraphSnapshot, PreparedIndexes, SNAPSHOT_MAGIC};
-
 /// Snapshot file format version for columnar layout.
 pub const COLUMNAR_SNAPSHOT_VERSION: u32 = 2;
 
@@ -69,30 +70,30 @@ fn decode_node_extension(bytes: &[u8]) -> Result<NodeExtension> {
 
 /// Fixed-width node column (64 bytes).
 #[repr(C)]
-struct NodeRow {
-    id: [u8; 16],
-    node_type: u16,
-    _pad: u16,
-    name_off: u32,
-    name_len: u32,
-    file_path_off: u32,
-    file_path_len: u32,
-    signature_off: u32,
-    signature_len: u32,
-    start_line: u32,
-    end_line: u32,
-    extension_off: u32,
-    extension_len: u32,
-    _pad_end: u32,
+pub(crate) struct NodeRow {
+    pub(crate) id: [u8; 16],
+    pub(crate) node_type: u16,
+    pub(crate) _pad: u16,
+    pub(crate) name_off: u32,
+    pub(crate) name_len: u32,
+    pub(crate) file_path_off: u32,
+    pub(crate) file_path_len: u32,
+    pub(crate) signature_off: u32,
+    pub(crate) signature_len: u32,
+    pub(crate) start_line: u32,
+    pub(crate) end_line: u32,
+    pub(crate) extension_off: u32,
+    pub(crate) extension_len: u32,
+    pub(crate) _pad_end: u32,
 }
 
 /// Fixed-width edge column (40 bytes).
 #[repr(C)]
-struct EdgeRow {
-    from: [u8; 16],
-    to: [u8; 16],
-    edge_type: u8,
-    _pad: [u8; 7],
+pub(crate) struct EdgeRow {
+    pub(crate) from: [u8; 16],
+    pub(crate) to: [u8; 16],
+    pub(crate) edge_type: u8,
+    pub(crate) _pad: [u8; 7],
 }
 
 /// Parsed columnar snapshot backed by mmap (no full graph deserialize at open).
@@ -443,22 +444,22 @@ impl PreparedGraphSnapshot {
     }
 }
 
-struct StringPool {
-    bytes: Vec<u8>,
+pub(crate) struct StringPool {
+    pub(crate) bytes: Vec<u8>,
 }
 
 #[derive(Clone, Copy)]
-struct StrRef {
-    off: u32,
-    len: u32,
+pub(crate) struct StrRef {
+    pub(crate) off: u32,
+    pub(crate) len: u32,
 }
 
 impl StringPool {
-    fn new() -> Self {
+    pub(crate) fn new() -> Self {
         Self { bytes: Vec::new() }
     }
 
-    fn intern(&mut self, s: &str) -> StrRef {
+    pub(crate) fn intern(&mut self, s: &str) -> StrRef {
         let off = self.bytes.len() as u32;
         let bytes = s.as_bytes();
         self.bytes.extend_from_slice(bytes);
@@ -468,7 +469,7 @@ impl StringPool {
         }
     }
 
-    fn intern_opt(&mut self, s: Option<&str>) -> StrRef {
+    pub(crate) fn intern_opt(&mut self, s: Option<&str>) -> StrRef {
         match s {
             Some(v) => self.intern(v),
             None => StrRef { off: 0, len: 0 },
@@ -700,77 +701,285 @@ fn node_type_from_u16(v: u16) -> Result<NodeType> {
     })
 }
 
-fn edge_type_to_u8(t: EdgeType) -> u8 {
-    match t {
-        EdgeType::Calls => 0,
-        EdgeType::Contains => 1,
-        EdgeType::Uses => 2,
-        EdgeType::Implements => 3,
-        EdgeType::Extends => 4,
-        EdgeType::References => 5,
-        EdgeType::Instantiates => 6,
-        EdgeType::Modifies => 7,
-        EdgeType::UsesConfig => 8,
-        EdgeType::DefinedIn => 9,
-        EdgeType::DependsOn => 10,
-        EdgeType::IncludesRole => 11,
-        EdgeType::DependsOnRole => 12,
-        EdgeType::ExecutesTask => 13,
-        EdgeType::NotifiesHandler => 14,
-        EdgeType::IncludesPlaybook => 15,
-        EdgeType::RendersTemplate => 16,
-        EdgeType::DependsOnCookbook => 17,
-        EdgeType::IncludesRecipe => 18,
-        EdgeType::DeclaresResource => 19,
-        EdgeType::UsesTemplate => 20,
-        EdgeType::DefinesAttribute => 21,
-        EdgeType::NotifiesResource => 22,
-        EdgeType::DependsOnModule => 23,
-        EdgeType::IncludesClass => 24,
-        EdgeType::InheritsClass => 25,
-        EdgeType::RequiresResource => 26,
-        EdgeType::UsesFact => 27,
-        EdgeType::Unknown => 255,
-    }
-}
-
-fn edge_type_from_u8(v: u8) -> Result<EdgeType> {
-    Ok(match v {
-        0 => EdgeType::Calls,
-        1 => EdgeType::Contains,
-        2 => EdgeType::Uses,
-        3 => EdgeType::Implements,
-        4 => EdgeType::Extends,
-        5 => EdgeType::References,
-        6 => EdgeType::Instantiates,
-        7 => EdgeType::Modifies,
-        8 => EdgeType::UsesConfig,
-        9 => EdgeType::DefinedIn,
-        10 => EdgeType::DependsOn,
-        11 => EdgeType::IncludesRole,
-        12 => EdgeType::DependsOnRole,
-        13 => EdgeType::ExecutesTask,
-        14 => EdgeType::NotifiesHandler,
-        15 => EdgeType::IncludesPlaybook,
-        16 => EdgeType::RendersTemplate,
-        17 => EdgeType::DependsOnCookbook,
-        18 => EdgeType::IncludesRecipe,
-        19 => EdgeType::DeclaresResource,
-        20 => EdgeType::UsesTemplate,
-        21 => EdgeType::DefinesAttribute,
-        22 => EdgeType::NotifiesResource,
-        23 => EdgeType::DependsOnModule,
-        24 => EdgeType::IncludesClass,
-        25 => EdgeType::InheritsClass,
-        26 => EdgeType::RequiresResource,
-        27 => EdgeType::UsesFact,
-        255 => EdgeType::Unknown,
-        _ => return Err(Error::SerdeError(format!("unknown edge type code {v}"))),
-    })
-}
-
 fn bincode_err(e: bincode::Error) -> Error {
     Error::SerdeError(format!("columnar snapshot: {e}"))
+}
+
+fn append_node_columnar(
+    node: &Node,
+    hasher: &mut blake3::Hasher,
+    strings: &mut StringPool,
+    extensions_blob: &mut Vec<u8>,
+    name_index: &mut HashMap<String, Vec<Uuid>>,
+    type_index: &mut HashMap<NodeType, Vec<Uuid>>,
+    node_rows: &mut Vec<NodeRow>,
+) -> Result<()> {
+    let node_bytes = bincode::serialize(node).map_err(bincode_err)?;
+    append_node_columnar_prehashed(
+        node,
+        &node_bytes,
+        hasher,
+        strings,
+        extensions_blob,
+        name_index,
+        type_index,
+        node_rows,
+    )
+}
+
+/// Hash pre-serialized node bytes (must match `bincode::serialize(node)`) then encode columns.
+pub(crate) fn append_node_columnar_prehashed(
+    node: &Node,
+    node_bytes: &[u8],
+    hasher: &mut blake3::Hasher,
+    strings: &mut StringPool,
+    extensions_blob: &mut Vec<u8>,
+    name_index: &mut HashMap<String, Vec<Uuid>>,
+    type_index: &mut HashMap<NodeType, Vec<Uuid>>,
+    node_rows: &mut Vec<NodeRow>,
+) -> Result<()> {
+    hasher.update(node_bytes);
+
+    let name_off = strings.intern(&node.name);
+    let file_path_off = strings.intern_opt(node.file_path.as_deref());
+    let signature_off = strings.intern_opt(node.signature.as_deref());
+    let extension = NodeExtension {
+        qualified_name: node.qualified_name.clone(),
+        return_type: node.return_type.clone(),
+        code_hash: node.code_hash.clone(),
+        token_bloom: node.token_bloom,
+        parameters: node.parameters.clone(),
+        properties: node.properties.clone(),
+        labels: node.labels.clone(),
+    };
+    let ext_bytes = bincode::serialize(&extension).map_err(bincode_err)?;
+    let extension_off = extensions_blob.len() as u32;
+    extensions_blob.extend_from_slice(&ext_bytes);
+
+    node_rows.push(NodeRow {
+        id: *node.id.as_bytes(),
+        node_type: node_type_to_u16(node.node_type),
+        _pad: 0,
+        name_off: name_off.off,
+        name_len: name_off.len,
+        file_path_off: file_path_off.off,
+        file_path_len: file_path_off.len,
+        signature_off: signature_off.off,
+        signature_len: signature_off.len,
+        start_line: node.start_line.unwrap_or(0) as u32,
+        end_line: node.end_line.unwrap_or(0) as u32,
+        extension_off,
+        extension_len: ext_bytes.len() as u32,
+        _pad_end: 0,
+    });
+
+    name_index
+        .entry(node.name.clone())
+        .or_default()
+        .push(node.id);
+    type_index.entry(node.node_type).or_default().push(node.id);
+    Ok(())
+}
+
+pub(crate) fn write_columnar_assembled(
+    path: &Path,
+    node_rows: &[NodeRow],
+    edge_rows: &[EdgeRow],
+    strings: &StringPool,
+    extensions_blob: &[u8],
+    name_index: &HashMap<String, Vec<Uuid>>,
+    type_index: &HashMap<NodeType, Vec<Uuid>>,
+    content_digest: &str,
+) -> Result<()> {
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+
+    let name_index_bytes = bincode::serialize(name_index).map_err(bincode_err)?;
+    let type_index_bytes = bincode::serialize(type_index).map_err(bincode_err)?;
+
+    let offset_nodes =
+        HEADER_SIZE as u64 + 8 + name_index_bytes.len() as u64 + 8 + type_index_bytes.len() as u64;
+    let offset_edges = offset_nodes + (node_rows.len() * NODE_ROW_SIZE) as u64;
+    let offset_strings = offset_edges + (edge_rows.len() * EDGE_ROW_SIZE) as u64;
+    let offset_strings_len = strings.bytes.len() as u64;
+    let offset_extensions = offset_strings + offset_strings_len;
+
+    let mut digest_bytes = [0u8; 64];
+    let digest_src = content_digest.as_bytes();
+    let copy_len = digest_src.len().min(64);
+    digest_bytes[..copy_len].copy_from_slice(&digest_src[..copy_len]);
+
+    let mut file = Vec::new();
+    file.extend_from_slice(&SNAPSHOT_MAGIC);
+    file.extend_from_slice(&COLUMNAR_SNAPSHOT_VERSION.to_le_bytes());
+    file.extend_from_slice(&crate::schema::GRAPH_SCHEMA_VERSION.to_le_bytes());
+    file.extend_from_slice(&(node_rows.len() as u64).to_le_bytes());
+    file.extend_from_slice(&(edge_rows.len() as u64).to_le_bytes());
+    file.extend_from_slice(&digest_bytes);
+    file.extend_from_slice(&offset_nodes.to_le_bytes());
+    file.extend_from_slice(&offset_edges.to_le_bytes());
+    file.extend_from_slice(&offset_strings.to_le_bytes());
+    file.extend_from_slice(&offset_strings_len.to_le_bytes());
+    file.extend_from_slice(&[0u8; 4]);
+    file.extend_from_slice(&offset_extensions.to_le_bytes());
+    debug_assert_eq!(file.len(), HEADER_SIZE);
+
+    file.extend_from_slice(&(name_index_bytes.len() as u64).to_le_bytes());
+    file.extend_from_slice(&name_index_bytes);
+    file.extend_from_slice(&(type_index_bytes.len() as u64).to_le_bytes());
+    file.extend_from_slice(&type_index_bytes);
+
+    for row in node_rows {
+        file.extend_from_slice(&encode_node_row(row));
+    }
+    for row in edge_rows {
+        file.extend_from_slice(&encode_edge_row(row));
+    }
+    file.extend_from_slice(&strings.bytes);
+    file.extend_from_slice(extensions_blob);
+
+    std::fs::write(path, file)?;
+    Ok(())
+}
+
+/// Write a columnar v2 snapshot from owned node/edge vectors (no [`MemoryBackend`]).
+///
+/// Digests match [`write_columnar_from_backend`]: nodes sorted by id; edges sorted by
+/// `(from, to, type)`; BLAKE3 over bincode of each node then each edge.
+///
+/// Used by discover ingest to avoid dual residency of `GraphBuilder` Vecs + HashMap backend.
+pub fn write_columnar_from_nodes_edges(
+    mut nodes: Vec<Node>,
+    mut edges: Vec<Edge>,
+    path: &Path,
+) -> Result<String> {
+    nodes.sort_by_key(|n| n.id);
+    edges.sort_by(|a, b| {
+        (a.from, a.to, edge_type_to_u8(a.edge_type)).cmp(&(b.from, b.to, edge_type_to_u8(b.edge_type)))
+    });
+
+    let mut hasher = blake3::Hasher::new();
+    let mut strings = StringPool::new();
+    let mut node_rows = Vec::with_capacity(nodes.len());
+    let mut extensions_blob = Vec::new();
+    let mut name_index: HashMap<String, Vec<Uuid>> = HashMap::new();
+    let mut type_index: HashMap<NodeType, Vec<Uuid>> = HashMap::new();
+
+    for node in &nodes {
+        append_node_columnar(
+            node,
+            &mut hasher,
+            &mut strings,
+            &mut extensions_blob,
+            &mut name_index,
+            &mut type_index,
+            &mut node_rows,
+        )?;
+    }
+    drop(nodes);
+
+    let mut edge_rows = Vec::with_capacity(edges.len());
+    for edge in &edges {
+        let bytes = bincode::serialize(edge).map_err(bincode_err)?;
+        hasher.update(&bytes);
+        edge_rows.push(EdgeRow {
+            from: *edge.from.as_bytes(),
+            to: *edge.to.as_bytes(),
+            edge_type: edge_type_to_u8(edge.edge_type),
+            _pad: [0; 7],
+        });
+    }
+    drop(edges);
+
+    let content_digest = hasher.finalize().to_hex().to_string();
+    write_columnar_assembled(
+        path,
+        &node_rows,
+        &edge_rows,
+        &strings,
+        &extensions_blob,
+        &name_index,
+        &type_index,
+        &content_digest,
+    )?;
+    Ok(content_digest)
+}
+
+/// Write a columnar v2 snapshot directly from a live [`MemoryBackend`].
+///
+/// Unlike [`PreparedGraphSnapshot::from_backend`], this does **not** allocate a second
+/// full `Vec<Node>` / `Vec<Edge>` clone. Nodes/edges are encoded while holding backend
+/// read locks. Returns a stable BLAKE3 hex digest (nodes sorted by id; edges sorted by
+/// `(from, to, type)`).
+pub fn write_columnar_from_backend(backend: &MemoryBackend, path: &Path) -> Result<String> {
+    let mut ids = backend.all_node_ids()?;
+    ids.sort_unstable();
+
+    let mut hasher = blake3::Hasher::new();
+    let mut strings = StringPool::new();
+    let mut node_rows = Vec::with_capacity(ids.len());
+    let mut extensions_blob = Vec::new();
+    let mut name_index: HashMap<String, Vec<Uuid>> = HashMap::new();
+    let mut type_index: HashMap<NodeType, Vec<Uuid>> = HashMap::new();
+
+    for id in &ids {
+        let node = backend
+            .get_node(*id)?
+            .ok_or_else(|| Error::NodeNotFound(id.to_string()))?;
+        append_node_columnar(
+            &node,
+            &mut hasher,
+            &mut strings,
+            &mut extensions_blob,
+            &mut name_index,
+            &mut type_index,
+            &mut node_rows,
+        )?;
+    }
+
+    let mut edge_meta: Vec<(Uuid, Uuid, EdgeType, Vec<u8>)> =
+        Vec::with_capacity(backend.edge_count());
+    let mut edge_err: Option<Error> = None;
+    backend.for_each_edge(|edge| {
+        if edge_err.is_some() {
+            return;
+        }
+        match bincode::serialize(edge) {
+            Ok(bytes) => edge_meta.push((edge.from, edge.to, edge.edge_type, bytes)),
+            Err(e) => edge_err = Some(bincode_err(e)),
+        }
+    })?;
+    if let Some(err) = edge_err {
+        return Err(err);
+    }
+    edge_meta
+        .sort_by(|a, b| (a.0, a.1, edge_type_to_u8(a.2)).cmp(&(b.0, b.1, edge_type_to_u8(b.2))));
+
+    let mut edge_rows = Vec::with_capacity(edge_meta.len());
+    for (from, to, edge_type, bytes) in &edge_meta {
+        hasher.update(bytes);
+        edge_rows.push(EdgeRow {
+            from: *from.as_bytes(),
+            to: *to.as_bytes(),
+            edge_type: edge_type_to_u8(*edge_type),
+            _pad: [0; 7],
+        });
+    }
+    drop(edge_meta);
+
+    let content_digest = hasher.finalize().to_hex().to_string();
+    write_columnar_assembled(
+        path,
+        &node_rows,
+        &edge_rows,
+        &strings,
+        &extensions_blob,
+        &name_index,
+        &type_index,
+        &content_digest,
+    )?;
+    Ok(content_digest)
 }
 
 #[cfg(test)]
@@ -826,6 +1035,70 @@ mod tests {
         let col = ColumnarGraphMmap::open(mmap).unwrap();
         assert_eq!(col.find_nodes_by_name("lookup_me").unwrap().len(), 1);
         assert!(!col.name_index().is_empty());
+    }
+
+    #[test]
+    fn write_columnar_from_backend_stable_digest_no_prepared_clone() {
+        let mut backend = crate::backend::MemoryBackend::new();
+        let a = Node::new(NodeType::Function, "a".into());
+        let b = Node::new(NodeType::Function, "b".into());
+        let a_id = a.id;
+        let b_id = b.id;
+        backend.insert_node(a).unwrap();
+        backend.insert_node(b).unwrap();
+        backend
+            .insert_edge(Edge::new(a_id, b_id, EdgeType::Calls))
+            .unwrap();
+
+        let tmp = TempDir::new().unwrap();
+        let path1 = tmp.path().join("g1.bin");
+        let path2 = tmp.path().join("g2.bin");
+        let d1 = write_columnar_from_backend(&backend, &path1).unwrap();
+        let d2 = write_columnar_from_backend(&backend, &path2).unwrap();
+        assert_eq!(d1, d2);
+        assert_eq!(d1.len(), 64); // blake3 hex
+
+        let file = std::fs::File::open(&path1).unwrap();
+        // SAFETY: test file is read-only; mapping covers the written snapshot bytes only.
+        let mmap = Arc::new(unsafe { Mmap::map(&file).unwrap() });
+        let col = ColumnarGraphMmap::open(mmap).unwrap();
+        assert_eq!(col.content_digest(), d1);
+        assert_eq!(col.node_count(), 2);
+        assert_eq!(col.edge_count(), 1);
+    }
+
+    #[test]
+    fn write_columnar_from_nodes_edges_matches_backend_digest() {
+        let a = Node::new(NodeType::Function, "a".into());
+        let b = Node::new(NodeType::Function, "b".into());
+        let a_id = a.id;
+        let b_id = b.id;
+        let edge = Edge::new(a_id, b_id, EdgeType::Calls);
+
+        let mut backend = crate::backend::MemoryBackend::new();
+        backend.insert_node(a.clone()).unwrap();
+        backend.insert_node(b.clone()).unwrap();
+        backend.insert_edge(edge.clone()).unwrap();
+
+        let tmp = TempDir::new().unwrap();
+        let path_backend = tmp.path().join("backend.bin");
+        let path_vecs = tmp.path().join("vecs.bin");
+        let d_backend = write_columnar_from_backend(&backend, &path_backend).unwrap();
+        let d_vecs =
+            write_columnar_from_nodes_edges(vec![b, a], vec![edge], &path_vecs).unwrap();
+        assert_eq!(d_backend, d_vecs);
+
+        let open = |path: &std::path::Path| {
+            let file = std::fs::File::open(path).unwrap();
+            // SAFETY: test file is read-only; mapping covers the written snapshot bytes only.
+            let mmap = Arc::new(unsafe { Mmap::map(&file).unwrap() });
+            ColumnarGraphMmap::open(mmap).unwrap()
+        };
+        let col_b = open(&path_backend);
+        let col_v = open(&path_vecs);
+        assert_eq!(col_b.node_count(), col_v.node_count());
+        assert_eq!(col_b.edge_count(), col_v.edge_count());
+        assert_eq!(col_b.content_digest(), col_v.content_digest());
     }
 
     #[test]

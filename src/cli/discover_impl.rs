@@ -5,7 +5,6 @@ use super::context::CliContext;
 use super::discover_output::build_discover_response;
 use super::stage_profile::{secs, DiscoverStageReport};
 use anyhow::Result;
-use rbuilder_graph::backend::GraphBackend;
 use std::path::Path;
 use std::time::Instant;
 use tracing::{debug, error, info, info_span, warn};
@@ -46,8 +45,6 @@ pub(crate) fn run_full_analysis(
     use crate::languages::registry::LanguageRegistry;
     use crate::pipeline::{PipelineConfig, PipelineStats, ProcessingPipeline};
     use rayon::prelude::*;
-    use rbuilder_graph::code_graph::CodeGraph;
-    use rbuilder_graph::PreparedGraphSnapshot;
     use std::path::Path;
     use std::sync::Arc;
     use std::time::Duration;
@@ -89,9 +86,10 @@ pub(crate) fn run_full_analysis(
         warn!("   CFG/PDG on large codebases (>50K functions) may take several minutes.");
     }
 
-    // Initialize memory monitoring
+    // Initialize memory monitoring with periodic peak sampling (#33).
     use rbuilder_core::memory::MemoryMonitor;
-    let mem_monitor = MemoryMonitor::new();
+    let mut mem_monitor = MemoryMonitor::new();
+    mem_monitor.start_periodic_sampling(std::time::Duration::from_millis(250));
 
     let discovery_config = discovery.clone();
     let registry = LanguageRegistry::new().into();
@@ -112,40 +110,54 @@ pub(crate) fn run_full_analysis(
     let mut file_tracker = FileTracker::load(root).unwrap_or_else(|_| FileTracker::new(root));
     let file_changes = file_tracker.detect_changes(&files)?;
 
-    // Index the repository (or hydrate from snapshot when sources are unchanged)
+    // Index the repository (or reuse snapshot when sources are unchanged).
+    // Lever 1: write columnar from GraphBuilder Vecs — never build MemoryBackend for discover.
     let index_start = Instant::now();
     let graph_from_snapshot = file_changes.is_empty() && snapshot_path.is_file();
-    let (graph, index_stats) = if graph_from_snapshot {
+    let (index_stats, graph_digest) = if graph_from_snapshot {
         let load_start = Instant::now();
-        let graph = CodeGraph::open_snapshot(&snapshot_path)?;
+        let cold_peek = crate::analysis::ColdMetadataDb::open(&snapshot_path)?;
+        let digest = cold_peek
+            .store()
+            .content_digest()?
+            .to_string();
         let load_elapsed = load_start.elapsed();
         if verbose {
             debug!(
                 path = %snapshot_path.display(),
-                nodes = graph.node_count(),
-                edges = graph.edge_count(),
-                "No file changes — loaded graph from snapshot"
+                nodes = cold_peek.node_count(),
+                edges = cold_peek.edge_count(),
+                "No file changes — reusing columnar snapshot (no hydrate)"
             );
         }
         let stats = PipelineStats {
             files_discovered: files.len(),
             files_processed: files.len(),
             files_failed: 0,
-            nodes_created: graph.node_count(),
-            edges_created: graph.edge_count(),
+            nodes_created: cold_peek.node_count(),
+            edges_created: cold_peek.edge_count(),
             duration: load_elapsed,
             extract_duration: Duration::default(),
             graph_build_duration: load_elapsed,
         };
-        (graph, stats)
+        (stats, digest)
     } else {
-        let (graph, stats) = pipeline.process_repository(root)?;
-        (graph, stats)
+        std::fs::create_dir_all(root.join(".rbuilder"))?;
+        let (stats, digest) = pipeline.process_repository_to_snapshot(root, &snapshot_path)?;
+        if verbose {
+            debug!(
+                path = %snapshot_path.display(),
+                "Graph binary snapshot compiled from segmented spill (no MemoryBackend / no Vec staging)"
+            );
+        }
+        (stats, digest)
     };
     profile.index_pipeline.secs = secs(index_start.elapsed());
     profile.index_extract.secs = secs(index_stats.extract_duration);
     profile.index_graph_build.secs = secs(index_stats.graph_build_duration);
     profile.nodes = index_stats.nodes_created;
+    // Snapshot write is folded into index_graph_build (Lever 1: no separate backend rewrite).
+    profile.save_snapshot.secs = 0.0;
 
     if human_output {
         if graph_from_snapshot {
@@ -188,90 +200,21 @@ pub(crate) fn run_full_analysis(
 
     debug!("{}", mem_monitor.report());
 
-    // One prepared snapshot for topology views, digest, and mmap write (Sprint B dedup).
-    let prepared = PreparedGraphSnapshot::from_backend(graph.backend())?;
-    let graph_digest = if graph_from_snapshot {
-        rbuilder_graph::snapshot::MmappedGraphSnapshot::open(&snapshot_path)?
-            .content_digest()?
-            .to_string()
-    } else {
-        prepared.content_digest.clone()
-    };
+    // Cold metadata + CSR from snapshot — no fat CodeGraph through analysis (#33 / Lever 1).
+    let cold = crate::analysis::ColdMetadataDb::open(&snapshot_path)?;
 
     // Initialize columnar analysis results
     use crate::analysis::AnalysisResults;
-    // Zero-copy: collect node IDs directly without cloning full nodes
-    let node_ids = graph.backend().all_node_ids()?;
+    use crate::analysis::NodeLookup;
+    use rbuilder_graph::schema::NodeType;
+    let mut node_ids = cold.store().all_node_ids();
+    node_ids.sort_unstable();
     let mut analysis_results = AnalysisResults::new(node_ids);
 
-    // Build PetGraphView ONCE from prepared snapshot — reused for community, centrality, blast radius
-    let topo_start = Instant::now();
-    let petgraph_view = {
-        let _span = if verbose {
-            Some(info_span!("topology").entered())
-        } else {
-            None
-        };
-        let view = PetGraphView::from_prepared(&prepared)?;
-        debug!(
-            nodes = view.directed.node_count(),
-            edges = view.directed.edge_count(),
-            "Topology view built"
-        );
-        view
-    };
-    profile.topology.secs = secs(topo_start.elapsed());
-
-    // Community detection - write to columnar table
-    let community_start = Instant::now();
-    let community_result = CommunityDetector::new().detect_with_view(&petgraph_view)?;
-    {
-        // Collect data with compact IDs first
-        let community_data: Vec<_> = community_result
-            .assignments
-            .iter()
-            .filter_map(|(node_id, community_id)| {
-                analysis_results
-                    .get_compact_id(*node_id)
-                    .map(|compact_id| (compact_id, *community_id))
-            })
-            .collect();
-
-        // Now update table
-        let table = analysis_results.init_community();
-        table.modularity = community_result.modularity;
-        table.num_communities = community_result.communities.len();
-        for (compact_id, community_id) in community_data {
-            table.assignments[compact_id as usize] = community_id;
-        }
-    }
-    profile.community.secs = secs(community_start.elapsed());
-
-    if human_output {
-        if verbose {
-            info!(
-                communities = community_result.communities.len(),
-                modularity = %format!("{:.2}", community_result.modularity),
-                "[✓] Detected {} communities (modularity: {:.2})",
-                community_result.communities.len(),
-                community_result.modularity
-            );
-        } else {
-            info!(
-                "[✓] Detected {} communities (modularity: {:.2})",
-                community_result.communities.len(),
-                community_result.modularity
-            );
-        }
-    }
-
-    debug!("{}", mem_monitor.report());
-
-    // Complexity analysis - write to columnar table
+    // Complexity from cold mmap payloads.
     let complexity_start = Instant::now();
-    let complexity_report = ComplexityAnalyzer::analyze(graph.backend())?;
+    let complexity_report = ComplexityAnalyzer::analyze_lookup(&cold)?;
     {
-        // Collect data with compact IDs first
         let complexity_data: Vec<_> = complexity_report
             .functions
             .iter()
@@ -281,8 +224,6 @@ pub(crate) fn run_full_analysis(
                     .map(|compact_id| (compact_id, func.cyclomatic as u32, func.cognitive as u32))
             })
             .collect();
-
-        // Now update table
         let table = analysis_results.init_complexity();
         table.avg_cyclomatic = complexity_report.avg_cyclomatic;
         table.max_cyclomatic = complexity_report.max_cyclomatic as u32;
@@ -291,53 +232,90 @@ pub(crate) fn run_full_analysis(
             table.cognitive[compact_id as usize] = cognitive;
         }
     }
-
     profile.complexity.secs = secs(complexity_start.elapsed());
-
     if verbose {
         debug!("✓ Complexity analysis:");
         debug!("  Functions: {}", complexity_report.functions.len());
         debug!("  Avg cyclomatic: {:.1}", complexity_report.avg_cyclomatic);
         debug!("  Max cyclomatic: {}", complexity_report.max_cyclomatic);
-        for (level, count) in &complexity_report.by_level {
-            debug!("    {:?}: {}", level, count);
-        }
-        debug!("{}", mem_monitor.report());
     }
-
     let high_complexity = complexity_report
         .by_level
         .get(&crate::analysis::ComplexityLevel::High)
-        .unwrap_or(&0);
+        .copied()
+        .unwrap_or(0);
     let medium_complexity = complexity_report
         .by_level
         .get(&crate::analysis::ComplexityLevel::Medium)
-        .unwrap_or(&0);
-
+        .copied()
+        .unwrap_or(0);
     if human_output {
-        if verbose {
-            info!(
-                functions = complexity_report.functions.len(),
-                avg_cyclomatic = %format!("{:.1}", complexity_report.avg_cyclomatic),
-                high = high_complexity,
-                medium = medium_complexity,
-                "[✓] Analyzed {} functions (avg complexity: {:.1}, {} high, {} medium)",
-                complexity_report.functions.len(),
-                complexity_report.avg_cyclomatic,
-                high_complexity,
-                medium_complexity
-            );
+        info!(
+            "[✓] Analyzed {} functions (avg complexity: {:.1}, {} high, {} medium)",
+            complexity_report.functions.len(),
+            complexity_report.avg_cyclomatic,
+            high_complexity,
+            medium_complexity
+        );
+    }
+    debug!("{}", mem_monitor.report());
+
+    // CSR topology from columnar snapshot.
+    let topo_start = Instant::now();
+    let petgraph_view = {
+        let _span = if verbose {
+            Some(info_span!("topology").entered())
         } else {
-            info!(
-                "[✓] Analyzed {} functions (avg complexity: {:.1}, {} high, {} medium)",
-                complexity_report.functions.len(),
-                complexity_report.avg_cyclomatic,
-                high_complexity,
-                medium_complexity
-            );
+            None
+        };
+        let view = PetGraphView::from_snapshot_store(cold.store())?;
+        debug!(
+            nodes = view.node_count(),
+            edges = view.edge_count(),
+            "CSR topology view built"
+        );
+        view
+    };
+    profile.topology.secs = secs(topo_start.elapsed());
+
+    let functions = cold.collect_nodes_by_type(NodeType::Function)?;
+    profile.functions = functions.len();
+    // Seal ingest phase: absolute peak stays; analysis phase peak resets to current RSS.
+    profile.ingest_peak_rss_mb = mem_monitor.seal_phase().unwrap_or(0.0);
+    debug!(
+        ingest_peak_mb = profile.ingest_peak_rss_mb,
+        "{}",
+        mem_monitor.report()
+    );
+
+    // Community detection - write to columnar table
+    let community_start = Instant::now();
+    let community_result = CommunityDetector::new().detect_with_view(&petgraph_view)?;
+    {
+        let community_data: Vec<_> = community_result
+            .assignments
+            .iter()
+            .filter_map(|(node_id, community_id)| {
+                analysis_results
+                    .get_compact_id(*node_id)
+                    .map(|compact_id| (compact_id, *community_id))
+            })
+            .collect();
+        let table = analysis_results.init_community();
+        table.modularity = community_result.modularity;
+        table.num_communities = community_result.communities.len();
+        for (compact_id, community_id) in community_data {
+            table.assignments[compact_id as usize] = community_id;
         }
     }
-
+    profile.community.secs = secs(community_start.elapsed());
+    if human_output {
+        info!(
+            "[✓] Detected {} communities (modularity: {:.2})",
+            community_result.communities.len(),
+            community_result.modularity
+        );
+    }
     debug!("{}", mem_monitor.report());
 
     // Centrality: PageRank + betweenness always; harmonic only with --with-harmonic
@@ -354,7 +332,7 @@ pub(crate) fn run_full_analysis(
 
     if human_output {
         if let Some((top_id, top_score)) = centrality_summary.top_pagerank.first() {
-            if let Ok(Some(node)) = graph.backend().get_node(*top_id) {
+            if let Ok(Some(node)) = cold.get_node(*top_id) {
                 let short_name = node.name.split('/').next_back().unwrap_or(&node.name);
                 let (in_degree, out_degree) = analysis_results
                     .get_centrality(*top_id)
@@ -386,8 +364,7 @@ pub(crate) fn run_full_analysis(
 
     // Dependency analysis
     let dependency_start = Instant::now();
-    let cycles =
-        DependencyAnalyzer::find_circular_dependencies_with_view(&petgraph_view, graph.backend())?;
+    let cycles = DependencyAnalyzer::find_circular_dependencies_with_lookup(&petgraph_view, &cold)?;
     profile.dependency.secs = secs(dependency_start.elapsed());
     if !cycles.is_empty() && human_output {
         if verbose {
@@ -437,13 +414,7 @@ pub(crate) fn run_full_analysis(
         profile.security.secs = secs(security_start.elapsed());
     }
 
-    // Get backend and functions for later use (blast radius, etc.)
-    use rbuilder_graph::schema::NodeType;
-    let backend = graph.backend();
-    let functions = backend.collect_nodes_by_type(NodeType::Function)?;
     let output_dir = root.join(".rbuilder/analysis");
-
-    profile.functions = functions.len();
 
     // CFG/PDG (+ optional taint) — opt-in with --with-cfg / --with-taint
     if run_cfg_pass {
@@ -567,7 +538,7 @@ pub(crate) fn run_full_analysis(
     let blast_start = Instant::now();
 
     // Build SCC engine (one-time cost: Tarjan's + topo sort + bitset propagation)
-    let engine = match BlastRadiusEngine::build_from_view(backend, &petgraph_view) {
+    let engine = match BlastRadiusEngine::build_from_view_lookup(&cold, &petgraph_view) {
         Ok(e) => e,
         Err(err) => {
             error!(error = %err, "[x] Blast radius engine build failed");
@@ -575,6 +546,9 @@ pub(crate) fn run_full_analysis(
             return Ok(());
         }
     };
+    // Topology view is fully consumed into the SCC engine — free DiGraph + UUID maps now.
+    drop(petgraph_view);
+    debug!("{}", mem_monitor.report());
 
     let build_time = blast_start.elapsed();
     let engine_stats = engine.stats();
@@ -583,7 +557,7 @@ pub(crate) fn run_full_analysis(
         scc_count = engine_stats.scc_count,
         dag_edges = engine_stats.dag_edges,
         build_time_secs = %format!("{:.2}", build_time.as_secs_f64()),
-        compression_percent = %format!("{:.1}", (graph.node_count() - engine_stats.scc_count) as f64 / graph.node_count() as f64 * 100.0),
+        compression_percent = %format!("{:.1}", (cold.node_count() - engine_stats.scc_count) as f64 / cold.node_count().max(1) as f64 * 100.0),
         avg_scc_size = %format!("{:.1}", engine_stats.avg_scc_size),
         memory_mb = %format!("{:.1}", engine_stats.memory_mb),
         "Blast radius engine built"
@@ -630,7 +604,7 @@ pub(crate) fn run_full_analysis(
         }
         if result.score > max_impact_score {
             max_impact_score = result.score;
-            if let Ok(Some(node)) = backend.get_node(*func_id) {
+            if let Ok(Some(node)) = cold.get_node(*func_id) {
                 max_impact_function = node.name.clone();
             }
         }
@@ -673,11 +647,12 @@ pub(crate) fn run_full_analysis(
         let macro_path = root.join(".rbuilder/macro_call_index.bin");
         let lookup_db_path = MacroCallLookupDb::default_path(root);
 
-        if MacroCallIndex::caches_are_current(
+        if MacroCallIndex::caches_are_current_counts(
             &macro_path,
             &lookup_db_path,
             root,
-            backend,
+            cold.node_count(),
+            cold.edge_count(),
             &graph_digest,
         )? {
             if verbose {
@@ -687,12 +662,13 @@ pub(crate) fn run_full_analysis(
                 );
             }
         } else {
-            let macro_index = MacroCallIndex::from_results(
-                db_path,
-                backend,
-                &blast_updates,
+            let fingerprint = crate::analysis::GraphFingerprint::from_topology_counts(
+                cold.node_count(),
+                cold.edge_count(),
                 Some(graph_digest.clone()),
-            )?;
+            );
+            let macro_index =
+                MacroCallIndex::from_results_with_lookup(&cold, &blast_updates, fingerprint)?;
             if let Err(err) = macro_index.save(&macro_path) {
                 warn!(error = %err, "Failed to save macro_call_index cache");
             } else if verbose {
@@ -718,8 +694,8 @@ pub(crate) fn run_full_analysis(
                 } else {
                     0
                 },
-                backend.node_count(),
-                backend.edge_count(),
+                cold.node_count(),
+                cold.edge_count(),
                 Some(graph_digest.as_str()),
             ) {
                 warn!(error = %err, "Failed to write macro_call_index.db metadata");
@@ -801,7 +777,7 @@ pub(crate) fn run_full_analysis(
         info!("[✓] Analysis complete");
     }
 
-    analysis_results.fill_structural_sketch_from_graph(graph.backend())?;
+    analysis_results.fill_structural_sketch_from_lookup(&cold)?;
 
     // Save analysis results (columnar format - separate from graph!)
     let save_analysis_start = Instant::now();
@@ -812,28 +788,40 @@ pub(crate) fn run_full_analysis(
 
     // Save graph topology (no analysis properties!)
     let save_tracker_start = Instant::now();
-    file_tracker.index_files(&files, &graph)?;
+    let mut node_mapping: std::collections::HashMap<String, Vec<uuid::Uuid>> =
+        std::collections::HashMap::new();
+    cold.for_each_node(&mut |node| {
+        let file = if let Some(path) = node.file_path.as_deref() {
+            Some(path.to_string())
+        } else if matches!(node.node_type, NodeType::File) {
+            Some(node.name.clone())
+        } else {
+            None
+        };
+        if let Some(file) = file {
+            node_mapping
+                .entry(crate::incremental::normalize_path_str(&file))
+                .or_default()
+                .push(node.id);
+        }
+    })?;
+    file_tracker.index_files_with_mapping(&files, node_mapping)?;
     file_tracker.save()?;
     profile.save_tracker.secs = secs(save_tracker_start.elapsed());
 
-    std::fs::create_dir_all(root.join(".rbuilder"))?;
-    let save_snapshot_start = Instant::now();
-    if graph_from_snapshot {
-        if verbose {
-            debug!(
-                path = %snapshot_path.display(),
-                "Graph snapshot unchanged — skipping rewrite"
-            );
-        }
-    } else {
-        prepared.write_to_path(&snapshot_path)?;
-        if verbose {
-            debug!(path = %snapshot_path.display(), "Graph binary snapshot saved");
-        }
+    // Graph mmap snapshot was written early (before topology/analysis) to avoid
+    // co-residency of PreparedGraphSnapshot with the live backend (#33).
+
+    let mut hydrated: Option<rbuilder_graph::code_graph::CodeGraph> = None;
+    let need_hydrate = write_json_graph || with_dashboard || export_migration_hints;
+    if need_hydrate {
+        hydrated = Some(rbuilder_graph::code_graph::CodeGraph::open_snapshot(
+            &snapshot_path,
+        )?);
     }
-    profile.save_snapshot.secs = secs(save_snapshot_start.elapsed());
 
     if write_json_graph {
+        let graph = hydrated.as_ref().expect("hydrated for json");
         let json = graph.export_json()?;
         if let Some(parent) = db_path.parent() {
             std::fs::create_dir_all(parent)?;
@@ -849,6 +837,7 @@ pub(crate) fn run_full_analysis(
     let save_dashboard_start = Instant::now();
     let dashboard_dir = root.join(".rbuilder/dashboard");
     if with_dashboard {
+        let graph = hydrated.as_ref().expect("hydrated for dashboard");
         match rbuilder_dashboard::export_dashboard_bundle_if_changed_with_context(
             graph.backend(),
             root,
@@ -884,6 +873,7 @@ pub(crate) fn run_full_analysis(
             .output
             .clone()
             .unwrap_or_else(|| root.join(".rbuilder/migration_plan.json"));
+        let graph = hydrated.as_ref().expect("hydrated for migration");
         match rbuilder_dashboard::write_migration_plan_from_repo(
             graph.backend(),
             root,
@@ -921,6 +911,8 @@ pub(crate) fn run_full_analysis(
     }
 
     let analysis_size = std::fs::metadata(&analysis_path)?.len() as f64 / (1024.0 * 1024.0);
+    mem_monitor.stop_periodic_sampling();
+    profile.analysis_peak_rss_mb = mem_monitor.seal_phase().unwrap_or(0.0);
     let snapshot = mem_monitor.snapshot()?;
     profile.wall_total.secs = secs(run_start.elapsed());
     profile.peak_rss_mb = snapshot.peak_mb;
@@ -936,9 +928,11 @@ pub(crate) fn run_full_analysis(
         info!("[✓] Saved to .rbuilder/ ({:.1} MB total)", analysis_size);
 
         info!(
-            "[✓] Completed in {:.1}s (peak memory: {:.0} MB)",
+            "[✓] Completed in {:.1}s (peak {:.0} MB; ingest {:.0} MB, analysis {:.0} MB)",
             snapshot.elapsed.as_secs_f64(),
-            snapshot.peak_mb
+            snapshot.peak_mb,
+            profile.ingest_peak_rss_mb,
+            profile.analysis_peak_rss_mb
         );
 
         if verbose {

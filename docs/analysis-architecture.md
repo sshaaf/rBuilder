@@ -13,11 +13,20 @@ Nodes represent symbols (functions, types, modules). Edges carry `EdgeType` sema
 
 | Type | Module | Purpose |
 |------|--------|---------|
-| `PetGraphView` | `graph_utils` | `petgraph` DiGraph + UnGraph with UUID bi-maps; edge weights are `EdgeType` |
+| `PetGraphView` | `graph_utils` | Façade over typed bidirectional CSR (`StructuralTopology`); UUID maps |
+| `StructuralTopology` / `CodeGraphCsr` | `structural_topology` / `rbuilder-graph::csr` | Hot edge residency (~5 B/edge/dir); community/centrality/blast/dependency |
+| `ColdMetadataDb` | `cold_metadata` | Mmap-backed node payloads after early snapshot write |
 | `CallGraph` | `callgraph` | u32-indexed call-only adjacency for fast traversal |
 | `FlatGraphIndex` | `centrality` | Contiguous `usize` edge list for numeric algorithms |
 
-**Convention:** Build `PetGraphView` once per analysis pass and pass `&PetGraphView` to centrality, community, dependency, and blast-radius analyzers.
+**Convention:** Discover ingest uses **segmented disk spill**
+(`GraphBuilder::with_spill` → `write_columnar_from_spill`): nodes/edges are
+append-only length-prefixed bincode on disk, externally sorted, then compiled to
+columnar v2 — no full `Vec<Node>`/`Vec<Edge>` or `MemoryBackend` during discover.
+Analysis opens `ColdMetadataDb` + CSR from the mmap; hydrate a `CodeGraph` only for
+`--with-dashboard` / migration / JSON. Share `&PetGraphView` / `StructuralTopology`
+across community / centrality / blast, then drop the view after the SCC engine is built.
+`write_columnar_from_backend` / `process_repository` remain for callers that need a live backend.
 
 ### Repository-level analyses
 
@@ -25,7 +34,7 @@ Nodes represent symbols (functions, types, modules). Edges carry `EdgeType` sema
 |----------|---------------|-----------|
 | Centrality | `PetGraphView` → `FlatGraphIndex` | PageRank, sampled Brandes betweenness, HyperBall harmonic |
 | Community | `PetGraphView` (undirected filter) | Label propagation + modularity ([naming note](design/graph-metrics-design.md#31-community-detection-naming)) |
-| Blast radius (engine) | Call-only DiGraph | Kosaraju SCC → on-demand reachability (flat graphs) or bitset rows |
+| Blast radius (engine) | CSR Calls filter + kosaraju | Kosaraju SCC → on-demand reachability (flat graphs) or bitset rows |
 | Blast radius (analyzer) | `PetGraphView` Calls filter | Reverse BFS |
 | Dependencies | `PetGraphView` directed | Kosaraju SCC, reverse BFS impact |
 | Complexity | Backend node properties | Aggregation |

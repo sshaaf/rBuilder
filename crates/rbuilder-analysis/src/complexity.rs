@@ -4,9 +4,10 @@
 //! **Complexity:** O(F) over function nodes.
 
 use rbuilder_error::Result;
-use rbuilder_graph::backend::MemoryBackend;
 use rbuilder_graph::schema::{Node, NodeType};
 use std::collections::HashMap;
+
+use crate::node_lookup::NodeLookup;
 
 /// Complexity level classification.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -64,8 +65,13 @@ pub struct ComplexityAnalyzer;
 
 impl ComplexityAnalyzer {
     /// Generate a complexity report from the graph.
-    pub fn analyze(backend: &MemoryBackend) -> Result<ComplexityReport> {
-        let functions = backend.find_nodes_by_type(NodeType::Function)?;
+    pub fn analyze(backend: &rbuilder_graph::backend::MemoryBackend) -> Result<ComplexityReport> {
+        Self::analyze_lookup(backend)
+    }
+
+    /// Generate a complexity report from cold or live [`NodeLookup`].
+    pub fn analyze_lookup<L: NodeLookup + ?Sized>(lookup: &L) -> Result<ComplexityReport> {
+        let functions = lookup.collect_nodes_by_type(NodeType::Function)?;
         let mut report = ComplexityReport::default();
         let mut total_cyclomatic = 0usize;
 
@@ -107,7 +113,10 @@ impl ComplexityAnalyzer {
     }
 
     /// Find functions above a complexity threshold.
-    pub fn find_above_threshold(backend: &MemoryBackend, threshold: usize) -> Result<Vec<Node>> {
+    pub fn find_above_threshold(
+        backend: &rbuilder_graph::backend::MemoryBackend,
+        threshold: usize,
+    ) -> Result<Vec<Node>> {
         let report = Self::analyze(backend)?;
         Ok(report
             .functions
@@ -121,7 +130,7 @@ impl ComplexityAnalyzer {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use rbuilder_graph::backend::GraphBackend;
+    use rbuilder_graph::backend::{GraphBackend, MemoryBackend};
 
     #[test]
     fn test_complexity_classification() {
