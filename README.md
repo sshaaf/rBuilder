@@ -2,19 +2,23 @@
 
 **A code knowledge graph built for LLM agents — accurate answers, minimal tokens, maximum speed.**
 
-AI coding agents default to reading files sequentially. That burns context, misses structure, and produces confident wrong answers about impact and dependencies. **rBuilder indexes the whole repository once** into a rich graph with pre-computed **reachability**, then serves **compact, deterministic query results** — so agents (and humans) get the right slice of the codebase without loading it into the prompt.
-
 [![CI](https://github.com/sshaaf/rBuilder/actions/workflows/ci.yml/badge.svg)](https://github.com/sshaaf/rBuilder/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/sshaaf/rBuilder?display_name=tag&label=release)](https://github.com/sshaaf/rBuilder/releases/latest)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+[![User Guide](https://img.shields.io/badge/docs-User%20Guide-0A7EA4)](docs/user-guide.md)
+[![Rust](https://img.shields.io/badge/Made%20with-Rust-orange?logo=rust)](https://www.rust-lang.org/)
+
+**Try it now:** [User Guide](docs/user-guide.md) (install → index → query) · [Download latest release](https://github.com/sshaaf/rBuilder/releases/latest) · [AGENTS.md](AGENTS.md) for LLM workflows
+
+AI coding agents default to reading files sequentially. That burns context, misses structure, and produces confident wrong answers about impact and dependencies. **rBuilder indexes the whole repository once** into a rich graph with pre-computed **reachability**, then serves **compact, deterministic query results** — so agents (and humans) get the right slice of the codebase without loading it into the prompt.
 
 ## Demo
 
-**~65s** dashboard tour (5 s per feature) — discover metrics, GQL, semantic search, graph metrics, CFG/PDG, slicing, blast radius, taint, migration planner, CI policy, and export. Each segment highlights the active tab and its panel.
+**CLI walkthrough** (user-guide commands + burned captions) — `docs/videos/user-guide-cli.mp4`
 
-https://github.com/user-attachments/assets/547bf5d1-2058-4668-b990-35def9c38636
+**Dashboard tour** (~65s, one tab per feature + burned captions) — `docs/videos/rbuilder-feature-demo.mp4`
 
-
-Regenerate: [docs/videos/README.md](docs/videos/README.md)
+Regenerate both: [docs/videos/README.md](docs/videos/README.md)
 
 ---
 
