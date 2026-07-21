@@ -23,7 +23,7 @@ Start here based on what you need.
 
 ## Quick paths
 
-**First hour (CLI):** Introduction → User Guide §1–4 → `discover` on [coolstore](user-guide.md#3-example-project-coolstore).
+**First hour (CLI):** Introduction → User Guide §1–4 → `discover` on [ecommerce-java](user-guide.md#3-example-project-ecommerce-java) (includes CoolStore `/services/*`).
 
 **First hour (dashboard):** User Guide §4 → [Dashboard user guide](dashboard-user-guide.md) → open `.rbuilder/dashboard/`.
 

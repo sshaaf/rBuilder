@@ -1,80 +1,94 @@
 1
-00:00:00,000 --> 00:00:00,891
+00:00:00,000 --> 00:00:01,000
 rBuilder
-User-guide CLI walkthrough · ecommerce-java
+User-guide CLI · ecommerce-java (CoolStore dual API)
 
 2
-00:00:00,891 --> 00:00:07,574
+00:00:01,000 --> 00:00:11,000
 discover
 Index the repo: graph + reachability + CFG/PDG
 
 3
-00:00:07,574 --> 00:00:11,584
+00:00:11,000 --> 00:00:15,500
 gql
 Exact graph inventory — compact JSON for agents
 
 4
-00:00:11,584 --> 00:00:16,930
+00:00:15,500 --> 00:00:21,000
 gql (CALLS)
 Who calls clearCart? Relation query, not grep
 
 5
-00:00:16,930 --> 00:00:25,395
+00:00:21,000 --> 00:00:29,000
 communities
 Named communities — GQL overlay + communities list
 
 6
-00:00:25,395 --> 00:00:30,295
+00:00:29,000 --> 00:00:34,500
 blast-radius
 What breaks upstream if I change CartService::clearCart?
 
 7
-00:00:30,295 --> 00:00:36,087
+00:00:34,500 --> 00:00:40,000
 blast-radius -f json
 Same answer as structured metrics for CI / agents
 
 8
-00:00:36,087 --> 00:00:41,433
+00:00:40,000 --> 00:00:45,000
+cpg status
+Hybrid CPG — L_proc archive + field-write index ready?
+
+9
+00:00:45,000 --> 00:00:51,000
+cpg mutations
+ShoppingCart field writes (CoolStore /services pricing)
+
+10
+00:00:51,000 --> 00:00:56,500
+blast-radius (CoolStore)
+Impact of ShoppingCartService::priceShoppingCart
+
+11
+00:00:56,500 --> 00:01:02,000
 metrics --pagerank
 Architectural hotspots on the call graph
 
-9
-00:00:41,433 --> 00:00:46,780
+12
+00:01:02,000 --> 00:01:07,500
 inspect
 CFG for checkout — control-flow inside one function
 
-10
-00:00:46,780 --> 00:00:52,571
+13
+00:01:07,500 --> 00:01:13,000
 slice
 Backward slice: which lines influence item at addItem:53?
 
-11
-00:00:52,571 --> 00:00:58,809
+14
+00:01:13,000 --> 00:01:19,000
 semantic index
 Opt-in Hamming index (vocab = offline, no ONNX)
 
-12
-00:00:58,809 --> 00:01:04,601
+15
+00:01:19,000 --> 00:01:24,500
 semantic query
 Natural-language search over functions (fusion on by default)
 
-13
-00:01:04,601 --> 00:01:10,392
+16
+00:01:24,500 --> 00:01:29,500
 semantic --scope community
 Pool member embeddings — find subsystems by theme
 
-14
-00:01:10,392 --> 00:01:14,848
+17
+00:01:29,500 --> 00:01:33,500
 export
 Filter syntax (not GQL): name:clearCart → Mermaid subgraph
 
-15
-00:01:14,848 --> 00:01:18,857
+18
+00:01:33,500 --> 00:01:37,000
 export (preview)
 Show the Mermaid subgraph
 
-16
-00:01:18,857 --> 00:01:25,540
+19
+00:01:37,000 --> 00:01:40,700
 check
 CI gate: blast-radius policy on changed symbols
-

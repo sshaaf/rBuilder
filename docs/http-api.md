@@ -2,7 +2,7 @@
 
 `rbuilder serve` starts a local HTTP server that serves the **static dashboard** and a **GQL query API** on the same origin.
 
-**CLI reference:** [User Guide §13](user-guide.md#13-http-server-serve)
+**CLI reference:** [User Guide §15](user-guide.md#15-http-server-serve)
 
 ---
 

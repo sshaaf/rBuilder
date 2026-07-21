@@ -82,5 +82,5 @@ See [cli-output-schemas.md](cli-output-schemas.md) §1 (blast-radius `gatekeepin
 ## See also
 
 - [Introduction — CI policy](Introduction.md#ci-policy-checks)
-- [User Guide §12](user-guide.md#12-ci-policy-check)
+- [User Guide §14](user-guide.md#14-ci-policy-check)
 - [Building a migration plan](building-migration-plan.md) — Phase 5 governance
