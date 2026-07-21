@@ -235,6 +235,7 @@ Quick links into **[Introduction](docs/Introduction.md)** — see [Where most to
 | **[User Guide](docs/user-guide.md)** | Install, ecommerce-java fixture, every CLI command |
 | **[Dashboard user guide](docs/dashboard-user-guide.md)** | Browser UI tab-by-tab |
 | **[AGENTS.md](AGENTS.md)** | **LLM agents** — discover once, query JSON |
+| **[SKILLS.md](SKILLS.md)** | **LLM agents** — installable skill bundles (agentskills.io) |
 | **[Agent recipes](docs/agent-recipes.md)** | Copy-paste automation workflows |
 | **[JSON API](docs/json-api.md)** | Parse `-f json` payloads |
 | **[HTTP API](docs/http-api.md)** | `rbuilder serve` → `/api/query` and `/api/semantic/*` |

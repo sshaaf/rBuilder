@@ -1,0 +1,17 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(rbuilder:*)"
+    ]
+  },
+  "skills": [
+    "skills/rbuilder-orient",
+    "skills/rbuilder-impact",
+    "skills/rbuilder-session",
+    "skills/rbuilder-neighborhood",
+    "skills/rbuilder-slice",
+    "skills/rbuilder-security",
+    "skills/rbuilder-migration",
+    "skills/rbuilder-ci-gate"
+  ]
+}
