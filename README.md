@@ -43,7 +43,7 @@ Algorithm and complexity details: crate READMEs under `crates/rbuilder-analysis/
 
 rBuilder answers **reachability and relation questions deterministically** from the indexed graph. The LLM reasons on **summaries and facts**, not raw repo grep — fewer tokens, less hallucination, faster turns.
 
-**Primary outputs for agents:** `-f json` on `discover`, `gql`, `blast-radius`, `metrics`, and `export`. See **[JSON API](docs/json-api.md)**.
+**Primary outputs for agents:** `-f json` on `discover`, `gql`, `blast-radius`, `metrics`, `semantic query`, and `export`. See **[JSON API](docs/json-api.md)**.
 
 ---
 
@@ -85,7 +85,7 @@ Index once → query many times. That is the agent workflow.
   Agent / script / human
            │
            ▼
-    rbuilder gql | blast-radius | metrics | export -f json
+    rbuilder gql | blast-radius | metrics | semantic | export -f json
            │
            ▼
   .rbuilder/  ← graph snapshot + reachability engine + indexes
@@ -140,7 +140,7 @@ rBuilder does **not** run the Leiden algorithm today. What ships is **label prop
 
 Full detail → **[Graph metrics — community naming](docs/design/graph-metrics-design.md#31-community-detection-naming)**.
 
-Walkthrough on a real Java repo → **[coolstore example](docs/user-guide.md#3-example-project-coolstore)** (User Guide).
+Walkthrough on the in-tree Spring Boot fixture → **[ecommerce-java example](docs/user-guide.md#3-example-project-ecommerce-java)** (User Guide).
 
 **Research map** — which papers rBuilder implements, which inspire the roadmap, and where to propose changes → **[Further reading](docs/further-reading.md#research-foundations-in-rbuilder)**.
 
@@ -188,9 +188,11 @@ Concepts → **[Introduction](docs/Introduction.md)** · Commands → **[User Gu
 Example deep-analysis commands (after `discover --with-cfg`):
 
 ```bash
-rbuilder inspect MyClass#myMethod          # CFG / PDG / dominance
+rbuilder inspect checkout cfg              # CFG / PDG / dominance (function symbol)
 rbuilder slice src/Foo.java --line 42 --variable x
 rbuilder slice src/Foo.java --line 10 --variable req --taint
+rbuilder semantic index --embedder vocab   # offline; or default code-daemon after git lfs pull
+rbuilder -f json semantic query "checkout flow" --limit 10
 ```
 
 ---
@@ -207,6 +209,7 @@ Quick links into **[Introduction](docs/Introduction.md)** — see [Where most to
 | `slice` | [Program slicing](docs/Introduction.md#program-slicing) · [Taint](docs/Introduction.md#taint-analysis) |
 | `inspect` | [CFG, PDG, dominance](docs/Introduction.md#cfg-pdg-and-dominance-deep-structure) |
 | `metrics` | [Graph metrics](docs/Introduction.md#graph-metrics-architecture-hotspots) |
+| `semantic` | [Semantic search](docs/design/semantic-search-design.md) (opt-in index + query) |
 | `export` | [Export](docs/Introduction.md#export-and-sharing) |
 | `check` | [CI policy](docs/Introduction.md#ci-policy-checks) |
 | `serve` | [HTTP server](docs/Introduction.md#http-server-serve) |
@@ -223,12 +226,12 @@ Quick links into **[Introduction](docs/Introduction.md)** — see [Where most to
 |----------|-----|
 | **[Documentation index](docs/README.md)** | Map of all docs by persona |
 | **[Introduction](docs/Introduction.md)** | Concepts — graph, reachability, each feature |
-| **[User Guide](docs/user-guide.md)** | Install, coolstore, every CLI command |
+| **[User Guide](docs/user-guide.md)** | Install, ecommerce-java fixture, every CLI command |
 | **[Dashboard user guide](docs/dashboard-user-guide.md)** | Browser UI tab-by-tab |
 | **[AGENTS.md](AGENTS.md)** | **LLM agents** — discover once, query JSON |
 | **[Agent recipes](docs/agent-recipes.md)** | Copy-paste automation workflows |
 | **[JSON API](docs/json-api.md)** | Parse `-f json` payloads |
-| **[HTTP API](docs/http-api.md)** | `rbuilder serve` → `/api/query` |
+| **[HTTP API](docs/http-api.md)** | `rbuilder serve` → `/api/query` and `/api/semantic/*` |
 | **[Policy format](docs/policy-format.md)** | `check` / blast policy JSON |
 | **[Language guide](docs/LANGUAGE_GUIDE.md)** | Supported languages and tiers |
 | **[Further reading](docs/further-reading.md)** | Research implemented vs inspired |
