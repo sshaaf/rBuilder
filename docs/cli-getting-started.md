@@ -270,7 +270,7 @@ Legacy blast-only socket: `rbuilder serve --daemon` (see [http-api.md](http-api.
 
 ## Step 4: Program slicing
 
-`slice` performs line-level backward or forward slicing (and optional taint checks) on a single source file. It reads the file from disk and does not require the symbol to be indexed first, but `discover --cfg` improves cross-function context elsewhere.
+`slice` performs line-level backward or forward slicing (and optional taint checks) on a single source file. It reads the file from disk and does not require the symbol to be indexed first, but `discover --with-cfg` improves cross-function context elsewhere.
 
 Backward slice — “what code influences this variable at this line?”:
 
@@ -318,7 +318,7 @@ rbuilder -r "$REPO" -f mermaid slice ... --view cfg
 
 ## Step 5: Inspect CFG / PDG / dominance
 
-`inspect` dumps semantic layers for an indexed function symbol. Run `discover --cfg` first for richest results.
+`inspect` dumps semantic layers for an indexed function symbol. Run `discover --with-cfg` first for richest results.
 
 ```bash
 # Control-flow graph summary

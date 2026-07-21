@@ -223,8 +223,10 @@ pub fn build_index(
 
     let diffuse = options.diffuse.filter(|cfg| cfg.is_active());
 
-    // Pure incremental hit: every function reuses bits and digests match — skip diffuse.
-    let mut pure_reuse = options.incremental && digest_matches_existing && diffuse.is_some();
+    // Pure incremental hit: every function reuses bits and digests match.
+    // When diffusion is requested, never take the pure-reuse shortcut — bits must be
+    // recomputed through the dense→diffuse→quantize path.
+    let mut pure_reuse = options.incremental && digest_matches_existing && diffuse.is_none();
     if pure_reuse {
         for (fresh_entry, _) in &functions {
             match reuse_by_id.get(&fresh_entry.node_id) {

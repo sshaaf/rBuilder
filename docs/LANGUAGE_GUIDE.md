@@ -22,7 +22,7 @@ Source of truth for Tier 1 metadata: [`languages.toml`](../languages.toml) at th
 
 These nine use dedicated tree-sitter plugins and custom extractors:
 
-| Language | Extensions | CFG / PDG (`discover --cfg`) | Taint | Notes |
+| Language | Extensions | CFG / PDG (`discover --with-cfg`) | Taint | Notes |
 |----------|------------|------------------------------|-------|-------|
 | **Java** | `.java` | ✅ Full | ✅ Rich patterns | Best golden-repo coverage |
 | **Go** | `.go` | ✅ Full | ✅ Rich patterns | Strong dashboard gates |
@@ -56,7 +56,7 @@ Exact plugin set evolves with releases — search `crates/rbuilder-config-format
 | Command | When to use |
 |---------|-------------|
 | `discover .` | Fast graph + metrics + dashboard (default) |
-| `discover . --security` | Add secret scanning on config-like files |
+| `discover . --with-security` | Add secret scanning on config-like files (alias `--security`) |
 | `discover . --cfg` | Per-function CFG, PDG, slice, inspect, taint |
 | `discover . --with-cfg --with-security --with-taint` | Full analysis + migration export + complete dashboard bundles |
 

@@ -9,10 +9,10 @@ use crate::analysis::pdg::PdgNodeId;
 use crate::analysis::{
     build_cfg_for_function, BackwardSlicer, ProgramDependenceGraph, SliceCriterion, TaintAnalyzer,
 };
-use anyhow::{Context, Result};
+use anyhow::{bail, Context, Result};
 use std::collections::{HashSet, VecDeque};
 use std::fs;
-use std::path::Path;
+use std::path::PathBuf;
 
 pub struct SliceArgs {
     pub file: String,
@@ -26,12 +26,12 @@ pub struct SliceArgs {
 }
 
 pub fn run(ctx: &CliContext, args: SliceArgs) -> Result<()> {
-    let path = Path::new(&args.file);
-    let source = fs::read_to_string(path).with_context(|| format!("read {}", path.display()))?;
+    let path = resolve_slice_path(ctx, &args.file)?;
+    let source = fs::read_to_string(&path).with_context(|| format!("read {}", path.display()))?;
     let lang = args
         .language
         .clone()
-        .unwrap_or_else(|| language_from_path(path));
+        .unwrap_or_else(|| language_from_path(&path));
     let fn_name = args.function.clone().unwrap_or_else(|| {
         if lang == "python" {
             "process".to_string()
@@ -110,7 +110,7 @@ pub fn run(ctx: &CliContext, args: SliceArgs) -> Result<()> {
         }
         SliceView::Text => render_slice_text(
             ctx,
-            path,
+            &args.file,
             &fn_name,
             &criterion,
             &slice,
@@ -119,6 +119,25 @@ pub fn run(ctx: &CliContext, args: SliceArgs) -> Result<()> {
         )?,
     }
     Ok(())
+}
+
+/// Resolve a slice source path: prefer as-given, then relative to `--repo`.
+fn resolve_slice_path(ctx: &CliContext, file: &str) -> Result<PathBuf> {
+    let as_given = PathBuf::from(file);
+    if as_given.is_file() {
+        return Ok(as_given);
+    }
+    if as_given.is_absolute() {
+        bail!("source file not found: {}", as_given.display());
+    }
+    let under_repo = ctx.repo.join(file);
+    if under_repo.is_file() {
+        return Ok(under_repo);
+    }
+    bail!(
+        "source file not found: {file} (also tried {})",
+        under_repo.display()
+    );
 }
 
 fn forward_slice(
@@ -172,7 +191,7 @@ fn forward_slice(
 
 fn render_slice_text(
     ctx: &CliContext,
-    path: &Path,
+    display_path: &str,
     function: &str,
     criterion: &SliceCriterion,
     slice: &crate::analysis::CodeSlice,
@@ -181,7 +200,7 @@ fn render_slice_text(
 ) -> Result<()> {
     if ctx.format == OutputFormat::Json {
         let response = text_slice_json(
-            &path.display().to_string(),
+            display_path,
             criterion,
             &format!("{direction:?}").to_lowercase(),
             slice,
@@ -190,10 +209,8 @@ fn render_slice_text(
         return ctx.emit_json_value(&serde_json::to_value(&response)?);
     }
     println!(
-        "{direction:?} slice for {}:{} (variable: {})",
-        path.display(),
-        criterion.line,
-        criterion.variable
+        "{direction:?} slice for {display_path}:{} (variable: {})",
+        criterion.line, criterion.variable
     );
     println!("Reduction: {:.1}%", slice.reduction_percent);
     let mut lines: Vec<_> = slice.lines.iter().copied().collect();

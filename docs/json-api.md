@@ -496,7 +496,7 @@ rbuilder -f json slice src/.../Foo.java --line 10 --variable input --function Fo
 rbuilder -f json inspect SYMBOL cfg|pdg|dom [layer options]
 ```
 
-Requires `discover --cfg` for richest PDG/CFG data from the analysis archive.
+Requires `discover --with-cfg` for richest PDG/CFG data from the analysis archive.
 
 ### CFG layer
 
@@ -556,17 +556,18 @@ rbuilder -f json inspect ShoppingCartService pdg --edge-layer data \
 `export` writes to **`--export-output`**; stdout is a one-line summary (unless global `-o` redirects).
 
 ```bash
-rbuilder export --export-format json --export-output graph.json [--query "GQL…"]
+rbuilder export --export-format json --export-output graph.json --query all
+rbuilder export --export-format mermaid --export-output clearCart.mmd --query 'name:clearCart'
 ```
 
 | `--export-format` | File content |
 |-------------------|--------------|
-| `json` | Full `CodeGraph` JSON (same family as legacy `graph.db`) |
+| `json` | Graph snapshot JSON (filtered when `--query` ≠ `all`) |
 | `graphml` | GraphML XML |
 | `graphviz` | DOT |
 | `mermaid` | Mermaid flowchart |
 
-`--query all` exports the full graph; otherwise pass a GQL query string to select a subgraph.
+`--query` uses **filter syntax** (`all`, `name:Foo`, `type:Function`, `functions`) — not GQL `MATCH`. The summary line reports the filtered node/edge counts.
 
 ---
 
@@ -581,7 +582,7 @@ These files are written under `.rbuilder/` (and copied into `.rbuilder/dashboard
 | `dashboard/cfg_index.json` | 1 | CFG function catalog |
 | `dashboard/slice_index.json` | 1 | Slice/PDG function catalog |
 | `dashboard/dataflow_index.json` | 1 | Dataflow function catalog |
-| `dashboard/taint_index.json` | 1 | Taint summary (`discover --cfg`) |
+| `dashboard/taint_index.json` | 1 | Taint summary (`discover --with-cfg`) |
 | `dashboard/taint/{uuid}.json` | 1 | Per-function taint flows |
 | `dashboard/slice/{uuid}.json` | 1 | Per-function source + PDG bundle |
 | `dashboard/cfg/{uuid}.json` | 1 | Per-function CFG preview |

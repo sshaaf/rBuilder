@@ -89,11 +89,11 @@ Errors return HTTP 400 with a plain-text message body.
 
 ## Semantic search API
 
-Requires `rbuilder semantic index` before `serve`. Same origin as the dashboard.
+Requires `rbuilder semantic index` before `serve` (embedder chosen at index time: `code-daemon` default, or `vocab` / `hash` / `onnx`). Restart `serve` after rebuilding `.rbuilder/semantic_index.bin`. Same origin as the dashboard.
 
 ### `GET /api/semantic/status`
 
-Returns JSON: `{ "available": true, "model_id": "...", "functions_indexed": N }` when the index loaded.
+Returns JSON: `{ "available": true, "model_id": "...", "dimensions": N, "functions_indexed": N }` when the index loaded (`model_id` may be `code-daemon:v1`, `vocab-accumulate-v1`, `sign-hash-v1`, …).
 
 ### `POST /api/semantic/query`
 

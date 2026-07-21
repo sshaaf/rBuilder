@@ -18,9 +18,9 @@ Legend: **Implemented** = algorithm or structure in the codebase with tests; **I
 |------|--------|----------|------------|
 | [Ferrante et al. — Program Dependence Graph (TOPLAS 1987)](#14-the-program-dependence-graph-and-its-use-in-optimization-toplas-1987) | **Implemented** | [`pdg.rs`](../crates/rbuilder-analysis/src/pdg.rs) — data + control deps | [`inspect`](Introduction.md#cfg-pdg-and-dominance-deep-structure), [`slice`](Introduction.md#program-slicing) |
 | [Weiser — Program slicing (ICSE 1981)](https://dl.acm.org/doi/10.1145/800078.802466) | **Implemented** | [`slicing.rs`](../crates/rbuilder-analysis/src/slicing.rs), [`interprocedural_slicing.rs`](../crates/rbuilder-analysis/src/interprocedural_slicing.rs) | `rbuilder slice` — [User Guide §8](user-guide.md#8-program-slicing-and-taint) |
-| Reaching-definitions dataflow (standard compiler analysis) | **Implemented** | [`dataflow.rs`](../crates/rbuilder-analysis/src/dataflow.rs) → PDG data edges | via `discover --cfg` |
+| Reaching-definitions dataflow (standard compiler analysis) | **Implemented** | [`dataflow.rs`](../crates/rbuilder-analysis/src/dataflow.rs) → PDG data edges | via `discover --with-cfg` |
 | [Cooper, Harvey & Kennedy — Simple fast dominance (SPE 2001)](https://doi.org/10.1002/spe.3780310304) | **Implemented** | [`dominance.rs`](../crates/rbuilder-analysis/src/dominance.rs) (iterative CHK-style) | `rbuilder inspect` |
-| Control-flow graphs | **Implemented** | [`cfg.rs`](../crates/rbuilder-analysis/src/cfg.rs), [`cfg_builder.rs`](../crates/rbuilder-analysis/src/cfg_builder.rs) | `discover --cfg`, `inspect` |
+| Control-flow graphs | **Implemented** | [`cfg.rs`](../crates/rbuilder-analysis/src/cfg.rs), [`cfg_builder.rs`](../crates/rbuilder-analysis/src/cfg_builder.rs) | `discover --with-cfg`, `inspect` |
 | Forward taint (source → sink + sanitizers) | **Implemented** | [`taint.rs`](../crates/rbuilder-analysis/src/taint.rs) | `rbuilder slice --taint` — [Introduction § Taint](Introduction.md#taint-analysis) |
 
 **Tests:** [`slicing.rs`](../tests/slicing.rs), [`taint_security.rs`](../tests/taint_security.rs) (CWE-oriented taint/security patterns).

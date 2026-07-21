@@ -30,6 +30,8 @@ See [docs/analysis-architecture.md](../../docs/analysis-architecture.md) for the
 | `semantic_diffuse` | `CallGraph` + dense `f32` | Jacobi neighbor blend before quantize | O(K·E·D) |
 | `semantic_fusion` | Index + `AnalysisResults` | Late fusion re-rank | O(pool) |
 
+Semantic search is **opt-in** (`rbuilder semantic index`). Prefer `--embedder vocab` when building without ONNX. Profile queries with `--release`; see [semantic-search-design.md](../../docs/design/semantic-search-design.md).
+
 ## Community detection naming
 
 rBuilder does **not** run the Leiden algorithm today. What ships is **label propagation** ([Raghavan et al., 2007](https://doi.org/10.1107/S1744309107073516)) with Newman modularity scoring, plus hub stripping and deterministic tie-breaking. Docs/UI still say “Louvain” in places (`louvain_community_id`, migration layout), and [`.github/TASK_PLAN.md`](../../.github/TASK_PLAN.md) lists Leiden as planned but unimplemented.

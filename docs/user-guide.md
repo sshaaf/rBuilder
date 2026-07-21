@@ -575,7 +575,7 @@ Requires `discover --with-cfg` for rich PDG context.
 
 ## 8. Program slicing and taint
 
-`slice` performs **line-level** backward or forward slicing on a source file. Run `discover --with-cfg` first so PDG data is available.
+`slice` performs **line-level** backward or forward slicing on a source file. Paths may be absolute, cwd-relative, or relative to `--repo`. Run `discover --with-cfg` first so PDG data is available.
 
 ### Backward slice
 
@@ -595,22 +595,20 @@ Reduction: 92.3%
   52
 ```
 
-A denser example from `CartService.addItem` (line 50, local `item`):
+A denser example from `CartService.addItem` (line 53, local `item`):
 
 ```bash
 rbuilder -r "$REPO" slice \
   src/main/java/com/example/ecommerce/service/CartService.java \
-  --line 50 \
+  --line 53 \
   --variable item \
   --function addItem
 ```
 
 ```text
-Backward slice for src/main/java/com/example/ecommerce/service/CartService.java:50 (variable: item)
-Reduction: 78.6%
-  42
-  45
-  50
+Backward slice for src/main/java/com/example/ecommerce/service/CartService.java:53 (variable: item)
+Reduction: 92.9%
+  53
 ```
 
 ### Forward slice
@@ -618,7 +616,7 @@ Reduction: 78.6%
 ```bash
 rbuilder -r "$REPO" slice \
   src/main/java/com/example/ecommerce/service/CartService.java \
-  --line 42 \
+  --line 38 \
   --variable cart \
   --function addItem \
   --direction forward
@@ -646,7 +644,7 @@ rbuilder -r "$REPO" slice \
 ```bash
 rbuilder -r "$REPO" -f mermaid slice \
   src/main/java/com/example/ecommerce/service/CartService.java \
-  --line 50 --variable item --function addItem --view cfg
+  --line 53 --variable item --function addItem --view cfg
 ```
 
 ### `--function` names
@@ -761,7 +759,7 @@ rbuilder -r "$REPO" -f json metrics --pagerank --iterations 50 | jq .
 
 Semantic search is **opt-in** — it does not run during `discover`. Build a separate Hamming index over function symbols, then query by natural language or keywords.
 
-**Prerequisites:** `discover` completed; for the default embedder, clone with `git lfs pull` when building rBuilder from source (bundled code-daemon ONNX weights).
+**Prerequisites:** `discover` completed. Default embedder is **code-daemon** (needs `git lfs pull` for bundled ONNX when building from source). Offline / CI: prefer `--embedder vocab` or `--embedder hash` (no ONNX).
 
 ```bash
 # Build semantic index (default: code-daemon, 256-d)
@@ -770,37 +768,46 @@ rbuilder -r "$REPO" semantic index
 # Incremental rebuild — reuse rows when body hash unchanged
 rbuilder -r "$REPO" semantic index --incremental
 
-# Query (JSON for agents)
+# Query (JSON for agents). Late fusion is ON by default.
 rbuilder -r "$REPO" -f json semantic query "shopping cart checkout" --limit 10
-rbuilder -r "$REPO" -f json semantic query "OrderService" --keyword-and --fusion
+rbuilder -r "$REPO" -f json semantic query "OrderService" --keyword-and
+# Pure Hamming (disable fusion):
+rbuilder -r "$REPO" -f json semantic query "OrderService" --no-fusion --limit 10
 
 # Hash embedder (no ONNX) — e.g. CI
 rbuilder -r "$REPO" semantic index --embedder hash
 
 # Vocab embedder (compiled token table, offline) + optional call-graph diffusion
 rbuilder -r "$REPO" semantic index --embedder vocab
-rbuilder -r "$REPO" semantic index --embedder vocab --diffuse --diffuse-alpha 0.25 --diffuse-iters 2
+rbuilder -r "$REPO" semantic index --embedder vocab --diffuse \
+  --diffuse-alpha 0.25 --diffuse-iters 2
 ```
+
+Passing `--diffuse` recomputes dense vectors and mixes call-graph neighbors **before** sign quantization (even when `--incremental` would otherwise reuse bits). Query does not re-diffuse — restart is not required for CLI query; for the dashboard, restart `serve` after rebuilding the index.
 
 | Flag | Purpose |
 |------|---------|
-| `--fusion` / `--no-fusion` | Late re-rank with blast, PageRank, name, token-bloom sketch |
+| `--no-fusion` | Disable late fusion (default is fusion **on**: blast, PageRank, name, token-bloom) |
 | `--keyword-and` | Every query token must match metadata or body sketch |
+| `--candidate-pool <N>` | Hamming pool size before fusion [default: 256] |
 | `--expand neighbors\|blast\|gql\|all` | Hybrid expansion after top hits |
-| `--embedder hash\|vocab\|onnx\|code-daemon` | Embedding backend |
+| `--embedder hash\|vocab\|onnx\|code-daemon` | Embedding backend [default: `code-daemon`] |
+| `--dimensions <N>` | Float width before quantize; multiple of 8 [default: 256] |
 | `--diffuse` / `--no-diffuse` | Jacobi call-graph mix on dense floats before quantize (index only; off by default) |
-| `--diffuse-alpha` / `--diffuse-iters` | Diffusion blend weight and iterations |
+| `--diffuse-alpha` / `--diffuse-iters` | Diffusion blend weight and iterations [defaults: 0.25, 2] |
 | `--diffuse-bidirectional` | Include callers as well as callees |
 
-Dashboard: **`rbuilder serve --open`** → **Search** tab (requires HTTP semantic API).
+**Dashboard:** `rbuilder serve --open` → **Search** tab uses the same index via `/api/semantic/*`. The UI does not choose the embedder — build the index with CLI first, then restart `serve`. Status shows `model_id` (e.g. `vocab-accumulate-v1`).
 
-Design → **[Semantic search design](design/semantic-search-design.md)**
+**Perf note (linux-scale):** time queries with a **release** binary (`cargo build --release`). Debug builds can be ~100× slower on Hamming scan. Index load of `.rbuilder/semantic_index.bin` is bincode into owned strings (~tens of seconds at ~1.8M functions); query itself is ~few ms in release.
+
+Design → **[Semantic search design](design/semantic-search-design.md)** · timing tests → `cargo test --test semantic_query_timing -- --nocapture`
 
 ---
 
 ## 12. Export graph projections
 
-`export` writes the graph or a **filter-selected** subgraph to a file. The `--query` flag uses **filter syntax**, not GQL `MATCH`:
+`export` writes the graph or a **filter-selected** subgraph to a file. The `--query` flag uses **filter syntax**, not GQL `MATCH` (all formats honor the filter, including JSON):
 
 | Query | Meaning |
 |-------|---------|
@@ -817,7 +824,7 @@ rbuilder -r "$REPO" export \
 ```
 
 ```text
-Exported 518 nodes, 1122 edges -> cart-clear.mmd
+Exported 2 nodes, 1 edges -> cart-clear.mmd
 ```
 
 ```bash
@@ -915,7 +922,7 @@ rbuilder -r "$REPO" -f json metrics --pagerank | jq '.pagerank.top[:5]'
 rbuilder -r "$REPO" inspect checkout cfg
 rbuilder -r "$REPO" slice \
   src/main/java/com/example/ecommerce/service/CartService.java \
-  --line 50 --variable item --function addItem
+  --line 53 --variable item --function addItem
 
 # 7. Export / dashboard
 rbuilder -r "$REPO" export --export-format mermaid \
@@ -990,7 +997,7 @@ Ensure you ran `discover --with-cfg`, then pass the method name and a variable t
 ```bash
 rbuilder -r "$REPO" slice \
   src/main/java/com/example/ecommerce/service/CartService.java \
-  --line 50 --variable item --function addItem --language java
+  --line 53 --variable item --function addItem --language java
 ```
 
 ### Slow `discover`

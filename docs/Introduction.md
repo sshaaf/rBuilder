@@ -116,7 +116,7 @@ Default discover is tuned for speed. Deeper modes trade time for semantic detail
 - **One command** to prepare the whole repo for all other features  
 - **Incremental-friendly** file tracking for faster re-runs after small changes  
 - **CI-friendly** telemetry with `-f json` (file counts, nodes, edges, duration)  
-- **Optional security scan** (`--security`) and **optional CFG/PDG/taint** (`--with-cfg`, `--with-taint`)
+- **Optional security scan** (`--with-security`, alias `--security`) and **optional CFG/PDG/taint** (`--with-cfg`, `--with-taint`)
 - **Optional migration roadmap** (`--export-migration-hints`, with `--migration-preset` and `--migration-order scheduled|priority`)
 
 ### How to run it
@@ -190,7 +190,7 @@ Answer: **“Which lines of this function actually affect this variable at this 
 
 **Slicing** is a precision tool for debugging and review. You point at a **file**, **line**, **variable**, and enclosing **method name** (`--function`); rBuilder computes the **slice** — the minimal set of statements that influence (or are influenced by) that point. This uses control-flow and program-dependence structure inside the function.
 
-Slicing reads source from disk; richer cross-function context is available when the repo was indexed with `discover --cfg`. The dashboard **Program Slicing** tab runs the same analysis in the browser with highlighted source.
+Slicing reads source from disk; richer cross-function context is available when the repo was indexed with `discover --with-cfg`. The dashboard **Program Slicing** tab runs the same analysis in the browser with highlighted source.
 
 ### Key benefits
 
@@ -226,7 +226,7 @@ At CLI level, `slice --taint` gives a quick per-function check. Full-repo taint 
 ### How to run it
 
 → [User Guide §8 — Program slicing and taint](user-guide.md#8-program-slicing-and-taint) (taint sections)  
-→ Deeper index: `discover . --cfg` or `discover . --with-cfg --with-security --with-taint` ([User Guide §4](user-guide.md#4-index-with-discover))  
+→ Deeper index: `discover . --with-cfg` (alias `--cfg`) or `discover . --with-cfg --with-security --with-taint` ([User Guide §4](user-guide.md#4-index-with-discover))  
 → Design: **[Taint analysis design](design/taint-analysis-design.md)**
 
 ---
@@ -245,7 +245,7 @@ Inspect **how code executes inside a single function** — branches, loops, data
 | **PDG** (program dependence graph) | Data and control edges between statements |
 | **Dominance** | Which blocks must execute before others; dominance frontiers for SSA-style reasoning |
 
-The **`inspect`** command dumps these layers for a named function. **`discover --cfg`** must have run so the archive contains CFG/PDG data for indexed symbols.
+The **`inspect`** command dumps these layers for a named function. **`discover --with-cfg`** (alias `--cfg`) must have run so the archive contains CFG/PDG data for indexed symbols.
 
 In the dashboard: **CFG / PDG Analysis** tab (control-flow graph + idom table), **Dataflow** tab (PDG and dominator-tree views).
 

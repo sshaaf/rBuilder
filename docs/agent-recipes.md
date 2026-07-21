@@ -61,9 +61,11 @@ rbuilder -r "$REPO" -f json gql \
 
 ```bash
 rbuilder -r "$REPO" semantic index
+# Offline / no ONNX: add --embedder vocab   (or --embedder hash)
 rbuilder -r "$REPO" -f json semantic query "shopping cart checkout" --limit 10 \
   | jq '.hits[] | {name, file_path, score: .fused_score}'
-rbuilder -r "$REPO" -f json semantic query "OrderService validate" --keyword-and --fusion \
+# Fusion is on by default; add --keyword-and to require every query token to match
+rbuilder -r "$REPO" -f json semantic query "OrderService validate" --keyword-and \
   | jq '.hits[:5]'
 ```
 
@@ -82,10 +84,10 @@ rbuilder -r "$REPO" -f json gql \
 
 ---
 
-## Recipe 5 — Data-flow check at a line (needs `discover --cfg`)
+## Recipe 5 — Data-flow check at a line (needs `discover --with-cfg`)
 
 ```bash
-rbuilder -r "$REPO" discover . --cfg
+rbuilder -r "$REPO" discover . --with-cfg
 rbuilder -r "$REPO" -f json slice \
   src/main/java/com/example/Service.java \
   --line 42 --variable request --function handleRequest \
@@ -101,7 +103,7 @@ Note: `--function` is the **method name**, not the class name.
 ## Recipe 6 — Taint sanity check
 
 ```bash
-rbuilder -r "$REPO" discover . --cfg
+rbuilder -r "$REPO" discover . --with-cfg
 rbuilder -r "$REPO" -f json slice src/.../Controller.java \
   --line 30 --variable param --function handle --taint | jq '.flows'
 ```
@@ -114,7 +116,8 @@ rbuilder -r "$REPO" -f json slice src/.../Controller.java \
 
 ```bash
 rbuilder discover . --with-cfg --with-security --with-taint --with-dashboard --with-harmonic --export-migration-hints
-jq '.packages[:10]' "$REPO/.rbuilder/dashboard/migration_plan.json"
+# Prefer root plan from --export-migration-hints; dashboard copy exists when --with-dashboard ran
+jq '.packages[:10]' "$REPO/.rbuilder/migration_plan.json"
 rbuilder serve --open   # Migration tab for interactive tuning
 ```
 

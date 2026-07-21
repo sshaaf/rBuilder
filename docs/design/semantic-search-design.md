@@ -69,7 +69,7 @@ flowchart TB
 
 Default dimensions: **256** (MRL for code-daemon; vocab native width). Clone needs `git lfs pull` for ~206 MB code-daemon weights.
 
-**Index-time diffusion (opt-in):** `--diffuse` runs Jacobi mixing over the call graph on dense `f32` buffers (CallGraph-sized, one scratch) before sign quantization. Defaults: α=0.25, 2 iterations, callees-only (`--diffuse-bidirectional` for callers+callees). Query does not re-diffuse — structure is baked into bits. Extra RSS ≈ `n_functions × dims × 4 × 2` bytes (≈ 3.8 GB peak buffers at 1.86M × 256); keep `--diffuse` off on huge repos until profiled.
+**Index-time diffusion (opt-in):** `--diffuse` runs Jacobi mixing over the call graph on dense `f32` buffers (CallGraph-sized, one scratch) before sign quantization. Defaults: α=0.25, 2 iterations, callees-only (`--diffuse-bidirectional` for callers+callees). Query does not re-diffuse — structure is baked into bits. **`--diffuse` always re-embeds** (skips the pure incremental bit-reuse shortcut) so bits reflect the diffused dense vectors. Extra RSS ≈ `n_functions × dims × 4 × 2` bytes (≈ 3.8 GB peak buffers at 1.86M × 256); keep `--diffuse` off on huge repos until profiled.
 
 Escape hatch for builds without ONNX:
 
@@ -130,8 +130,9 @@ rbuilder discover .
 rbuilder semantic index                    # default code-daemon, 256-d
 rbuilder semantic index --incremental      # reuse unchanged code_hash rows
 rbuilder -f json semantic query "shopping cart checkout" --limit 10
-rbuilder -f json semantic query "OrderService" --keyword-and --fusion
+rbuilder -f json semantic query "OrderService" --keyword-and
 rbuilder -f json semantic query "auth login" --expand neighbors --expand-depth 2
+# Fusion is on by default; use --no-fusion for pure Hamming
 
 rbuilder serve --open   # dashboard Search tab + /api/semantic/*
 ```
@@ -139,7 +140,7 @@ rbuilder serve --open   # dashboard Search tab + /api/semantic/*
 Index-only flags: `--embedder`, `--dimensions`, `--model`, `--tokenizer`, `--incremental`,
 `--diffuse` / `--no-diffuse`, `--diffuse-alpha`, `--diffuse-iters`, `--diffuse-bidirectional`.
 
-Query flags: `--fusion`, `--no-fusion`, `--keyword-and`, `--candidate-pool`, `--expand`, `--expand-depth`.
+Query flags: `--no-fusion` (fusion is on by default), `--keyword-and`, `--candidate-pool`, `--expand`, `--expand-depth`.
 
 ```bash
 # Offline / no ONNX (preferred)
@@ -163,9 +164,15 @@ rbuilder semantic index --embedder vocab --diffuse
 | Layer | Location |
 |-------|----------|
 | Hamming + index roundtrip | `crates/rbuilder-analysis/src/semantic_search.rs` tests |
+| Vocab accumulate | `crates/rbuilder-analysis/src/semantic_vocab.rs` tests |
+| Call-graph diffusion | `crates/rbuilder-analysis/src/semantic_diffuse.rs` tests |
 | Fusion scoring | `crates/rbuilder-analysis/src/semantic_fusion.rs` tests |
+| QE oracles | `tests/semantic_search_qe.rs` |
+| Multi-query timing | `tests/semantic_query_timing.rs` (polyglot CI; linux ignored + `RBUILDER_LINUX_SEMANTIC=1`, prefer `--release`) |
 | CLI subprocess | `tests/cli_output/subprocess_golden_path.rs` |
 | HTTP semantic API | `src/cli/http_serve.rs` unit tests |
+
+Time linux-scale Hamming with a **release** build — debug can be ~100× slower on the scan. Index **load** is dominated by bincode deserialization of per-function string metadata (~tens of seconds at ~1.8M rows); query after load is a few milliseconds in release.
 
 Regenerate screenshots:
 

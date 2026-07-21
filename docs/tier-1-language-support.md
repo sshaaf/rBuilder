@@ -53,7 +53,7 @@ A language is **fully supported** when all rows are ✅ and backed by automated 
 | B5 | CFG builders for language-specific control flow (e.g. `switch`, `select`, `match`, `try`) | `cfg_builder.rs` |
 | B6 | Definition-use extraction for assignments / declarations | `crates/rbuilder-analysis/src/def_use.rs` |
 | B7 | PDG builds from CFG + source (automatic once CFG + def/use work) | `crates/rbuilder-analysis/src/pdg.rs` |
-| B8 | `discover --cfg` / `discover --with-cfg --with-security --with-taint` includes `.ext` files | Automatic via `cfg_language_id_from_path` in `discover_impl.rs` |
+| B8 | `discover --with-cfg` / `discover --with-cfg --with-security --with-taint` includes `.ext` files | Automatic via `cfg_language_id_from_path` in `discover_impl.rs` |
 
 ### Layer C — Security & interprocedural
 

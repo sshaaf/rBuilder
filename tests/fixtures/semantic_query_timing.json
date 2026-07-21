@@ -1,0 +1,50 @@
+{
+  "schema_version": 1,
+  "notes": "Multi-query timing suite for vocab semantic search.",
+  "embedder": "vocab",
+  "dimensions": 256,
+  "queries": [
+    {
+      "id": "checkout_flow",
+      "query": "checkout order cart",
+      "limit": 10,
+      "fusion": false,
+      "expect_name_contains": ["checkout"]
+    },
+    {
+      "id": "publish_event",
+      "query": "publish event handler",
+      "limit": 10,
+      "fusion": false,
+      "expect_name_contains": ["publishEvent"]
+    },
+    {
+      "id": "process_order",
+      "query": "process order service",
+      "limit": 10,
+      "fusion": true,
+      "expect_name_contains": ["process"]
+    },
+    {
+      "id": "order_controller",
+      "query": "http order controller endpoint",
+      "limit": 10,
+      "fusion": true,
+      "expect_name_contains": ["checkout", "process"]
+    },
+    {
+      "id": "rust_main",
+      "query": "main entrypoint rust",
+      "limit": 10,
+      "fusion": false,
+      "expect_name_contains": ["main"]
+    },
+    {
+      "id": "auth_keywords",
+      "query": "authenticate token session",
+      "limit": 10,
+      "fusion": false,
+      "expect_name_contains": []
+    }
+  ]
+}

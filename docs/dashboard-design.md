@@ -286,7 +286,7 @@ _Update this table when a phase lands._
 
 ### Removed (Phase 4)
 
-- `all_analyses.json` writer in discover (`discover --cfg` still writes per-function storage + archive)
+- `all_analyses.json` writer in discover (`discover --with-cfg` still writes per-function storage + archive)
 
 ### Not yet removed (later phases)
 

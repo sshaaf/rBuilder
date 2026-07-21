@@ -23,7 +23,7 @@ Per-function **control-flow graphs**: basic blocks, branch edges, and loop struc
 
 ```mermaid
 flowchart LR
-  subgraph build["discover --cfg"]
+  subgraph build["discover --with-cfg"]
     PARSE[Language CFG builder]
     CFG[ControlFlowGraph]
     PARSE --> CFG

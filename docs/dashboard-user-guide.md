@@ -52,10 +52,11 @@ Screenshot placeholders (capture with `dashboard/scripts/capture-migration-scree
 
 ### Search
 
-- Natural-language and keyword search over indexed functions (code-daemon embeddings by default).
-- **Late fusion** blends Hamming similarity with blast score, PageRank, name overlap, and token-bloom sketches.
-- Requires `rbuilder semantic index` and **`rbuilder serve`** (HTTP API at `/api/semantic/*` — not static-only hosting).
-- **CLI:** `semantic index`, `semantic query "…"`, `--keyword-and`, `--expand neighbors`
+- Natural-language and keyword search over indexed functions (default **code-daemon**; offline **`vocab`** or **`hash`** via CLI).
+- **Late fusion** (on by default) blends Hamming similarity with blast score, PageRank, name overlap, and token-bloom sketches.
+- Requires `rbuilder semantic index` (choose embedder at index time) and **`rbuilder serve`** (HTTP API at `/api/semantic/*` — not static-only hosting). Restart `serve` after rebuilding the index.
+- Status badge shows `model_id` (e.g. `vocab-accumulate-v1`).
+- **CLI:** `semantic index [--embedder vocab]`, `semantic query "…"` (`--keyword-and`, `--no-fusion`, `--expand neighbors`)
 
 ### Graph
 

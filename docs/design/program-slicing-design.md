@@ -25,7 +25,7 @@ Requires `discover --with-cfg` (and `--with-taint` for discover-time taint) for 
 
 ```mermaid
 flowchart LR
-  subgraph discover["discover --cfg"]
+  subgraph discover["discover --with-cfg"]
     CFG[CFG per function]
     PDG[PDG per function]
     ARC[cfg_pdg.archive.bin]

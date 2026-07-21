@@ -243,6 +243,10 @@ name = "semantic_search_qe"
 path = "tests/semantic_search_qe.rs"
 
 [[test]]
+name = "semantic_query_timing"
+path = "tests/semantic_query_timing.rs"
+
+[[test]]
 name = "cross_feature_qe"
 path = "tests/cross_feature_qe.rs"
 

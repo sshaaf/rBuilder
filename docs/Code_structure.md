@@ -244,7 +244,7 @@ Understanding files helps avoid duplicating cache layers:
 | `graph.snapshot.bin` | `discover` (columnar v2 default) | `CodeGraph::open_snapshot`, `SnapshotNodeStore`, `ColumnarGraphMmap`, `serve` |
 | `blast_engine.snapshot.bin` | `discover` | `try_load_engine`, lite blast-radius path, `serve` |
 | `macro_call_index.db` / `.bin` | `discover` | `blast-radius` T0 fast path only — SQLite/bincode lookup cache, not the graph |
-| `cfg_pdg.archive.bin` | `discover --cfg` | `blast-radius --with-slices`, slice hand-offs |
+| `cfg_pdg.archive.bin` | `discover --with-cfg` | `blast-radius --with-slices`, slice hand-offs |
 | `query.sock` | `serve --daemon` | blast-radius auto-connect (optional) |
 | `analysis_results.bin` | `discover` | Columnar metrics (`CentralityTable`, community, blast); blast columns may stay empty on flat/on-demand graphs (bulk fill skipped — #28 won't-fix; use live `blast-radius`) |
 | `dashboard/` (bundle) | `discover` | Browser static dashboard (`index.html`, `manifest.json`, `graph_payload.bin`) |
