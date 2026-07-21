@@ -32,6 +32,7 @@ pub mod pdg;
 pub mod policy;
 pub mod results;
 pub mod semantic_code_daemon;
+pub mod semantic_diffuse;
 #[cfg(feature = "semantic-onnx")]
 pub mod semantic_embedded;
 pub mod semantic_embedder;
@@ -42,6 +43,7 @@ pub mod semantic_hybrid;
 pub mod semantic_onnx;
 pub mod semantic_onnx_tokenizer;
 pub mod semantic_search;
+pub mod semantic_vocab;
 pub mod slicing;
 pub mod storage;
 pub mod structural_topology;
@@ -135,6 +137,7 @@ pub use semantic_code_daemon::{
 };
 #[cfg(feature = "semantic-onnx")]
 pub use semantic_code_daemon::{load_code_daemon_embedder, load_embedded_code_daemon_embedder};
+pub use semantic_diffuse::{diffuse_call_topology, DiffuseConfig, DiffuseNeighborMode};
 pub use semantic_embedder::{
     embedder_for_index, resolve_embedder, EmbedderChoice, OnnxReloadOptions, SemanticEmbedder,
     SignHashEmbedder,
@@ -159,6 +162,10 @@ pub use semantic_search::{
     sign_hash_embed, SemanticBuildOptions, SemanticBuildStats, SemanticEntry, SemanticHit,
     SemanticIndex, DEFAULT_EMBEDDING_DIMENSIONS, SEMANTIC_INDEX_FILE,
     SEMANTIC_INDEX_SCHEMA_VERSION, SIGN_HASH_MODEL_ID,
+};
+pub use semantic_vocab::{
+    TokenSpaceAccumulator, VocabAccumulateEmbedder, VOCAB_ACCUMULATE_MODEL_ID,
+    VOCAB_NATIVE_DIMENSIONS,
 };
 pub use slicing::{BackwardSlicer, CodeSlice, SliceCriterion};
 pub use storage::{AnalysisIndexEntry, AnalysisStorage, FunctionAnalysis, FunctionIdSyncEntry};

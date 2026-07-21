@@ -148,6 +148,8 @@ pub struct SemanticBuildOptions {
     pub tokenizer_path: Option<String>,
     /// Repository root for on-demand body slicing during indexing.
     pub repo_root: Option<PathBuf>,
+    /// Optional index-time call-graph diffusion (before sign quantization).
+    pub diffuse: Option<crate::semantic_diffuse::DiffuseConfig>,
 }
 
 impl SemanticBuildOptions {
@@ -161,6 +163,7 @@ impl SemanticBuildOptions {
             model_path: None,
             tokenizer_path: None,
             repo_root: None,
+            diffuse: None,
         }
     }
 }
@@ -177,6 +180,11 @@ pub fn build_index(
     let mut stats = SemanticBuildStats::default();
 
     let mut reuse_by_id: HashMap<Uuid, (SemanticEntry, Vec<u8>)> = HashMap::new();
+    let digest_matches_existing = options.existing.as_ref().is_some_and(|existing| {
+        existing.graph_digest == options.graph_digest
+            && existing.dimensions == options.dimensions
+            && existing.model_id == embedder.model_id()
+    });
     if options.incremental {
         if let Some(existing) = &options.existing {
             if existing.dimensions != options.dimensions || existing.model_id != embedder.model_id()
@@ -213,35 +221,108 @@ pub fn build_index(
         }
     })?;
 
-    let mut seen = HashSet::new();
-    for (fresh_entry, text) in functions {
-        seen.insert(fresh_entry.node_id);
-        stats.total += 1;
+    let diffuse = options.diffuse.filter(|cfg| cfg.is_active());
 
-        if options.incremental {
-            if let Some((old_entry, old_bits)) = reuse_by_id.get(&fresh_entry.node_id) {
-                if old_entry.code_hash == fresh_entry.code_hash {
-                    entries.push(old_entry.clone());
-                    binary_embeddings.extend_from_slice(old_bits);
-                    stats.reused += 1;
-                    continue;
+    // Pure incremental hit: every function reuses bits and digests match — skip diffuse.
+    let mut pure_reuse = options.incremental && digest_matches_existing && diffuse.is_some();
+    if pure_reuse {
+        for (fresh_entry, _) in &functions {
+            match reuse_by_id.get(&fresh_entry.node_id) {
+                Some((old_entry, _)) if old_entry.code_hash == fresh_entry.code_hash => {}
+                _ => {
+                    pure_reuse = false;
+                    break;
                 }
             }
         }
-
-        let floats = embedder.embed(&text)?;
-        entries.push(fresh_entry);
-        binary_embeddings.extend_from_slice(&quantize_binary(&floats));
-        stats.embedded += 1;
+        if functions.len()
+            != options
+                .existing
+                .as_ref()
+                .map(|e| e.entries.len())
+                .unwrap_or(0)
+        {
+            pure_reuse = false;
+        }
     }
 
-    if options.incremental {
-        if let Some(existing) = &options.existing {
-            stats.removed = existing
-                .entries
-                .iter()
-                .filter(|entry| !seen.contains(&entry.node_id))
-                .count();
+    if let Some(config) = diffuse.filter(|_| !pure_reuse) {
+        // Dense path: embed all → CallGraph-aligned diffuse → quantize.
+        let call_graph = crate::callgraph::CallGraph::from_backend(backend)?;
+        let n_fn = call_graph.function_count();
+        let dims = options.dimensions;
+        let mut dense = vec![0.0f32; n_fn * dims];
+        let mut entry_by_uuid: HashMap<Uuid, (SemanticEntry, Vec<f32>)> = HashMap::new();
+
+        let mut seen = HashSet::new();
+        for (fresh_entry, text) in functions {
+            seen.insert(fresh_entry.node_id);
+            stats.total += 1;
+            stats.embedded += 1;
+            let floats = embedder.embed(&text)?;
+            if let Some(&idx) = call_graph.id_to_index.get(&fresh_entry.node_id) {
+                let start = idx as usize * dims;
+                let copy = dims.min(floats.len());
+                dense[start..start + copy].copy_from_slice(&floats[..copy]);
+            }
+            entry_by_uuid.insert(fresh_entry.node_id, (fresh_entry, floats));
+        }
+
+        crate::semantic_diffuse::diffuse_call_topology(&call_graph, &mut dense, dims, config);
+
+        for (idx, uuid) in call_graph.index_to_id.iter().enumerate() {
+            if let Some((entry, _)) = entry_by_uuid.remove(uuid) {
+                let start = idx * dims;
+                entries.push(entry);
+                binary_embeddings.extend_from_slice(&quantize_binary(&dense[start..start + dims]));
+            }
+        }
+        // Functions not present in CallGraph — quantize local dense without diffusion.
+        for (_id, (entry, floats)) in entry_by_uuid {
+            entries.push(entry);
+            binary_embeddings.extend_from_slice(&quantize_binary(&floats));
+        }
+
+        if options.incremental {
+            if let Some(existing) = &options.existing {
+                stats.removed = existing
+                    .entries
+                    .iter()
+                    .filter(|entry| !seen.contains(&entry.node_id))
+                    .count();
+            }
+        }
+    } else {
+        let mut seen = HashSet::new();
+        for (fresh_entry, text) in functions {
+            seen.insert(fresh_entry.node_id);
+            stats.total += 1;
+
+            if options.incremental {
+                if let Some((old_entry, old_bits)) = reuse_by_id.get(&fresh_entry.node_id) {
+                    if old_entry.code_hash == fresh_entry.code_hash {
+                        entries.push(old_entry.clone());
+                        binary_embeddings.extend_from_slice(old_bits);
+                        stats.reused += 1;
+                        continue;
+                    }
+                }
+            }
+
+            let floats = embedder.embed(&text)?;
+            entries.push(fresh_entry);
+            binary_embeddings.extend_from_slice(&quantize_binary(&floats));
+            stats.embedded += 1;
+        }
+
+        if options.incremental {
+            if let Some(existing) = &options.existing {
+                stats.removed = existing
+                    .entries
+                    .iter()
+                    .filter(|entry| !seen.contains(&entry.node_id))
+                    .count();
+            }
         }
     }
 
@@ -625,6 +706,7 @@ mod tests {
                 model_path: None,
                 tokenizer_path: None,
                 repo_root: None,
+                diffuse: None,
             },
         )
         .unwrap();
@@ -648,6 +730,7 @@ mod tests {
                 model_path: None,
                 tokenizer_path: None,
                 repo_root: None,
+                diffuse: None,
             },
         )
         .unwrap();
@@ -690,6 +773,7 @@ mod tests {
                 model_path: None,
                 tokenizer_path: None,
                 repo_root: None,
+                diffuse: None,
             },
         )
         .unwrap()
@@ -706,6 +790,7 @@ mod tests {
                 model_path: None,
                 tokenizer_path: None,
                 repo_root: Some(dir.path().to_path_buf()),
+                diffuse: None,
             },
         )
         .unwrap()

@@ -295,7 +295,7 @@ pub enum SemanticCommands {
         #[arg(long, default_value_t = true)]
         incremental: bool,
 
-        /// Embedder backend: code-daemon (default, bundled), hash, or onnx (generic `--model`)
+        /// Embedder backend: code-daemon (default, bundled), hash, vocab, or onnx
         #[arg(long, value_enum, default_value = "code-daemon")]
         embedder: semantic::CliEmbedderKind,
 
@@ -306,6 +306,26 @@ pub enum SemanticCommands {
         /// SentencePiece tokenizer for ONNX embedders (auto-detected beside `--model` when omitted)
         #[arg(long, value_name = "PATH")]
         tokenizer: Option<std::path::PathBuf>,
+
+        /// Diffuse dense embeddings over the call graph before sign quantization
+        #[arg(long, default_value_t = false)]
+        diffuse: bool,
+
+        /// Disable call-graph diffusion (default; overrides `--diffuse` when both are set)
+        #[arg(long, default_value_t = false)]
+        no_diffuse: bool,
+
+        /// Jacobi blend weight toward neighbor mean [default: 0.25]
+        #[arg(long, default_value_t = 0.25)]
+        diffuse_alpha: f64,
+
+        /// Jacobi diffusion iterations [default: 2]
+        #[arg(long, default_value_t = 2)]
+        diffuse_iters: usize,
+
+        /// Include callers as well as callees in diffusion neighbors
+        #[arg(long, default_value_t = false)]
+        diffuse_bidirectional: bool,
     },
 
     /// Hamming nearest-neighbor search over the semantic index
@@ -473,6 +493,11 @@ impl Cli {
                     embedder,
                     model,
                     tokenizer,
+                    diffuse,
+                    no_diffuse,
+                    diffuse_alpha,
+                    diffuse_iters,
+                    diffuse_bidirectional,
                 } => semantic::run_index(
                     &ctx,
                     semantic::SemanticIndexArgs {
@@ -481,6 +506,10 @@ impl Cli {
                         embedder,
                         model,
                         tokenizer,
+                        diffuse: diffuse && !no_diffuse,
+                        diffuse_alpha,
+                        diffuse_iters,
+                        diffuse_bidirectional,
                     },
                 ),
                 SemanticCommands::Query {

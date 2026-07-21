@@ -20,6 +20,8 @@ use uuid::Uuid;
 pub enum CliEmbedderKind {
     /// Deterministic sign-hash (no model files).
     Hash,
+    /// Compiled vocab bag-of-tokens (offline, no ONNX).
+    Vocab,
     /// Generic ONNX `--model` (hash tokenization, or `--tokenizer` for SentencePiece).
     Onnx,
     /// [`code-daemon-embed-v1`](https://huggingface.co/faxenoff/code-daemon-embed-v1) code retriever.
@@ -40,6 +42,10 @@ pub struct SemanticIndexArgs {
     pub embedder: CliEmbedderKind,
     pub model: Option<PathBuf>,
     pub tokenizer: Option<PathBuf>,
+    pub diffuse: bool,
+    pub diffuse_alpha: f64,
+    pub diffuse_iters: usize,
+    pub diffuse_bidirectional: bool,
 }
 
 pub struct SemanticQueryArgs {
@@ -98,6 +104,19 @@ pub fn run_index(ctx: &CliContext, args: SemanticIndexArgs) -> Result<()> {
             model_path: stored_model,
             tokenizer_path: stored_tokenizer,
             repo_root: Some(ctx.repo.clone()),
+            diffuse: if args.diffuse {
+                Some(crate::analysis::DiffuseConfig {
+                    alpha: args.diffuse_alpha,
+                    iterations: args.diffuse_iters,
+                    mode: if args.diffuse_bidirectional {
+                        crate::analysis::DiffuseNeighborMode::Bidirectional
+                    } else {
+                        crate::analysis::DiffuseNeighborMode::Callees
+                    },
+                })
+            } else {
+                None
+            },
         },
     )?;
 
@@ -184,6 +203,7 @@ fn resolve_embedder_choice(
 ) -> Result<(PathBuf, EmbedderChoice)> {
     match args.embedder {
         CliEmbedderKind::Hash => Ok((PathBuf::new(), EmbedderChoice::SignHash)),
+        CliEmbedderKind::Vocab => Ok((PathBuf::new(), EmbedderChoice::Vocab)),
         CliEmbedderKind::Onnx => {
             let model = args.model.clone().expect("checked");
             Ok((
@@ -217,7 +237,7 @@ fn store_paths(
     explicit_tokenizer: &Option<PathBuf>,
 ) -> (Option<String>, Option<String>) {
     match choice {
-        EmbedderChoice::SignHash => (None, None),
+        EmbedderChoice::SignHash | EmbedderChoice::Vocab => (None, None),
         EmbedderChoice::Onnx { model, tokenizer } => (
             Some(model.display().to_string()),
             tokenizer

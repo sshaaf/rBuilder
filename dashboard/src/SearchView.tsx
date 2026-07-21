@@ -66,8 +66,9 @@ export function SearchView({ manifest }: SearchViewProps) {
       <div class="mb-3">
         <h2 class="h5 mb-1">Semantic search</h2>
         <p class="text-muted small mb-0">
-          Natural-language and keyword search over indexed functions (code-daemon embeddings,
-          Hamming retrieval, optional fusion re-ranking).
+          Natural-language and keyword search over indexed functions (code-daemon, vocab, or
+          hash embeddings → Hamming retrieval, optional fusion re-ranking). Offline builds:
+          <code>rbuilder semantic index --embedder vocab</code>.
         </p>
       </div>
 

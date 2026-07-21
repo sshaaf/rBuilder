@@ -4,6 +4,7 @@ use rbuilder_error::{Error, Result};
 use std::path::{Path, PathBuf};
 
 use crate::semantic_search::{quantize_binary, sign_hash_embed, SIGN_HASH_MODEL_ID};
+use crate::semantic_vocab::{VocabAccumulateEmbedder, VOCAB_ACCUMULATE_MODEL_ID};
 
 /// Embed text into a float vector before binary quantization.
 pub trait SemanticEmbedder: Send + Sync {
@@ -51,6 +52,8 @@ impl SemanticEmbedder for SignHashEmbedder {
 pub enum EmbedderChoice {
     /// Built-in sign-hash (`sign-hash-v1`).
     SignHash,
+    /// Compiled vocab bag-of-tokens (`vocab-accumulate-v1`).
+    Vocab,
     /// Generic ONNX `--model` (hash tokenization, or SentencePiece with `--tokenizer`).
     Onnx {
         /// Path to the ONNX model file.
@@ -84,6 +87,7 @@ pub fn resolve_embedder(
 ) -> Result<Box<dyn SemanticEmbedder>> {
     match choice {
         EmbedderChoice::SignHash => Ok(Box::new(SignHashEmbedder::new(dimensions))),
+        EmbedderChoice::Vocab => Ok(Box::new(VocabAccumulateEmbedder::new(dimensions)?)),
         EmbedderChoice::Onnx { model, tokenizer } => {
             onnx_embedder(model, dimensions, tokenizer.as_deref())
         }
@@ -100,6 +104,9 @@ pub fn embedder_for_index(
 ) -> Result<Box<dyn SemanticEmbedder>> {
     if index.model_id == SIGN_HASH_MODEL_ID {
         return Ok(Box::new(SignHashEmbedder::new(index.dimensions)));
+    }
+    if index.model_id == VOCAB_ACCUMULATE_MODEL_ID {
+        return Ok(Box::new(VocabAccumulateEmbedder::new(index.dimensions)?));
     }
     if index.model_id == crate::semantic_code_daemon::CODE_DAEMON_MODEL_ID {
         let model = reload

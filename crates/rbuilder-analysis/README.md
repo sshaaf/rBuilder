@@ -25,6 +25,10 @@ See [docs/analysis-architecture.md](../../docs/analysis-architecture.md) for the
 | `taint` | PDG | Forward taint propagation | O(V+E) |
 | `migration` | Community graph | Weighted topo sort | O(V+E) |
 | `results` | — | Columnar metric storage | O(1) lookup |
+| `semantic_search` | Function nodes | Binary Hamming index + query | O(n) scan |
+| `semantic_vocab` | Tokens | Compiled vocab accumulate (`vocab-accumulate-v1`) | O(tokens·D) |
+| `semantic_diffuse` | `CallGraph` + dense `f32` | Jacobi neighbor blend before quantize | O(K·E·D) |
+| `semantic_fusion` | Index + `AnalysisResults` | Late fusion re-rank | O(pool) |
 
 ## Community detection naming
 

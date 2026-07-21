@@ -35,9 +35,10 @@ flowchart TB
 
   subgraph semantic_index["semantic index (opt-in)"]
     EX[semantic_extract body tokens]
-    EM[code-daemon / hash / custom ONNX]
+    EM[code-daemon / vocab / hash / ONNX]
+    DIF[optional call-graph Jacobi diffuse]
     BIN[semantic_index.bin Hamming rows]
-    EX --> EM --> BIN
+    EX --> EM --> DIF --> BIN
   end
 
   subgraph query["semantic query"]
@@ -62,16 +63,20 @@ flowchart TB
 | Embedder | CLI | Notes |
 |----------|-----|-------|
 | **code-daemon** (default) | `--embedder code-daemon` | Bundled ONNX + SentencePiece in `rbuilder-analysis/assets/`; requires `semantic-onnx` feature (default) |
-| **sign-hash** | `--embedder hash` | Deterministic, no model files — CI / `--no-default-features` |
+| **vocab** | `--embedder vocab` | Compiled bag-of-tokens (`vocab-accumulate-v1`); offline, no ONNX; native **256-d** |
+| **sign-hash** | `--embedder hash` | Deterministic FNV sign-hash — CI / `--no-default-features` |
 | **custom ONNX** | `--embedder onnx --model PATH` | Optional `--tokenizer` for SentencePiece |
 
-Default dimensions: **256** (MRL for code-daemon). Clone needs `git lfs pull` for ~206 MB external weights.
+Default dimensions: **256** (MRL for code-daemon; vocab native width). Clone needs `git lfs pull` for ~206 MB code-daemon weights.
+
+**Index-time diffusion (opt-in):** `--diffuse` runs Jacobi mixing over the call graph on dense `f32` buffers (CallGraph-sized, one scratch) before sign quantization. Defaults: α=0.25, 2 iterations, callees-only (`--diffuse-bidirectional` for callers+callees). Query does not re-diffuse — structure is baked into bits. Extra RSS ≈ `n_functions × dims × 4 × 2` bytes (≈ 3.8 GB peak buffers at 1.86M × 256); keep `--diffuse` off on huge repos until profiled.
 
 Escape hatch for builds without ONNX:
 
 ```bash
 cargo build --release --no-default-features
-rbuilder semantic index --embedder hash
+rbuilder semantic index --embedder vocab   # preferred offline
+# or: rbuilder semantic index --embedder hash
 ```
 
 ---
@@ -92,12 +97,14 @@ No extra index pass required beyond normal `discover`.
 | Component | Path |
 |-----------|------|
 | Index + Hamming search | `crates/rbuilder-analysis/src/semantic_search.rs` |
+| Vocab accumulator | `crates/rbuilder-analysis/src/semantic_vocab.rs` |
+| Call-graph diffusion | `crates/rbuilder-analysis/src/semantic_diffuse.rs` |
 | Body token extraction | `crates/rbuilder-analysis/src/semantic_extract.rs` |
 | Late fusion | `crates/rbuilder-analysis/src/semantic_fusion.rs` |
 | Hybrid expansion | `crates/rbuilder-analysis/src/semantic_hybrid.rs` |
 | Bundled code-daemon | `crates/rbuilder-analysis/src/semantic_embedded.rs` |
 | ONNX runtime path | `crates/rbuilder-analysis/src/semantic_onnx.rs` |
-| Token bloom at extract | `crates/rbuilder-analysis/src/structural_sketch.rs` |
+| Token bloom at extract | `crates/rbuilder-graph/src/structural_sketch.rs` |
 | CLI | `src/cli/semantic.rs`, `semantic_output.rs` |
 | HTTP API | `src/cli/semantic_api.rs`, `http_serve.rs` |
 | Manifest export | `crates/rbuilder-export/src/manifest.rs` |
@@ -129,9 +136,16 @@ rbuilder -f json semantic query "auth login" --expand neighbors --expand-depth 2
 rbuilder serve --open   # dashboard Search tab + /api/semantic/*
 ```
 
-Index-only flags: `--embedder`, `--dimensions`, `--model`, `--tokenizer`, `--incremental`.
+Index-only flags: `--embedder`, `--dimensions`, `--model`, `--tokenizer`, `--incremental`,
+`--diffuse` / `--no-diffuse`, `--diffuse-alpha`, `--diffuse-iters`, `--diffuse-bidirectional`.
 
 Query flags: `--fusion`, `--no-fusion`, `--keyword-and`, `--candidate-pool`, `--expand`, `--expand-depth`.
+
+```bash
+# Offline / no ONNX (preferred)
+rbuilder semantic index --embedder vocab
+rbuilder semantic index --embedder vocab --diffuse
+```
 
 ---
 

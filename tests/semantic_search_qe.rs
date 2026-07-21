@@ -226,3 +226,89 @@ fn semantic_index_query_invariants_and_oracles() {
         }
     }
 }
+
+#[test]
+fn semantic_vocab_and_diffuse_find_checkout() {
+    let sandbox = Sandbox::new();
+    let discover = sandbox.run(&["-f", "json", "discover", ".", "--languages", "java,rust"]);
+    assert_success(&discover, "discover");
+
+    let index_hash = sandbox.run(&[
+        "-f",
+        "json",
+        "semantic",
+        "index",
+        "--embedder",
+        "hash",
+        "--dimensions",
+        "256",
+    ]);
+    assert_success(&index_hash, "semantic index hash");
+
+    let index_vocab = sandbox.run(&[
+        "-f",
+        "json",
+        "semantic",
+        "index",
+        "--embedder",
+        "vocab",
+        "--dimensions",
+        "256",
+    ]);
+    assert_success(&index_vocab, "semantic index vocab");
+    let vocab_doc = sandbox.parse_json(&index_vocab);
+    assert!(
+        vocab_doc["model_id"]
+            .as_str()
+            .unwrap_or("")
+            .contains("vocab-accumulate"),
+        "expected vocab model_id, got {}",
+        vocab_doc["model_id"]
+    );
+
+    let q = sandbox.run(&[
+        "-f",
+        "json",
+        "semantic",
+        "query",
+        "checkout order cart",
+        "--limit",
+        "5",
+        "--no-fusion",
+    ]);
+    assert_success(&q, "vocab query");
+    let names = hit_names(&sandbox.parse_json(&q));
+    assert!(
+        names.iter().any(|n| n.contains("checkout")),
+        "vocab Hamming should rank checkout: {names:?}"
+    );
+
+    let index_diffuse = sandbox.run(&[
+        "-f",
+        "json",
+        "semantic",
+        "index",
+        "--embedder",
+        "vocab",
+        "--diffuse",
+        "--dimensions",
+        "256",
+    ]);
+    assert_success(&index_diffuse, "semantic index vocab+diffuse");
+    let q2 = sandbox.run(&[
+        "-f",
+        "json",
+        "semantic",
+        "query",
+        "checkout order cart",
+        "--limit",
+        "5",
+        "--no-fusion",
+    ]);
+    assert_success(&q2, "vocab+diffuse query");
+    let names2 = hit_names(&sandbox.parse_json(&q2));
+    assert!(
+        names2.iter().any(|n| n.contains("checkout")),
+        "vocab+diffuse should still rank checkout: {names2:?}"
+    );
+}

@@ -774,8 +774,12 @@ rbuilder -r "$REPO" semantic index --incremental
 rbuilder -r "$REPO" -f json semantic query "shopping cart checkout" --limit 10
 rbuilder -r "$REPO" -f json semantic query "OrderService" --keyword-and --fusion
 
-# Hash embedder (no ONNX) — e.g. CI or --no-default-features builds
+# Hash embedder (no ONNX) — e.g. CI
 rbuilder -r "$REPO" semantic index --embedder hash
+
+# Vocab embedder (compiled token table, offline) + optional call-graph diffusion
+rbuilder -r "$REPO" semantic index --embedder vocab
+rbuilder -r "$REPO" semantic index --embedder vocab --diffuse --diffuse-alpha 0.25 --diffuse-iters 2
 ```
 
 | Flag | Purpose |
@@ -783,7 +787,10 @@ rbuilder -r "$REPO" semantic index --embedder hash
 | `--fusion` / `--no-fusion` | Late re-rank with blast, PageRank, name, token-bloom sketch |
 | `--keyword-and` | Every query token must match metadata or body sketch |
 | `--expand neighbors\|blast\|gql\|all` | Hybrid expansion after top hits |
-| `--embedder hash\|onnx\|code-daemon` | Embedding backend |
+| `--embedder hash\|vocab\|onnx\|code-daemon` | Embedding backend |
+| `--diffuse` / `--no-diffuse` | Jacobi call-graph mix on dense floats before quantize (index only; off by default) |
+| `--diffuse-alpha` / `--diffuse-iters` | Diffusion blend weight and iterations |
+| `--diffuse-bidirectional` | Include callers as well as callees |
 
 Dashboard: **`rbuilder serve --open`** → **Search** tab (requires HTTP semantic API).
 
