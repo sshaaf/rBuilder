@@ -28,7 +28,7 @@ rbuilder check --policy-file policy.json
     },
     {
       "symbol": "PaymentGateway.charge",
-      "error": "impact_zone_size 53 exceeds max 50"
+      "violation": "impact_zone_size 53 exceeds max 50"
     }
   ],
   "passed": false

@@ -69,6 +69,6 @@ Do **not** use this skill when:
 **Agent:**
 1. `rbuilder serve --port 8080 --query-only &` (start in background)
 2. `curl -s -X POST http://127.0.0.1:8080/api/query -H 'Content-Type: application/json' -d '{"macro": "all_functions"}' | jq '.count'`
-3. `curl -s -X POST http://127.0.0.1:8080/api/query -H 'Content-Type: application/json' -d '{"query": "MATCH (a:Function)-[:CALLS]->(b:Function) WHERE a.name = 'main' RETURN a,b"}' | jq '.rows | length'`
+3. `curl -s -X POST http://127.0.0.1:8080/api/query -H 'Content-Type: application/json' -d '{"query": "MATCH (a:Function)-[:CALLS]->(b:Function) WHERE a.name = '"'"'main'"'"' RETURN a,b"}' | jq '.rows | length'`
 
 **Reply:** "I started the query server. The repo has 1,847 functions. `main` directly calls 12 other functions. Let me drill into the hotspots next."
