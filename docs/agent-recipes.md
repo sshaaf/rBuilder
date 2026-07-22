@@ -178,6 +178,34 @@ rbuilder -r "$REPO" export --export-format mermaid \
 
 ---
 
+## Recipe 11 — DTO / cart mutation safety (hybrid CPG)
+
+```bash
+rbuilder -r "$REPO" discover . --with-cfg
+# Optional fidelity: --with-dfg-loops  --with-ast-skeleton
+
+# CoolStore ShoppingCart (ecommerce-* fixtures) — non-constructor field writes:
+rbuilder -r "$REPO" -f json cpg mutations --type ShoppingCart --exclude-ctors
+
+# Same pattern for a DTO / record candidate (substitute your type name):
+# rbuilder -r "$REPO" -f json cpg mutations --type OrderDTO --exclude-ctors
+
+# After picking a hit at file:line, forward flows on the receiver:
+rbuilder -r "$REPO" -f json cpg flows \
+  src/main/java/com/example/ecommerce/coolstore/service/ShoppingCartService.java \
+  --line 75 --variable sc --function priceShoppingCart --direction forward --with-alias
+
+# Optional: coarse syntax tree for the function
+rbuilder -r "$REPO" -f json cpg ast priceShoppingCart
+
+# Optional: export L_repo (+ L_proc if archived) for Joern/Neo4j tooling
+rbuilder -r "$REPO" cpg export --format graphson --output cart-cpg.json --path-contains coolstore/
+```
+
+**Use when:** proving immutability before converting a mutable cart/DTO to a `record`, or locating pricing side effects on `ShoppingCart`. Empty mutations ⇒ no typed non-ctor field writes found (unresolved receivers excluded unless `--include-unresolved`). On C fixtures use the struct typedef (`shopping_cart_t`). Requires `--with-cfg`. `--with-alias` expands may-alias names (copies + field bases). See [User Guide §10](user-guide.md#10-hybrid-cpg-cpg) and [hybrid-cpg-plan.md](design/hybrid-cpg-plan.md).
+
+---
+
 ## See also
 
 - [AGENTS.md](../AGENTS.md)

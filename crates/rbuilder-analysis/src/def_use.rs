@@ -11,6 +11,62 @@ pub fn extract_def_use(node: Node, source: &[u8]) -> (HashSet<String>, HashSet<S
     (defined, used)
 }
 
+fn is_field_access_kind(kind: &str) -> bool {
+    matches!(
+        kind,
+        "field_access"
+            | "field_expression"
+            | "member_expression"
+            | "member_access_expression"
+            | "selector_expression"
+            | "attribute"
+    )
+}
+
+/// Build `base.member` (or full node text) for a field-access style AST node.
+fn field_access_compound(node: Node, source: &[u8]) -> Option<String> {
+    let field = node
+        .child_by_field_name("field")
+        .or_else(|| node.child_by_field_name("property"))
+        .or_else(|| node.child_by_field_name("attribute"))
+        .or_else(|| node.child_by_field_name("name"));
+    let object = node
+        .child_by_field_name("object")
+        .or_else(|| node.child_by_field_name("argument"))
+        .or_else(|| node.child_by_field_name("value"))
+        .or_else(|| node.child_by_field_name("expression"));
+    match (object, field) {
+        (Some(obj), Some(fld)) => {
+            let obj_txt = obj.utf8_text(source).ok()?;
+            let fld_txt = fld.utf8_text(source).ok()?;
+            Some(format!("{obj_txt}.{fld_txt}"))
+        }
+        _ => node.utf8_text(source).ok().map(|s| s.to_string()),
+    }
+}
+
+fn collect_field_access_base_uses(node: Node, source: &[u8], used: &mut HashSet<String>) {
+    if let Some(object) = node
+        .child_by_field_name("object")
+        .or_else(|| node.child_by_field_name("argument"))
+        .or_else(|| node.child_by_field_name("value"))
+        .or_else(|| node.child_by_field_name("expression"))
+    {
+        collect_def_use(object, source, &mut HashSet::new(), used, false);
+    }
+}
+
+fn collect_assignment_lhs(left: Node, source: &[u8], defined: &mut HashSet<String>, used: &mut HashSet<String>) {
+    if is_field_access_kind(left.kind()) {
+        if let Some(compound) = field_access_compound(left, source) {
+            defined.insert(compound);
+        }
+        collect_field_access_base_uses(left, source, used);
+    } else {
+        collect_pattern_defs(left, source, defined);
+    }
+}
+
 fn collect_def_use(
     node: Node,
     source: &[u8],
@@ -32,7 +88,7 @@ fn collect_def_use(
         }
         "assignment_expression" | "augmented_assignment_expression" => {
             if let Some(left) = node.child_by_field_name("left") {
-                collect_pattern_defs(left, source, defined);
+                collect_assignment_lhs(left, source, defined, used);
             }
             if let Some(right) = node.child_by_field_name("right") {
                 collect_def_use(right, source, defined, used, false);
@@ -40,7 +96,7 @@ fn collect_def_use(
         }
         "compound_assignment_expr" => {
             if let Some(left) = node.child_by_field_name("left") {
-                collect_pattern_defs(left, source, defined);
+                collect_assignment_lhs(left, source, defined, used);
             }
             if let Some(right) = node.child_by_field_name("right") {
                 collect_def_use(right, source, defined, used, false);
@@ -50,7 +106,7 @@ fn collect_def_use(
         // Python
         "assignment" => {
             if let Some(left) = node.child_by_field_name("left") {
-                collect_pattern_defs(left, source, defined);
+                collect_assignment_lhs(left, source, defined, used);
             }
             if let Some(right) = node.child_by_field_name("right") {
                 collect_def_use(right, source, defined, used, false);
@@ -58,7 +114,7 @@ fn collect_def_use(
         }
         "augmented_assignment" => {
             if let Some(left) = node.child_by_field_name("left") {
-                collect_pattern_defs(left, source, defined);
+                collect_assignment_lhs(left, source, defined, used);
                 collect_def_use(left, source, defined, used, false);
             }
             if let Some(right) = node.child_by_field_name("right") {
@@ -86,7 +142,7 @@ fn collect_def_use(
         // Go
         "short_var_declaration" | "var_declaration" | "assignment_statement" => {
             if let Some(left) = node.child_by_field_name("left") {
-                collect_pattern_defs(left, source, defined);
+                collect_assignment_lhs(left, source, defined, used);
             }
             if let Some(right) = node.child_by_field_name("right") {
                 collect_def_use(right, source, defined, used, false);
@@ -119,8 +175,12 @@ fn collect_def_use(
             }
         }
 
-        // C#
-        "variable_declaration" | "local_declaration_statement" => {
+        // C# / Java / JS / TS local declarations
+        "variable_declaration"
+        | "local_declaration_statement"
+        | "local_variable_declaration"
+        | "lexical_declaration"
+        | "variable_declaration_list" => {
             let mut cursor = node.walk();
             for child in node.children(&mut cursor) {
                 if child.kind() == "variable_declarator" {
@@ -130,9 +190,20 @@ fn collect_def_use(
                     if let Some(value) = child.child_by_field_name("value") {
                         collect_def_use(value, source, defined, used, false);
                     }
-                } else if child.kind() == "variable_declaration" {
+                } else if matches!(
+                    child.kind(),
+                    "variable_declaration" | "variable_declaration_list"
+                ) {
                     collect_def_use(child, source, defined, used, false);
                 }
+            }
+        }
+        "variable_declarator" => {
+            if let Some(name) = node.child_by_field_name("name") {
+                collect_pattern_defs(name, source, defined);
+            }
+            if let Some(value) = node.child_by_field_name("value") {
+                collect_def_use(value, source, defined, used, false);
             }
         }
 
@@ -159,6 +230,21 @@ fn collect_def_use(
             }
             if let Some(value) = node.child_by_field_name("value") {
                 collect_def_use(value, source, defined, used, false);
+            }
+        }
+
+        // Field / member access (Java field_access, Rust field_expression, …)
+        k if is_field_access_kind(k) => {
+            if is_def_target {
+                if let Some(compound) = field_access_compound(node, source) {
+                    defined.insert(compound);
+                }
+                collect_field_access_base_uses(node, source, used);
+            } else {
+                collect_field_access_base_uses(node, source, used);
+                if let Some(compound) = field_access_compound(node, source) {
+                    used.insert(compound);
+                }
             }
         }
 
@@ -361,4 +447,38 @@ mod tests {
         );
         assert!(for_uses.contains("m"));
     }
+
+    #[test]
+    fn test_java_field_assignment_def_use() {
+        let source = "class C { void m(OrderDTO order) { order.status = \"X\"; } }";
+        let mut parser = Parser::new();
+        parser
+            .set_language(&tree_sitter_java::LANGUAGE.into())
+            .unwrap();
+        let tree = parser.parse(source, None).unwrap();
+        let assign = find_kind(tree.root_node(), "assignment_expression").expect("assignment");
+        let (defs, uses) = extract_def_use(assign, source.as_bytes());
+        assert!(
+            defs.contains("order.status"),
+            "defs should include order.status, got {defs:?}"
+        );
+        assert!(uses.contains("order"), "uses should include order, got {uses:?}");
+    }
+
+    #[test]
+    fn test_java_local_variable_declaration_def_use() {
+        let source = "class C { void m(OrderDTO order) { OrderDTO other = order; } }";
+        let mut parser = Parser::new();
+        parser
+            .set_language(&tree_sitter_java::LANGUAGE.into())
+            .unwrap();
+        let tree = parser.parse(source, None).unwrap();
+        let decl =
+            find_kind(tree.root_node(), "local_variable_declaration").expect("local decl");
+        let (defs, uses) = extract_def_use(decl, source.as_bytes());
+        assert!(defs.contains("other"), "defs should include other, got {defs:?}");
+        assert!(uses.contains("order"), "uses should include order, got {uses:?}");
+        assert!(!uses.contains("other"), "declarator name must not be a use, got {uses:?}");
+    }
 }
+

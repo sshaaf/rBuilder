@@ -13,6 +13,10 @@ pub struct DiscoverArgs {
     pub with_cfg: bool,
     /// Discover-time taint (implies CFG pass). Default off.
     pub with_taint: bool,
+    /// Classify loop-carried PDG data deps (implies CFG). Default off.
+    pub with_dfg_loops: bool,
+    /// Write coarse AST skeleton archive (implies CFG). Default off.
+    pub with_ast_skeleton: bool,
     /// Also write legacy JSON graph files (`graph.db` / `graph.json`).
     pub write_json_graph: bool,
     /// Export `.rbuilder/dashboard/` bundle. Default off.
@@ -48,6 +52,8 @@ pub fn run(ctx: &CliContext, args: DiscoverArgs) -> Result<()> {
         args.with_security,
         args.with_cfg,
         args.with_taint,
+        args.with_dfg_loops,
+        args.with_ast_skeleton,
         args.write_json_graph,
         args.with_dashboard,
         args.export_migration_hints,

@@ -18,6 +18,8 @@ pub(crate) fn run_full_analysis(
     with_security: bool,
     with_cfg: bool,
     with_taint: bool,
+    with_dfg_loops: bool,
+    with_ast_skeleton: bool,
     write_json_graph: bool,
     with_dashboard: bool,
     export_migration_hints: bool,
@@ -31,8 +33,8 @@ pub(crate) fn run_full_analysis(
     let human_output = !json_output;
     let run_start = Instant::now();
     let mut profile = DiscoverStageReport::default();
-    // Taint needs CFG/PDG; enable the CFG batch when either flag is set.
-    let run_cfg_pass = with_cfg || with_taint;
+    // Taint / DFG loops / AST skeleton need CFG/PDG.
+    let run_cfg_pass = with_cfg || with_taint || with_dfg_loops || with_ast_skeleton;
     profile.cfg_enabled = run_cfg_pass;
     profile.security_enabled = with_security;
     use crate::analysis::graph_utils::PetGraphView;
@@ -455,6 +457,7 @@ pub(crate) fn run_full_analysis(
                 verbose,
                 thread_count: None,
                 enable_taint: with_taint,
+                dfg_loops: with_dfg_loops,
             },
         );
         let success_count = batch.success_count;
@@ -509,6 +512,84 @@ pub(crate) fn run_full_analysis(
             }
         }
         profile.cfg_archive.secs = secs(archive_start.elapsed());
+
+        // Field-write index for `cpg mutations` (hybrid CPG P1)
+        let fw_start = Instant::now();
+        match CfgPdgArchive::open_if_exists(root) {
+            Ok(Some(archive)) => {
+                match crate::analysis::build_and_save_field_write_index(
+                    root,
+                    &archive,
+                    &functions,
+                    Some(graph_digest.clone()),
+                ) {
+                    Ok((path, count)) => {
+                        if verbose {
+                            debug!(
+                                path = %path.display(),
+                                writes = count,
+                                "field_write index saved"
+                            );
+                        }
+                        if human_output && count > 0 {
+                            println!("  Field writes indexed: {count}");
+                        }
+                    }
+                    Err(err) => warn!(error = %err, "Failed to save field_write index"),
+                }
+            }
+            Ok(None) => {}
+            Err(err) => warn!(error = %err, "Failed to open CFG/PDG archive for field writes"),
+        }
+        let _ = fw_start;
+
+        if with_ast_skeleton {
+            use crate::analysis::{
+                build_function_skeleton, cfg_language_id_from_path, AstSkeletonArchive,
+            };
+            let mut skel = AstSkeletonArchive {
+                version: crate::analysis::AST_SKELETON_VERSION,
+                graph_digest: Some(graph_digest.clone()),
+                records: Vec::new(),
+            };
+            for func in &functions {
+                let Some(file) = func.file_path.as_ref() else {
+                    continue;
+                };
+                let Some(lang) = cfg_language_id_from_path(Path::new(file)) else {
+                    continue;
+                };
+                let path = if Path::new(file).is_file() {
+                    Path::new(file).to_path_buf()
+                } else {
+                    root.join(file)
+                };
+                let Ok(source) = std::fs::read_to_string(&path) else {
+                    continue;
+                };
+                if let Ok(rec) = build_function_skeleton(
+                    lang,
+                    &source,
+                    &func.name,
+                    file,
+                    Some(func.id),
+                ) {
+                    skel.records.push(rec);
+                }
+            }
+            let skel_path = AstSkeletonArchive::default_path(root);
+            match skel.write_to_path(&skel_path) {
+                Ok(()) => {
+                    if human_output {
+                        println!(
+                            "  AST skeletons: {} functions",
+                            skel.records.len()
+                        );
+                    }
+                }
+                Err(err) => warn!(error = %err, "Failed to save AST skeleton archive"),
+            }
+        }
 
         if human_output {
             if success_count > 0 {

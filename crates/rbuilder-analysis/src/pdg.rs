@@ -88,6 +88,18 @@ pub struct DataDependency {
     pub variable: String,
     /// Dependence classification.
     pub dep_type: DataDepType,
+    /// True when the dependence crosses a CFG cycle (loop-carried).
+    ///
+    /// Populated when PDG is built with [`PdgBuildOptions::classify_loop_carried`].
+    #[serde(default)]
+    pub loop_carried: bool,
+}
+
+/// Options for PDG construction (hybrid CPG P3 tiers).
+#[derive(Debug, Clone, Copy, Default)]
+pub struct PdgBuildOptions {
+    /// Tag data deps that participate in a CFG cycle (T1 / `--with-dfg-loops`).
+    pub classify_loop_carried: bool,
 }
 
 /// Data dependence classification.
@@ -132,8 +144,7 @@ impl ProgramDependenceGraph {
 
     /// Build a PDG from a CFG and source bytes for def-use refinement.
     pub fn build(cfg: &ControlFlowGraph, source: &[u8]) -> Result<Self> {
-        let dom = DominatorTree::build(cfg);
-        Self::build_with_dominator(cfg, source, &dom)
+        Self::build_with_options(cfg, source, PdgBuildOptions::default())
     }
 
     /// Build a PDG reusing a precomputed dominator tree.
@@ -142,6 +153,26 @@ impl ProgramDependenceGraph {
         source: &[u8],
         dom: &DominatorTree,
     ) -> Result<Self> {
+        Self::build_with_dominator_options(cfg, source, dom, PdgBuildOptions::default())
+    }
+
+    /// Build with explicit tier options (loop-carried classification, …).
+    pub fn build_with_options(
+        cfg: &ControlFlowGraph,
+        source: &[u8],
+        options: PdgBuildOptions,
+    ) -> Result<Self> {
+        let dom = DominatorTree::build(cfg);
+        Self::build_with_dominator_options(cfg, source, &dom, options)
+    }
+
+    /// Build with a precomputed dominator tree and tier options.
+    pub fn build_with_dominator_options(
+        cfg: &ControlFlowGraph,
+        source: &[u8],
+        dom: &DominatorTree,
+        options: PdgBuildOptions,
+    ) -> Result<Self> {
         let mut pdg = Self::default();
         pdg.create_nodes_from_cfg(cfg);
         pdg.rebuild_line_nodes();
@@ -149,7 +180,23 @@ impl ProgramDependenceGraph {
         let reaching = compute_reaching_definitions(cfg, &pdg);
         pdg.build_data_dependencies(cfg, &reaching);
         pdg.build_control_dependencies_dominance(cfg, dom);
+        if options.classify_loop_carried {
+            pdg.classify_loop_carried(cfg);
+        }
         Ok(pdg)
+    }
+
+    /// Mark data dependencies that close a CFG cycle (use can reach def).
+    pub fn classify_loop_carried(&mut self, cfg: &ControlFlowGraph) {
+        for dep in &mut self.data_deps {
+            let Some(from_node) = self.nodes.get(&dep.from) else {
+                continue;
+            };
+            let Some(to_node) = self.nodes.get(&dep.to) else {
+                continue;
+            };
+            dep.loop_carried = cfg_block_can_reach(cfg, to_node.block, from_node.block);
+        }
     }
 
     /// Ensure adjacency index exists (no-op when already built).
@@ -327,6 +374,7 @@ impl ProgramDependenceGraph {
             to,
             variable,
             dep_type,
+            loop_carried: false,
         });
         self.data_succ.entry(from).or_default().push(to);
     }
@@ -482,6 +530,27 @@ impl ProgramDependenceGraph {
         }
         max_depth
     }
+}
+
+/// True if `from` can reach `to` following CFG successors (including trivial `from == to`).
+fn cfg_block_can_reach(cfg: &ControlFlowGraph, from: BlockId, to: BlockId) -> bool {
+    if from == to {
+        return true;
+    }
+    let mut seen = HashSet::new();
+    let mut stack = vec![from];
+    while let Some(b) = stack.pop() {
+        if !seen.insert(b) {
+            continue;
+        }
+        if b == to {
+            return true;
+        }
+        for &succ in cfg.successors(b) {
+            stack.push(succ);
+        }
+    }
+    false
 }
 
 /// Post-dominator tree for control dependence.
@@ -655,5 +724,37 @@ fn chain(a: i32) -> i32 {
         reloaded.data_succ.clear();
         assert!(pdg.data_flow_depth_for_symbol("a") >= 2);
         assert!(reloaded.data_flow_depth_for_symbol("a") >= 2);
+    }
+
+    #[test]
+    fn test_loop_carried_classification() {
+        let code = r#"
+fn sum(n: i32) -> i32 {
+    let mut acc = 0;
+    let mut i = 0;
+    while i < n {
+        acc = acc + i;
+        i = i + 1;
+    }
+    acc
+}
+"#;
+        let cfg = build_cfg_for_function("rust", code, "sum").unwrap();
+        let pdg = ProgramDependenceGraph::build_with_options(
+            &cfg,
+            code.as_bytes(),
+            PdgBuildOptions {
+                classify_loop_carried: true,
+            },
+        )
+        .unwrap();
+        let carried = pdg.data_deps.iter().filter(|d| d.loop_carried).count();
+        assert!(
+            carried > 0,
+            "expected at least one loop-carried dep, deps={:?}",
+            pdg.data_deps
+        );
+        let independent = ProgramDependenceGraph::build(&cfg, code.as_bytes()).unwrap();
+        assert!(independent.data_deps.iter().all(|d| !d.loop_carried));
     }
 }

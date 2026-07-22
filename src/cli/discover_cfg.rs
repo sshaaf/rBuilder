@@ -4,7 +4,7 @@ use crate::analysis::storage::stable_function_key;
 use crate::analysis::{
     build_cfg_for_function, cfg_language_id_from_path, AnalysisIndexEntry, AnalysisStorage,
     CfgPdgRecord, ControlFlowGraph, DominatorTree, FunctionAnalysis, FunctionIdSyncEntry,
-    ParsedSourceFile, ProgramDependenceGraph, TaintAnalyzer,
+    ParsedSourceFile, PdgBuildOptions, ProgramDependenceGraph, TaintAnalyzer,
 };
 use rayon::prelude::*;
 use rbuilder_graph::code_index::hash_code;
@@ -26,6 +26,8 @@ pub struct CfgAnalysisOptions {
     pub thread_count: Option<usize>,
     /// Run discover-time taint after PDG (`--with-taint`).
     pub enable_taint: bool,
+    /// Tag loop-carried data deps on the PDG (`--with-dfg-loops`).
+    pub dfg_loops: bool,
 }
 
 /// Wall-clock totals for CFG sub-stages (sum of per-function work).
@@ -99,6 +101,7 @@ struct CfgWorkContext<'a> {
     stage: Option<&'a CfgStageTimings>,
     timings: Option<&'a Mutex<Vec<CfgFunctionTiming>>>,
     enable_taint: bool,
+    dfg_loops: bool,
 }
 
 /// Analyze all repository functions in parallel with incremental reuse and bincode persistence.
@@ -136,6 +139,7 @@ pub fn run_cfg_analysis_batch(
         stage: stage_ref,
         timings: timing_ref,
         enable_taint: options.enable_taint,
+        dfg_loops: options.dfg_loops,
     };
 
     let flat: Vec<Option<CfgFunctionWork>> = with_pool(options.thread_count, || {
@@ -304,6 +308,7 @@ fn process_function_work_item(
         ctx.stage,
         ctx.timings,
         ctx.enable_taint,
+        ctx.dfg_loops,
     )
 }
 
@@ -383,6 +388,7 @@ fn analyze_function_in_file(
     stage: Option<&CfgStageTimings>,
     timings: Option<&Mutex<Vec<CfgFunctionTiming>>>,
     enable_taint: bool,
+    dfg_loops: bool,
 ) -> Option<CfgFunctionWork> {
     let code_hash = resolve_code_hash(func_node, source);
 
@@ -406,6 +412,7 @@ fn analyze_function_in_file(
         stage,
         timings,
         enable_taint,
+        dfg_loops,
     )
 }
 
@@ -463,6 +470,7 @@ fn compute_function_cfg(
     stage: Option<&CfgStageTimings>,
     timings: Option<&Mutex<Vec<CfgFunctionTiming>>>,
     enable_taint: bool,
+    dfg_loops: bool,
 ) -> Option<CfgFunctionWork> {
     let total_start = timings.is_some().then(Instant::now);
 
@@ -499,6 +507,7 @@ fn compute_function_cfg(
         from_cache,
         stage,
         enable_taint,
+        dfg_loops,
     )?;
 
     if let (Some(start), Some(log)) = (total_start, timings) {
@@ -531,6 +540,7 @@ fn compute_from_cfg(
     from_cache: bool,
     stage: Option<&CfgStageTimings>,
     enable_taint: bool,
+    dfg_loops: bool,
 ) -> Option<CfgFunctionWork> {
     if let Some(stage) = stage {
         stage.functions.fetch_add(1, Ordering::Relaxed);
@@ -545,8 +555,16 @@ fn compute_from_cfg(
     }
 
     let pdg_start = stage.map(|_| Instant::now());
-    let pdg_data =
-        ProgramDependenceGraph::build_with_dominator(&cfg_data, source.as_bytes(), &dom_data).ok();
+    let pdg_opts = PdgBuildOptions {
+        classify_loop_carried: dfg_loops,
+    };
+    let pdg_data = ProgramDependenceGraph::build_with_dominator_options(
+        &cfg_data,
+        source.as_bytes(),
+        &dom_data,
+        pdg_opts,
+    )
+    .ok();
     if let (Some(stage), Some(start)) = (stage, pdg_start) {
         stage
             .pdg_ns

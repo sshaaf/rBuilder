@@ -3,7 +3,7 @@
 This document explains **what rBuilder is**, how a **code knowledge graph** works, and what each capability is for — before you run commands. For install steps and copy-paste examples, use the **[User Guide](user-guide.md)**.
 
 **Audience:** architects, team leads, security engineers, and developers who want the concepts first.  
-**Hands-on next step:** [User Guide → coolstore example](user-guide.md#3-example-project-coolstore)
+**Hands-on next step:** [User Guide → ecommerce-java example](user-guide.md#3-example-project-ecommerce-java)
 
 ---
 
@@ -18,13 +18,14 @@ This document explains **what rBuilder is**, how a **code knowledge graph** work
 7. [Program slicing](#program-slicing)
 8. [Taint analysis](#taint-analysis)
 9. [CFG, PDG, and dominance (deep structure)](#cfg-pdg-and-dominance-deep-structure)
-10. [Graph metrics (architecture hotspots)](#graph-metrics-architecture-hotspots)
-11. [Migration planner (package roadmap)](#migration-planner-package-roadmap)
-12. [Export and sharing](#export-and-sharing)
-13. [CI policy checks](#ci-policy-checks)
-14. [HTTP server (`serve`)](#http-server-serve)
-15. [Dashboard (visual exploration)](#dashboard-visual-exploration)
-16. [Where to go next](#where-to-go-next)
+10. [Hybrid CPG (mutations and flows)](#hybrid-cpg-mutations-and-flows)
+11. [Graph metrics (architecture hotspots)](#graph-metrics-architecture-hotspots)
+12. [Migration planner (package roadmap)](#migration-planner-package-roadmap)
+13. [Export and sharing](#export-and-sharing)
+14. [CI policy checks](#ci-policy-checks)
+15. [HTTP server (`serve`)](#http-server-serve)
+16. [Dashboard (visual exploration)](#dashboard-visual-exploration)
+17. [Where to go next](#where-to-go-next)
 
 ---
 
@@ -262,6 +263,30 @@ In the dashboard: **CFG / PDG Analysis** tab (control-flow graph + idom table), 
 
 ---
 
+## Hybrid CPG (mutations and flows)
+
+**Bridge** the repo-level call graph with per-function CFG/PDG so agents can ask Joern-style questions — “who mutates this type outside constructors?” — without reading whole files.
+
+After `discover --with-cfg`, the **`cpg`** commands expose:
+
+- **`cpg status`** — is the L_proc archive ready? how many field writes indexed?
+- **`cpg mutations --type T --exclude-ctors`** — typed field writes (CoolStore demo: `ShoppingCart` on ecommerce fixtures)
+- **`cpg flows`** — forward/backward data dependence from a variable at a line
+- **`cpg calls` / `cpg function`** — CALL neighborhood bridged to L_proc
+
+The in-tree fixtures keep **`/api/*`** and add CoolStore-compatible **`/services/*`** with `ShoppingCartService.priceShoppingCart` as a clear mutation/pricing site.
+
+**Benefits**
+
+- **DTO / record safety** — empty mutations ⇒ no typed non-ctor writes found  
+- **Same CLI for agents** — prefer `-f json cpg …` over ad-hoc multi-tool glue  
+- **Language honesty** — typed recovery varies (C uses `shopping_cart_t`; JS may need `--include-unresolved`)
+
+→ [User Guide §10 — Hybrid CPG](user-guide.md#10-hybrid-cpg-cpg)  
+→ [Agent recipes — Recipe 11](agent-recipes.md) · [hybrid-cpg-plan.md](design/hybrid-cpg-plan.md)
+
+---
+
 ## Graph metrics (architecture hotspots)
 
 ### Goal
@@ -288,7 +313,7 @@ Discover already computes many analytics during indexing; `metrics` exposes them
 
 ### How to run it
 
-→ [User Guide §10 — Graph metrics](user-guide.md#10-graph-metrics)  
+→ [User Guide §11 — Graph metrics](user-guide.md#11-graph-metrics)  
 → Design: **[Graph metrics design](design/graph-metrics-design.md)**
 
 ---
@@ -348,7 +373,7 @@ rbuilder serve --open   # http://127.0.0.1:8080/ → Migration tab + query API
 
 ### How to run it
 
-→ [User Guide §11 — Export graph projections](user-guide.md#11-export-graph-projections)
+→ [User Guide §13 — Export graph projections](user-guide.md#13-export-graph-projections)
 
 ---
 
@@ -372,7 +397,7 @@ This pairs with blast-radius semantics: policies can encode scale limits, forbid
 
 ### How to run it
 
-→ [User Guide §12 — CI policy check](user-guide.md#12-ci-policy-check)  
+→ [User Guide §14 — CI policy check](user-guide.md#14-ci-policy-check)  
 → Policy JSON: **[Policy format](policy-format.md)** · Design: **[CI policy checks design](design/ci-policy-checks-design.md)**
 
 ---
@@ -395,7 +420,7 @@ Serve the **dashboard** and **GQL HTTP API** in one process, or keep a legacy so
 
 ### How to run it
 
-→ [User Guide §13 — HTTP server (`serve`)](user-guide.md#13-http-server-serve) · [HTTP API](http-api.md)
+→ [User Guide §15 — HTTP server (`serve`)](user-guide.md#15-http-server-serve) · [HTTP API](http-api.md)
 
 ---
 
@@ -444,7 +469,7 @@ rbuilder serve --open        # recommended: dashboard + /api/query
 
 | If you want to… | Read |
 |-----------------|------|
-| Install, PATH, coolstore walkthrough, every command | **[User Guide](user-guide.md)** |
+| Install, PATH, ecommerce-java walkthrough, every command | **[User Guide](user-guide.md)** |
 | Use the browser dashboard | **[Dashboard user guide](dashboard-user-guide.md)** |
 | Integrate an LLM agent | **[AGENTS.md](../AGENTS.md)** · **[Agent recipes](agent-recipes.md)** |
 | Parse `-f json` in scripts or CI | **[JSON API](json-api.md)** |
@@ -454,6 +479,7 @@ rbuilder serve --open        # recommended: dashboard + /api/query
 | Blast radius (change impact) | **[Blast radius design](design/blast-radius-design.md)** |
 | Program slicing / taint | **[Slicing](design/program-slicing-design.md)** · **[Taint](design/taint-analysis-design.md)** |
 | CFG / PDG / dominance | **[CFG](design/cfg-design.md)** · **[PDG](design/pdg-design.md)** · **[Dominance](design/dominance-design.md)** |
+| Hybrid CPG (mutations / flows) | **[User Guide §10](user-guide.md#10-hybrid-cpg-cpg)** · **[hybrid-cpg-plan](design/hybrid-cpg-plan.md)** |
 | GQL and graph exploration | **[GQL design](design/gql-design.md)** |
 | Graph metrics | **[Graph metrics design](design/graph-metrics-design.md)** |
 | Plan a package-by-package migration roadmap | **[Migration planner design](design/migration-planner-design.md)** · **[Building a migration plan](building-migration-plan.md)** |
@@ -467,6 +493,6 @@ rbuilder serve --open        # recommended: dashboard + /api/query
 **Suggested first hour**
 
 1. Read this introduction (you are here).  
-2. Follow [User Guide §1–4](user-guide.md#1-installation) — install, clone [coolstore](https://github.com/konveyor-ecosystem/coolstore), run `discover`.  
+2. Follow [User Guide §1–4](user-guide.md#1-installation) — install, index [`rbuilder-tests/ecommerce-java`](../rbuilder-tests/ecommerce-java) (`discover`), try CoolStore `/services/*` + `cpg mutations --type ShoppingCart`.  
 3. Run one **GQL** query and one **blast-radius** on a function you recognize.  
 4. Optionally open the **dashboard** (try the **Migration** tab after `discover --with-cfg --with-security --with-taint --export-migration-hints`) or try `-f json` with [JSON API](json-api.md).

@@ -17,4 +17,5 @@ pub fn router() -> Router<AppState> {
         .nest("/api/products", products::routes())
         .nest("/api/cart", cart::routes())
         .nest("/api/orders", orders::routes())
+        .merge(crate::coolstore::rest::routes())
 }

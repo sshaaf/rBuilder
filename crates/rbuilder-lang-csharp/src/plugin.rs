@@ -49,6 +49,7 @@ impl CSharpPlugin {
 
         let return_type = method_return_type(node, source);
         let modifiers = modifier_texts(node, source);
+        let parameters = self.extract_parameters(node, source)?;
 
         Ok(Symbol {
             name: name.clone(),
@@ -57,12 +58,144 @@ impl CSharpPlugin {
             location: source_location(node, file_path),
             signature: Some(first_line(node, source)),
             return_type,
-            parameters: vec![],
+            parameters,
             fields: vec![],
             modifiers,
             documentation: None,
             metadata: serde_json::json!({ "language": "csharp" }),
         })
+    }
+
+    fn extract_constructor(&self, node: Node, source: &[u8], file_path: &str) -> Result<Symbol> {
+        let type_name = self
+            .find_containing_type_name(node, source)
+            .or_else(|| {
+                node.child_by_field_name("name")
+                    .and_then(|n| n.utf8_text(source).ok().map(str::to_string))
+            })
+            .ok_or_else(|| Error::ParseError {
+                file: file_path.into(),
+                line: node.start_position().row + 1,
+                message: "Constructor missing containing type".to_string(),
+            })?;
+
+        let parameters = self.extract_parameters(node, source)?;
+        let qualified_name = format!("{type_name}.<init>");
+
+        Ok(Symbol {
+            name: type_name,
+            symbol_type: SymbolType::Function,
+            qualified_name: Some(qualified_name),
+            location: source_location(node, file_path),
+            signature: Some(first_line(node, source)),
+            return_type: None,
+            parameters,
+            fields: vec![],
+            modifiers: modifier_texts(node, source),
+            documentation: None,
+            metadata: serde_json::json!({
+                "language": "csharp",
+                "is_constructor": true,
+            }),
+        })
+    }
+
+    fn extract_parameters(&self, node: Node, source: &[u8]) -> Result<Vec<Parameter>> {
+        let mut parameters = Vec::new();
+        let params_node = if let Some(p) = node.child_by_field_name("parameters") {
+            p
+        } else {
+            let mut cursor = node.walk();
+            let found = node
+                .children(&mut cursor)
+                .find(|c| c.kind() == "parameter_list");
+            match found {
+                Some(p) => p,
+                None => return Ok(parameters),
+            }
+        };
+
+        let mut cursor = params_node.walk();
+        for child in params_node.children(&mut cursor) {
+            if child.kind() != "parameter" {
+                continue;
+            }
+            let name = child
+                .child_by_field_name("name")
+                .and_then(|n| n.utf8_text(source).ok())
+                .map(str::to_string);
+            let param_type = child
+                .child_by_field_name("type")
+                .and_then(|n| n.utf8_text(source).ok())
+                .map(str::to_string);
+            if let Some(name) = name {
+                parameters.push(Parameter {
+                    name,
+                    param_type,
+                    default_value: None,
+                });
+            }
+        }
+        Ok(parameters)
+    }
+
+    fn extract_type_fields(&self, type_node: Node, source: &[u8]) -> Result<Vec<Field>> {
+        let mut fields = Vec::new();
+        let body = type_node
+            .child_by_field_name("body")
+            .or_else(|| find_direct_child_kind(type_node, "declaration_list"));
+        let Some(body) = body else {
+            return Ok(fields);
+        };
+
+        let mut body_cursor = body.walk();
+        for child in body.children(&mut body_cursor) {
+            match child.kind() {
+                "field_declaration" => {
+                    let visibility = field_visibility(child, source);
+                    let var_decl = find_direct_child_kind(child, "variable_declaration");
+                    let Some(var_decl) = var_decl else {
+                        continue;
+                    };
+                    let field_type = var_decl
+                        .child_by_field_name("type")
+                        .and_then(|n| n.utf8_text(source).ok())
+                        .map(str::to_string);
+                    let mut decl_cursor = var_decl.walk();
+                    for declarator in var_decl.children(&mut decl_cursor) {
+                        if declarator.kind() != "variable_declarator" {
+                            continue;
+                        }
+                        if let Some(name_node) = declarator.child_by_field_name("name") {
+                            fields.push(Field {
+                                name: name_node.utf8_text(source)?.to_string(),
+                                field_type: field_type.clone(),
+                                visibility: visibility.clone(),
+                            });
+                        }
+                    }
+                }
+                "property_declaration" => {
+                    let name = child
+                        .child_by_field_name("name")
+                        .and_then(|n| n.utf8_text(source).ok())
+                        .map(str::to_string);
+                    let field_type = child
+                        .child_by_field_name("type")
+                        .and_then(|n| n.utf8_text(source).ok())
+                        .map(str::to_string);
+                    if let Some(name) = name {
+                        fields.push(Field {
+                            name,
+                            field_type,
+                            visibility: field_visibility(child, source),
+                        });
+                    }
+                }
+                _ => {}
+            }
+        }
+        Ok(fields)
     }
 
     fn extract_type(
@@ -78,6 +211,12 @@ impl CSharpPlugin {
             message: "Type missing name".to_string(),
         })?;
 
+        let fields = if symbol_type == SymbolType::Class {
+            self.extract_type_fields(node, source)?
+        } else {
+            vec![]
+        };
+
         Ok(Symbol {
             name: name.clone(),
             symbol_type,
@@ -86,7 +225,7 @@ impl CSharpPlugin {
             signature: None,
             return_type: None,
             parameters: vec![],
-            fields: vec![],
+            fields,
             modifiers: modifier_texts(node, source),
             documentation: None,
             metadata: serde_json::json!({ "language": "csharp" }),
@@ -101,8 +240,11 @@ impl CSharpPlugin {
         symbols: &mut Vec<Symbol>,
     ) -> Result<()> {
         match node.kind() {
-            "method_declaration" | "local_function_statement" | "constructor_declaration" => {
+            "method_declaration" | "local_function_statement" => {
                 symbols.push(self.extract_method(node, source, file_path)?);
+            }
+            "constructor_declaration" => {
+                symbols.push(self.extract_constructor(node, source, file_path)?);
             }
             "class_declaration" | "struct_declaration" => {
                 symbols.push(self.extract_type(node, source, file_path, SymbolType::Class)?);
@@ -400,6 +542,25 @@ fn find_child_kind<'a>(node: Node<'a>, kind: &str) -> Option<Node<'a>> {
     None
 }
 
+fn find_direct_child_kind<'a>(node: Node<'a>, kind: &str) -> Option<Node<'a>> {
+    let mut cursor = node.walk();
+    for child in node.children(&mut cursor) {
+        if child.kind() == kind {
+            return Some(child);
+        }
+    }
+    None
+}
+
+fn field_visibility(node: Node, source: &[u8]) -> Option<String> {
+    let mods = modifier_texts(node, source);
+    if mods.is_empty() {
+        None
+    } else {
+        Some(mods.join(" "))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -422,6 +583,74 @@ public class UserService {
             .unwrap();
         assert!(symbols.iter().any(|s| s.name == "UserService"));
         assert!(symbols.iter().any(|s| s.name == "Authenticate"));
+        let auth = symbols.iter().find(|s| s.name == "Authenticate").unwrap();
+        assert_eq!(auth.parameters.len(), 1);
+        assert_eq!(auth.parameters[0].name, "token");
+        assert!(
+            auth.parameters[0]
+                .param_type
+                .as_deref()
+                .is_some_and(|t| !t.is_empty()),
+            "expected typed parameter, got {:?}",
+            auth.parameters[0].param_type
+        );
+    }
+
+    #[test]
+    fn test_extract_csharp_fields_and_constructor() {
+        let source = br#"
+public class OrderDTO {
+    private string orderId;
+    private string status;
+
+    public OrderDTO(string orderId, string status) {
+        this.orderId = orderId;
+        this.status = status;
+    }
+
+    public void MarkProcessed() {
+        this.status = "PROCESSED";
+    }
+}
+"#;
+        let plugin = CSharpPlugin::new().unwrap();
+        let symbols = plugin
+            .extract_symbols(Path::new("OrderDTO.cs"), source)
+            .unwrap();
+        let class = symbols
+            .iter()
+            .find(|s| s.name == "OrderDTO" && s.symbol_type == SymbolType::Class)
+            .expect("class");
+        let status = class
+            .fields
+            .iter()
+            .find(|f| f.name == "status")
+            .expect("status field");
+        assert!(
+            status.field_type.as_deref().is_some_and(|t| !t.is_empty()),
+            "expected status field type, got {:?}",
+            status.field_type
+        );
+        let ctor = symbols
+            .iter()
+            .find(|s| {
+                s.symbol_type == SymbolType::Function
+                    && s.metadata
+                        .get("is_constructor")
+                        .and_then(|v| v.as_bool())
+                        == Some(true)
+            })
+            .expect("constructor");
+        assert!(
+            ctor.qualified_name
+                .as_deref()
+                .is_some_and(|qn| qn.ends_with(".<init>")),
+            "expected .<init> qn, got {:?}",
+            ctor.qualified_name
+        );
+        assert_eq!(ctor.parameters.len(), 2);
+        let method = symbols.iter().find(|s| s.name == "MarkProcessed").unwrap();
+        assert!(method.parameters.is_empty());
     }
 
     #[test]

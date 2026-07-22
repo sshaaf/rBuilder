@@ -31,6 +31,7 @@ impl PythonPlugin {
         let mut parameters = Vec::new();
         let mut modifiers = Vec::new();
         let mut documentation = None;
+        let mut return_type = None;
 
         for child in node.children(&mut cursor) {
             match child.kind() {
@@ -39,6 +40,10 @@ impl PythonPlugin {
                 }
                 "parameters" => {
                     parameters = self.extract_parameters(child, source)?;
+                }
+                "type" | "type_identifier" => {
+                    // return annotation after `->`
+                    return_type = Some(child.utf8_text(source)?.to_string());
                 }
                 "block" => {
                     // Check for docstring
@@ -66,7 +71,7 @@ impl PythonPlugin {
             }
         }
 
-        let name = name.ok_or_else(|| Error::ParseError {
+        let raw_name = name.ok_or_else(|| Error::ParseError {
             file: file_path.into(),
             line: node.start_position().row + 1,
             message: "Function missing name".to_string(),
@@ -77,20 +82,40 @@ impl PythonPlugin {
         let inferencer = TypeInferencer::new();
         let inferred_types = inferencer.infer_python(function_source);
 
-        // Update parameters with inferred types
+        // Update parameters with inferred types (do not override annotations)
         for param in &mut parameters {
             if param.param_type.is_none() {
                 if let Some(inference) = inferred_types.get(&param.name) {
-                    // Store inferred type with confidence as metadata
                     param.param_type = Some(format!("{:?}", inference.inferred));
                 }
             }
         }
 
+        let is_constructor = raw_name == "__init__";
+        let class_name = if is_constructor {
+            self.find_containing_class_name(node, source)
+        } else {
+            None
+        };
+        let (name, qualified_name, metadata) = if is_constructor {
+            let class_name = class_name.unwrap_or_else(|| "object".to_string());
+            (
+                raw_name,
+                Some(format!("{class_name}.<init>")),
+                serde_json::json!({ "language": "python", "is_constructor": true }),
+            )
+        } else {
+            (
+                raw_name,
+                None,
+                serde_json::json!({ "language": "python" }),
+            )
+        };
+
         Ok(Symbol {
-            name: name.clone(),
+            name,
             symbol_type: SymbolType::Function,
-            qualified_name: None,
+            qualified_name,
             location: SourceLocation {
                 file: file_path.to_string(),
                 start_line: node.start_position().row + 1,
@@ -106,13 +131,29 @@ impl PythonPlugin {
                     .trim()
                     .to_string(),
             ),
-            return_type: None, // Python has optional type hints
+            return_type,
             parameters,
             fields: vec![],
             modifiers,
             documentation,
-            metadata: serde_json::json!({}),
+            metadata,
         })
+    }
+
+    fn find_containing_class_name(&self, node: Node, source: &[u8]) -> Option<String> {
+        let mut current = node;
+        while let Some(parent) = current.parent() {
+            if parent.kind() == "class_definition" {
+                let mut cursor = parent.walk();
+                for child in parent.children(&mut cursor) {
+                    if child.kind() == "identifier" {
+                        return child.utf8_text(source).ok().map(str::to_string);
+                    }
+                }
+            }
+            current = parent;
+        }
+        None
     }
 
     /// Extract function parameters
@@ -121,36 +162,110 @@ impl PythonPlugin {
         let mut cursor = params_node.walk();
 
         for child in params_node.children(&mut cursor) {
-            if child.kind() == "identifier" {
-                parameters.push(Parameter {
-                    name: child.utf8_text(source)?.to_string(),
-                    param_type: None, // Python has optional type hints
-                    default_value: None,
-                });
-            } else if child.kind() == "default_parameter" {
-                let mut param_cursor = child.walk();
-                let mut name = None;
-                let mut default = None;
-
-                for param_child in child.children(&mut param_cursor) {
-                    if param_child.kind() == "identifier" {
-                        name = Some(param_child.utf8_text(source)?.to_string());
-                    } else if name.is_some() && param_child.kind() != "=" {
-                        default = Some(param_child.utf8_text(source)?.to_string());
-                    }
-                }
-
-                if let Some(name) = name {
+            match child.kind() {
+                "identifier" => {
                     parameters.push(Parameter {
-                        name,
+                        name: child.utf8_text(source)?.to_string(),
                         param_type: None,
-                        default_value: default,
+                        default_value: None,
                     });
                 }
+                "typed_parameter" => {
+                    if let Some(param) = self.extract_typed_parameter(child, source, None)? {
+                        parameters.push(param);
+                    }
+                }
+                "typed_default_parameter" => {
+                    let default = child
+                        .child_by_field_name("value")
+                        .and_then(|n| n.utf8_text(source).ok())
+                        .map(str::to_string);
+                    if let Some(param) = self.extract_typed_parameter(child, source, default)? {
+                        parameters.push(param);
+                    }
+                }
+                "default_parameter" => {
+                    let mut param_cursor = child.walk();
+                    let mut name = None;
+                    let mut default = None;
+                    let mut param_type = None;
+
+                    for param_child in child.children(&mut param_cursor) {
+                        match param_child.kind() {
+                            "identifier" if name.is_none() => {
+                                name = Some(param_child.utf8_text(source)?.to_string());
+                            }
+                            "typed_parameter" => {
+                                if let Some(p) =
+                                    self.extract_typed_parameter(param_child, source, None)?
+                                {
+                                    name = Some(p.name);
+                                    param_type = p.param_type;
+                                }
+                            }
+                            "type" | "type_identifier" => {
+                                param_type = Some(param_child.utf8_text(source)?.to_string());
+                            }
+                            "=" => {}
+                            _ if name.is_some() && default.is_none() => {
+                                default = Some(param_child.utf8_text(source)?.to_string());
+                            }
+                            _ => {}
+                        }
+                    }
+
+                    if let Some(name) = name {
+                        parameters.push(Parameter {
+                            name,
+                            param_type,
+                            default_value: default,
+                        });
+                    }
+                }
+                _ => {}
             }
         }
 
         Ok(parameters)
+    }
+
+    fn extract_typed_parameter(
+        &self,
+        node: Node,
+        source: &[u8],
+        default_value: Option<String>,
+    ) -> Result<Option<Parameter>> {
+        let mut name = None;
+        let mut param_type = None;
+        let mut cursor = node.walk();
+
+        for child in node.children(&mut cursor) {
+            match child.kind() {
+                "identifier" if name.is_none() => {
+                    name = Some(child.utf8_text(source)?.to_string());
+                }
+                "type" | "type_identifier" => {
+                    param_type = Some(child.utf8_text(source)?.to_string());
+                }
+                _ => {
+                    // Nested type nodes (e.g. generic `list[str]`) often appear as `type`
+                    // children already handled; also accept field name "type".
+                }
+            }
+        }
+
+        if param_type.is_none() {
+            param_type = node
+                .child_by_field_name("type")
+                .and_then(|n| n.utf8_text(source).ok())
+                .map(str::to_string);
+        }
+
+        Ok(name.map(|name| Parameter {
+            name,
+            param_type,
+            default_value,
+        }))
     }
 
     /// Extract class definition
@@ -194,37 +309,126 @@ impl PythonPlugin {
             fields,
             modifiers: vec![],
             documentation: None,
-            metadata: serde_json::json!({}),
+            metadata: serde_json::json!({ "language": "python" }),
         })
     }
 
-    /// Extract class fields from assignments
+    /// Extract class fields from class-body assignments and `self.attr =` in `__init__`.
     fn extract_class_fields(&self, block_node: Node, source: &[u8]) -> Result<Vec<Field>> {
         let mut fields = Vec::new();
+        let mut seen = std::collections::HashSet::new();
         let mut cursor = block_node.walk();
 
         for child in block_node.children(&mut cursor) {
-            if child.kind() == "expression_statement" {
-                let mut expr_cursor = child.walk();
-                for expr_child in child.children(&mut expr_cursor) {
-                    if expr_child.kind() == "assignment" {
-                        let mut assign_cursor = expr_child.walk();
-                        for assign_child in expr_child.children(&mut assign_cursor) {
-                            if assign_child.kind() == "identifier" {
+            match child.kind() {
+                "expression_statement" => {
+                    let mut expr_cursor = child.walk();
+                    for expr_child in child.children(&mut expr_cursor) {
+                        if expr_child.kind() == "assignment" {
+                            let mut assign_cursor = expr_child.walk();
+                            for assign_child in expr_child.children(&mut assign_cursor) {
+                                if assign_child.kind() == "identifier" {
+                                    let name = assign_child.utf8_text(source)?.to_string();
+                                    if seen.insert(name.clone()) {
+                                        fields.push(Field {
+                                            name,
+                                            field_type: None,
+                                            visibility: None,
+                                        });
+                                    }
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                }
+                "function_definition" => {
+                    let fn_name = child
+                        .child_by_field_name("name")
+                        .and_then(|n| n.utf8_text(source).ok().map(str::to_string))
+                        .or_else(|| {
+                            let mut c = child.walk();
+                            for n in child.children(&mut c) {
+                                if n.kind() == "identifier" {
+                                    return n.utf8_text(source).ok().map(str::to_string);
+                                }
+                            }
+                            None
+                        });
+                    if fn_name.as_deref() == Some("__init__") {
+                        self.collect_self_assignments(child, source, &mut fields, &mut seen)?;
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        Ok(fields)
+    }
+
+    fn collect_self_assignments(
+        &self,
+        node: Node,
+        source: &[u8],
+        fields: &mut Vec<Field>,
+        seen: &mut std::collections::HashSet<String>,
+    ) -> Result<()> {
+        if node.kind() == "assignment" {
+            if let Some(left) = node.child_by_field_name("left") {
+                if left.kind() == "attribute" {
+                    let object = left.child_by_field_name("object");
+                    let attr = left.child_by_field_name("attribute");
+                    let is_self = object
+                        .and_then(|o| o.utf8_text(source).ok())
+                        .is_some_and(|t| t == "self");
+                    if is_self {
+                        if let Some(name) =
+                            attr.and_then(|a| a.utf8_text(source).ok()).map(str::to_string)
+                        {
+                            if seen.insert(name.clone()) {
                                 fields.push(Field {
-                                    name: assign_child.utf8_text(source)?.to_string(),
+                                    name,
                                     field_type: None,
                                     visibility: None,
                                 });
-                                break;
                             }
                         }
+                    }
+                }
+            } else {
+                // Fallback without field names: attribute whose first identifier is self
+                let mut cursor = node.walk();
+                for child in node.children(&mut cursor) {
+                    if child.kind() == "attribute" {
+                        let mut attr_cursor = child.walk();
+                        let parts: Vec<_> = child
+                            .children(&mut attr_cursor)
+                            .filter(|c| c.kind() == "identifier")
+                            .collect();
+                        if parts.len() >= 2 {
+                            let obj = parts[0].utf8_text(source)?;
+                            if obj == "self" {
+                                let name = parts[1].utf8_text(source)?.to_string();
+                                if seen.insert(name.clone()) {
+                                    fields.push(Field {
+                                        name,
+                                        field_type: None,
+                                        visibility: None,
+                                    });
+                                }
+                            }
+                        }
+                        break;
                     }
                 }
             }
         }
 
-        Ok(fields)
+        let mut cursor = node.walk();
+        for child in node.children(&mut cursor) {
+            self.collect_self_assignments(child, source, fields, seen)?;
+        }
+        Ok(())
     }
 
     /// Calculate cyclomatic complexity
@@ -528,6 +732,53 @@ mod tests {
         assert_eq!(symbols.len(), 2); // Class + __init__ method
         assert_eq!(symbols[0].name, "User");
         assert_eq!(symbols[0].symbol_type, SymbolType::Class);
+    }
+
+    #[test]
+    fn test_extract_fields_and_constructor() {
+        let source = br#"
+class User:
+    kind = "person"
+
+    def __init__(self, name: str, age: int):
+        self.name = name
+        self.age = age
+"#;
+        let plugin = PythonPlugin::new().unwrap();
+        let symbols = plugin
+            .extract_symbols(Path::new("user.py"), source)
+            .unwrap();
+        let class = symbols
+            .iter()
+            .find(|s| s.name == "User" && s.symbol_type == SymbolType::Class)
+            .expect("class");
+        assert!(class.fields.iter().any(|f| f.name == "kind"));
+        assert!(class.fields.iter().any(|f| f.name == "name"));
+        assert!(class.fields.iter().any(|f| f.name == "age"));
+        let ctor = symbols
+            .iter()
+            .find(|s| {
+                s.symbol_type == SymbolType::Function
+                    && s.metadata
+                        .get("is_constructor")
+                        .and_then(|v| v.as_bool())
+                        == Some(true)
+            })
+            .expect("constructor");
+        assert_eq!(ctor.name, "__init__");
+        assert_eq!(ctor.qualified_name.as_deref(), Some("User.<init>"));
+        let name_param = ctor
+            .parameters
+            .iter()
+            .find(|p| p.name == "name")
+            .expect("name param");
+        assert_eq!(name_param.param_type.as_deref(), Some("str"));
+        let age_param = ctor
+            .parameters
+            .iter()
+            .find(|p| p.name == "age")
+            .expect("age param");
+        assert_eq!(age_param.param_type.as_deref(), Some("int"));
     }
 
     #[test]

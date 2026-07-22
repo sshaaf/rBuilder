@@ -96,6 +96,11 @@ export interface AnalysisSection {
   dataflow_index_path: string;
   dataflow_detail_dir: string;
   dataflow_function_count: number;
+  /** Hybrid CPG field mutations (optional on older manifests). */
+  mutations_available?: boolean;
+  mutations_index_path?: string;
+  mutations_write_count?: number;
+  mutations_type_count?: number;
   taint_available: boolean;
   taint_index_path: string;
   taint_detail_dir: string;
@@ -114,6 +119,30 @@ export interface DataflowIndexPayload {
   detail_dir: string;
   function_count: number;
   functions: DataflowFunctionEntry[];
+}
+
+export interface MutationsIndexPayload {
+  schema_version: number;
+  available: boolean;
+  write_count: number;
+  indexed_write_count: number;
+  type_count: number;
+  types: string[];
+  writes: MutationWriteEntry[];
+  truncated?: boolean | null;
+}
+
+export interface MutationWriteEntry {
+  function_id: string;
+  function_name: string;
+  is_constructor: boolean;
+  receiver_local?: string | null;
+  receiver_type?: string | null;
+  member: string;
+  file: string;
+  line: number;
+  code_snippet: string;
+  kind: string;
 }
 
 export interface DataflowFunctionEntry {

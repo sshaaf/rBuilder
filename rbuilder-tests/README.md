@@ -32,6 +32,8 @@ Each Tier 1 language project implements the same domain:
 
 ## Shared REST API (conceptual)
 
+### Existing fixture API (`/api/*`)
+
 ```
 GET    /health
 POST   /api/auth/register
@@ -50,6 +52,23 @@ GET    /api/orders/:id
 GET    /api/products/:id/reviews
 POST   /api/products/:id/reviews
 ```
+
+### CoolStore dual API (`/services/*`)
+
+Same shape as [example/coolstore-weblogic](../example/coolstore-weblogic) (in-memory cart pricing; additive):
+
+```
+GET    /services/products
+GET    /services/products/{itemId}
+GET    /services/cart/{cartId}
+POST   /services/cart/{cartId}/{itemId}/{quantity}
+DELETE /services/cart/{cartId}/{itemId}/{quantity}
+POST   /services/cart/checkout/{cartId}
+GET    /services/orders
+GET    /services/orders/{orderId}
+```
+
+`ShoppingCartService.priceShoppingCart` mutates cart totals (promo/shipping) — useful for hybrid CPG `cpg mutations --type ShoppingCart`.
 
 Use these repos with `rbuilder discover .` to compare graph structure across languages.
 
@@ -78,39 +97,41 @@ See [`scripts/README.md`](scripts/README.md) for options.
 
 ## rBuilder analysis results
 
-Summary: **[rbuilder-reports/REPORT.md](rbuilder-reports/REPORT.md)** · [HTML](rbuilder-reports/REPORT.html) (run 2026-07-07)
+Summary: **[rbuilder-reports/REPORT.md](rbuilder-reports/REPORT.md)** · [HTML](rbuilder-reports/REPORT.html) (run 2026-07-22)
 
-**Language reports:** [Rust](rbuilder-reports/languages/rust.md) · [Python](rbuilder-reports/languages/python.md) · [Go](rbuilder-reports/languages/go.md) · [Java](rbuilder-reports/languages/java.md) · [C#](rbuilder-reports/languages/csharp.md) · [TypeScript](rbuilder-reports/languages/typescript.md) · [JavaScript](rbuilder-reports/languages/javascript.md)
+**Language reports:** [Rust](rbuilder-reports/languages/rust.md) · [Python](rbuilder-reports/languages/python.md) · [Go](rbuilder-reports/languages/go.md) · [Java](rbuilder-reports/languages/java.md) · [C#](rbuilder-reports/languages/csharp.md) · [TypeScript](rbuilder-reports/languages/typescript.md) · [JavaScript](rbuilder-reports/languages/javascript.md) · [C](rbuilder-reports/languages/c.md) · [C++](rbuilder-reports/languages/cpp.md)
 
 ### Feature coverage (✓ ok · ◐ partial · — unsupported/n/a)
 
-| Feature | Rust | Py | Go | Java | C# | TS | JS |
-|---------|:----:|:--:|:--:|:----:|:--:|:--:|:--:|
-| discover (`--cfg`) | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
-| Dashboard | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
-| GQL queries | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
-| Metrics (communities + PageRank) | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
-| Blast radius | ✓ | ✓ | — | ✓ | ✓ | ✓ | ✓ |
-| Export (JSON subgraph) | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
-| CI check (`--policy-file`) | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
-| Program slice | ◐ | ◐ | — | ◐ | ◐ | — | — |
-| Taint analysis | ✓ | ✓ | — | ✓ | ✓ | — | — |
-| Inspect CFG | ✓ | ✓ | — | ✓ | ✓ | — | — |
-| Inspect PDG | ✓ | ✓ | — | ✓ | ✓ | — | — |
-| Inspect dominators | ✓ | ✓ | — | ✓ | ✓ | — | — |
-| Serve daemon | — | — | — | — | — | — | — |
+| Feature | Rust | Py | Go | Java | TS | JS |
+|---------|:----:|:--:|:--:|:----:|:--:|:--:|
+| discover (`--cfg`) | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| Dashboard | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ |
+| GQL queries | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| Metrics (communities + PageRank) | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| Blast radius | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| Export (JSON subgraph) | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ |
+| CI check (`--policy-file`) | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| Program slice | ◐ | ◐ | — | ◐ | — | — | — | — | — |
+| Taint analysis | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| Inspect CFG | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| Inspect PDG | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| Inspect dominators | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| Serve daemon | — | — | — | — | — | — | — | — | — |
 
 ### Index size
 
 | Project | Files | Nodes | Edges | Discover ms |
 |---------|------:|------:|------:|------------:|
-| Rust | 51 | 195 | 293 | 118 |
-| Python | 54 | 189 | 270 | 120 |
-| Go | 13 | 34 | 42 | 54 |
-| Java | 52 | 528 | 1134 | 169 |
-| C# | 46 | 272 | 488 | 142 |
-| TypeScript | 45 | 1437 | 2782 | 117 |
-| JavaScript | 44 | 1267 | 2444 | 98 |
+| Rust | 68 | 513 | 1111 | 307 |
+| Python | 59 | 571 | 1407 | 307 |
+| Go | 46 | 495 | 1099 | 308 |
+| Java | 66 | 993 | 2211 | 307 |
+| C# | 62 | 624 | 1321 | 309 |
+| TypeScript | 61 | 1607 | 3169 | 305 |
+| JavaScript | 60 | 1440 | 2843 | 303 |
+| C | 84 | 486 | 838 | 309 |
+| C++ | 81 | 638 | 1224 | 308 |
 
 ### Blast radius (max score per project)
 
@@ -118,12 +139,15 @@ Full function scan (`--blast-top N`); checkout leaf symbols often score 0.
 
 | Project | Scanned | Score > 0 | Max score | Top symbol |
 |---------|--------:|----------:|----------:|------------|
-| Rust | 34 | 0 | 0.00 | `—` |
-| Python | 50 | 0 | 0.00 | `—` |
-| Go | 13 | 0 | 0.00 | `—` |
-| Java | 98 | 36 | 40.85 | `findByEmail` |
-| TypeScript | 54 | 0 | 0.00 | `—` |
-| JavaScript | 54 | 0 | 0.00 | `—` |
+| Rust | 68 | 21 | 40.35 | `now_iso` |
+| Python | 80 | 43 | 40.45 | `get_product_by_item_id` |
+| Go | 96 | 13 | 40.80 | `handleError` |
+| Java | 182 | 59 | 40.85 | `findByEmail` |
+| C# | 105 | 14 | 40.25 | `GetUserCartAsync` |
+| TypeScript | 88 | 19 | 40.80 | `getDb` |
+| JavaScript | 90 | 19 | 40.80 | `getDb` |
+| C | 165 | 10 | 25.15 | `seed` |
+| C++ | 110 | 11 | 25.10 | `correctnessLeaf` |
 
 Per-project details: [`rbuilder-reports/languages/`](rbuilder-reports/languages/) · each `ecommerce-*/README.md` § **rBuilder**.
 

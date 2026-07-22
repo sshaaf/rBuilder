@@ -252,6 +252,26 @@ pub fn assert_dashboard_bundle_with_meta(repo: &Path, min_nodes: u64, min_metano
     assert_eq!(analysis["dataflow_available"], dataflow_available);
     assert_eq!(analysis["dataflow_index_path"], "dataflow_index.json");
 
+    assert!(
+        dash.join("mutations_index.json").is_file(),
+        "missing mutations_index.json (CPG field writes)"
+    );
+    let mutations_index: Value =
+        serde_json::from_slice(&std::fs::read(dash.join("mutations_index.json")).unwrap()).unwrap();
+    assert_eq!(mutations_index["schema_version"], 1);
+    let mutations_available = mutations_index["available"].as_bool().unwrap_or(false);
+    assert_eq!(analysis["mutations_available"], mutations_available);
+    assert_eq!(analysis["mutations_index_path"], "mutations_index.json");
+    if cfg_available {
+        // discover --with-cfg builds field_write.index.bin → mutations export
+        assert_eq!(
+            mutations_available, true,
+            "expected mutations_index when CFG/PDG archive exists"
+        );
+    } else {
+        assert_eq!(mutations_available, false);
+    }
+
     let taint_index: Value =
         serde_json::from_slice(&std::fs::read(dash.join("taint_index.json")).unwrap()).unwrap();
     let taint_available = taint_index["available"].as_bool().unwrap_or(false);

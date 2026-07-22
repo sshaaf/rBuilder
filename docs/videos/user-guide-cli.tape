@@ -1,6 +1,6 @@
 # rBuilder CLI demo — user-guide walkthrough (no captions)
 #
-# Commands follow docs/user-guide.md §15 + semantic search.
+# Commands follow docs/user-guide.md §16 + CoolStore dual API / hybrid CPG.
 # Record: ./docs/videos/record-user-guide-cli.sh
 #
 # Note: VHS Type strings cannot contain "$" — we cd into the fixture
@@ -43,7 +43,7 @@ Sleep 1s
 # 1. discover
 Type "rbuilder discover . -l java -e target --with-cfg --export-migration-hints"
 Enter
-Sleep 5s
+Sleep 8s
 
 # 2. gql inventory
 Ctrl+L
@@ -67,7 +67,7 @@ Type "rbuilder communities list | head -10"
 Enter
 Sleep 3s
 
-# 5. blast-radius
+# 5. blast-radius (JWT /api cart)
 Ctrl+L
 Sleep 300ms
 Type "rbuilder blast-radius 'CartService::clearCart'"
@@ -78,26 +78,41 @@ Type "rbuilder -f json blast-radius 'CartService::clearCart' | jq '{score: .metr
 Enter
 Sleep 3s
 
-# 6. metrics
+# 6. CoolStore dual API + hybrid CPG
+Ctrl+L
+Sleep 300ms
+Type "rbuilder cpg status"
+Enter
+Sleep 2.5s
+
+Type "rbuilder cpg mutations --type ShoppingCart --exclude-ctors | head -12"
+Enter
+Sleep 3s
+
+Type "rbuilder blast-radius 'ShoppingCartService::priceShoppingCart'"
+Enter
+Sleep 3s
+
+# 7. metrics
 Ctrl+L
 Sleep 300ms
 Type "rbuilder -f json metrics --pagerank | jq '.pagerank.top[:3]'"
 Enter
 Sleep 3s
 
-# 7. inspect
+# 8. inspect
 Ctrl+L
 Sleep 300ms
 Type "rbuilder -f json inspect checkout cfg | jq '{layer, blocks: (.nodes|length), edges: (.edges|length)}'"
 Enter
 Sleep 3s
 
-# 8. slice
+# 9. slice
 Type "rbuilder slice src/main/java/com/example/ecommerce/service/CartService.java --line 53 --variable item --function addItem"
 Enter
 Sleep 3s
 
-# 9. semantic
+# 10. semantic
 Ctrl+L
 Sleep 300ms
 Type "rbuilder semantic index --embedder vocab --dimensions 256"
@@ -112,7 +127,7 @@ Type "rbuilder -f json semantic query 'shopping cart' --scope community --limit 
 Enter
 Sleep 3s
 
-# 10. export
+# 11. export
 Ctrl+L
 Sleep 300ms
 Type "rbuilder export --export-format mermaid --export-output /tmp/clearCart.mmd --query 'name:clearCart'"
@@ -122,7 +137,7 @@ Type "head -20 /tmp/clearCart.mmd"
 Enter
 Sleep 2.5s
 
-# 11. check
+# 12. check
 Type "rbuilder -f json check --policy-file ../../rbuilder-tests/rbuilder-policy.json | jq '{schema_version, violations: (.violations|length)}'"
 Enter
 Sleep 3s

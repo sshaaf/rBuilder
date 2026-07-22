@@ -37,8 +37,11 @@ impl JavaPlugin {
                 | "void_type"
                 | "integral_type"
                 | "floating_point_type"
-                | "boolean_type" => {
-                    return_type = Some(child.utf8_text(source)?.to_string());
+                | "boolean_type"
+                | "generic_type" => {
+                    if return_type.is_none() {
+                        return_type = Some(child.utf8_text(source)?.to_string());
+                    }
                 }
                 "modifiers" => {
                     modifiers.push(child.utf8_text(source)?.to_string());
@@ -57,6 +60,8 @@ impl JavaPlugin {
         let qualified_name = self
             .find_containing_class_name(node, source)
             .map(|class| format!("{}.{}", class, name));
+
+        let parameters = self.extract_parameters(node, source)?;
 
         Ok(Symbol {
             name: name.clone(),
@@ -78,12 +83,154 @@ impl JavaPlugin {
                     .to_string(),
             ),
             return_type,
-            parameters: vec![],
+            parameters,
             fields: vec![],
             modifiers,
             documentation: None,
             metadata: serde_json::json!({ "language": "java" }),
         })
+    }
+
+    fn extract_constructor(&self, node: Node, source: &[u8], file_path: &str) -> Result<Symbol> {
+        let class_name = self
+            .find_containing_class_name(node, source)
+            .ok_or_else(|| Error::ParseError {
+                file: file_path.into(),
+                line: node.start_position().row + 1,
+                message: "Constructor missing containing class".to_string(),
+            })?;
+
+        let mut modifiers = Vec::new();
+        let mut cursor = node.walk();
+        for child in node.children(&mut cursor) {
+            if child.kind() == "modifiers" {
+                modifiers.push(child.utf8_text(source)?.to_string());
+            }
+        }
+
+        let parameters = self.extract_parameters(node, source)?;
+        let qualified_name = format!("{class_name}.<init>");
+
+        Ok(Symbol {
+            name: class_name.clone(),
+            symbol_type: SymbolType::Function,
+            qualified_name: Some(qualified_name),
+            location: SourceLocation {
+                file: file_path.to_string(),
+                start_line: node.start_position().row + 1,
+                end_line: node.end_position().row + 1,
+                start_column: node.start_position().column,
+                end_column: node.end_position().column,
+            },
+            signature: Some(
+                node.utf8_text(source)?
+                    .lines()
+                    .next()
+                    .unwrap_or("")
+                    .trim()
+                    .to_string(),
+            ),
+            return_type: None,
+            parameters,
+            fields: vec![],
+            modifiers,
+            documentation: None,
+            metadata: serde_json::json!({
+                "language": "java",
+                "is_constructor": true,
+            }),
+        })
+    }
+
+    fn extract_parameters(&self, node: Node, source: &[u8]) -> Result<Vec<Parameter>> {
+        let mut parameters = Vec::new();
+        let params_node = if let Some(p) = node.child_by_field_name("parameters") {
+            p
+        } else {
+            let mut cursor = node.walk();
+            let found = node
+                .children(&mut cursor)
+                .find(|c| c.kind() == "formal_parameters");
+            match found {
+                Some(p) => p,
+                None => return Ok(parameters),
+            }
+        };
+
+        let mut cursor = params_node.walk();
+        for child in params_node.children(&mut cursor) {
+            if child.kind() != "formal_parameter" && child.kind() != "spread_parameter" {
+                continue;
+            }
+            let name = child
+                .child_by_field_name("name")
+                .and_then(|n| n.utf8_text(source).ok())
+                .map(|s| s.to_string());
+            let param_type = child
+                .child_by_field_name("type")
+                .and_then(|n| n.utf8_text(source).ok())
+                .map(|s| s.to_string());
+            if let Some(name) = name {
+                parameters.push(Parameter {
+                    name,
+                    param_type,
+                    default_value: None,
+                });
+            }
+        }
+        Ok(parameters)
+    }
+
+    fn extract_class_fields(&self, class_node: Node, source: &[u8]) -> Result<Vec<Field>> {
+        let mut fields = Vec::new();
+        let mut cursor = class_node.walk();
+        let body = class_node
+            .children(&mut cursor)
+            .find(|c| c.kind() == "class_body");
+        let Some(body) = body else {
+            return Ok(fields);
+        };
+
+        let mut body_cursor = body.walk();
+        for child in body.children(&mut body_cursor) {
+            if child.kind() != "field_declaration" {
+                continue;
+            }
+            let mut visibility = None;
+            let mut field_type = None;
+            let mut decl_cursor = child.walk();
+            for field_child in child.children(&mut decl_cursor) {
+                match field_child.kind() {
+                    "modifiers" => {
+                        let text = field_child.utf8_text(source)?.to_string();
+                        visibility = Some(text);
+                    }
+                    "type_identifier"
+                    | "generic_type"
+                    | "integral_type"
+                    | "floating_point_type"
+                    | "boolean_type"
+                    | "array_type"
+                    | "void_type" => {
+                        if field_type.is_none() {
+                            field_type = Some(field_child.utf8_text(source)?.to_string());
+                        }
+                    }
+                    "variable_declarator" => {
+                        if let Some(name_node) = field_child.child_by_field_name("name") {
+                            let name = name_node.utf8_text(source)?.to_string();
+                            fields.push(Field {
+                                name,
+                                field_type: field_type.clone(),
+                                visibility: visibility.clone(),
+                            });
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
+        Ok(fields)
     }
 
     fn extract_type(
@@ -115,6 +262,12 @@ impl JavaPlugin {
             message: "Type missing name".to_string(),
         })?;
 
+        let fields = if symbol_type == SymbolType::Class {
+            self.extract_class_fields(node, source)?
+        } else {
+            vec![]
+        };
+
         Ok(Symbol {
             name: name.clone(),
             symbol_type,
@@ -129,7 +282,7 @@ impl JavaPlugin {
             signature: None,
             return_type: None,
             parameters: vec![],
-            fields: vec![],
+            fields,
             modifiers,
             documentation: None,
             metadata: serde_json::json!({ "language": "java" }),
@@ -145,6 +298,9 @@ impl JavaPlugin {
     ) -> Result<()> {
         match node.kind() {
             "method_declaration" => symbols.push(self.extract_method(node, source, file_path)?),
+            "constructor_declaration" => {
+                symbols.push(self.extract_constructor(node, source, file_path)?)
+            }
             "class_declaration" => {
                 symbols.push(self.extract_type(node, source, file_path, SymbolType::Class)?)
             }
@@ -718,6 +874,51 @@ public class UserService {
             .unwrap();
         assert!(symbols.iter().any(|s| s.name == "UserService"));
         assert!(symbols.iter().any(|s| s.name == "authenticate"));
+        let auth = symbols.iter().find(|s| s.name == "authenticate").unwrap();
+        assert_eq!(auth.parameters.len(), 1);
+        assert_eq!(auth.parameters[0].name, "token");
+        assert_eq!(auth.parameters[0].param_type.as_deref(), Some("String"));
+    }
+
+    #[test]
+    fn test_extract_java_fields_and_constructor() {
+        let source = br#"
+public class OrderDTO {
+    private String orderId;
+    private String status;
+
+    public OrderDTO(String orderId, String status) {
+        this.orderId = orderId;
+        this.status = status;
+    }
+
+    public void markProcessed() {
+        this.status = "PROCESSED";
+    }
+}
+"#;
+        let plugin = JavaPlugin::new().unwrap();
+        let symbols = plugin
+            .extract_symbols(Path::new("OrderDTO.java"), source)
+            .unwrap();
+        let class = symbols
+            .iter()
+            .find(|s| s.name == "OrderDTO" && s.symbol_type == SymbolType::Class)
+            .expect("class");
+        assert!(class.fields.iter().any(|f| f.name == "orderId"));
+        assert!(class.fields.iter().any(|f| f.name == "status"));
+        let ctor = symbols
+            .iter()
+            .find(|s| {
+                s.symbol_type == SymbolType::Function
+                    && s.metadata
+                        .get("is_constructor")
+                        .and_then(|v| v.as_bool())
+                        == Some(true)
+            })
+            .expect("constructor");
+        assert_eq!(ctor.qualified_name.as_deref(), Some("OrderDTO.<init>"));
+        assert_eq!(ctor.parameters.len(), 2);
     }
 
     #[test]

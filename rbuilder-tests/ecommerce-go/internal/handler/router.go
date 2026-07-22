@@ -3,6 +3,7 @@ package handler
 import (
 	"github.com/gin-gonic/gin"
 	"github.com/sshaaf/ecommerce-go/internal/config"
+	"github.com/sshaaf/ecommerce-go/internal/coolstore"
 	"github.com/sshaaf/ecommerce-go/internal/middleware"
 	"github.com/sshaaf/ecommerce-go/internal/repository"
 	"github.com/sshaaf/ecommerce-go/internal/service"
@@ -10,11 +11,12 @@ import (
 )
 
 type Handlers struct {
-	Auth       *AuthHandler
-	Category   *CategoryHandler
-	Product    *ProductHandler
-	Cart       *CartHandler
-	Order      *OrderHandler
+	Auth      *AuthHandler
+	Category  *CategoryHandler
+	Product   *ProductHandler
+	Cart      *CartHandler
+	Order     *OrderHandler
+	Coolstore *coolstore.Handlers
 }
 
 func NewHandlers(db *gorm.DB, cfg *config.Config) *Handlers {
@@ -34,11 +36,12 @@ func NewHandlers(db *gorm.DB, cfg *config.Config) *Handlers {
 	reviewSvc := service.NewReviewService(reviewRepo, productRepo)
 
 	return &Handlers{
-		Auth:     NewAuthHandler(authSvc),
-		Category: NewCategoryHandler(categorySvc),
-		Product:  NewProductHandler(productSvc, reviewSvc),
-		Cart:     NewCartHandler(cartSvc),
-		Order:    NewOrderHandler(orderSvc),
+		Auth:      NewAuthHandler(authSvc),
+		Category:  NewCategoryHandler(categorySvc),
+		Product:   NewProductHandler(productSvc, reviewSvc),
+		Cart:      NewCartHandler(cartSvc),
+		Order:     NewOrderHandler(orderSvc),
+		Coolstore: coolstore.NewHandlers(),
 	}
 }
 
@@ -83,4 +86,7 @@ func (h *Handlers) RegisterRoutes(r *gin.Engine, cfg *config.Config) {
 			orders.GET("/:id", h.Order.Get)
 		}
 	}
+
+	// CoolStore dual-API (/services/*) — unauthenticated in-memory store
+	h.Coolstore.RegisterRoutes(r)
 }

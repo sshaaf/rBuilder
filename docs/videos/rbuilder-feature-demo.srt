@@ -1,64 +1,54 @@
 1
-00:00:00,000 --> 00:00:05,000
-discover
-Graph snapshot & index metrics
+00:00:01,580 --> 00:00:08,145
+Overview
+Discover metrics · graph snapshot ready
 
 2
-00:00:05,000 --> 00:00:10,000
-gql
-Package call graph — exact structure for agents
+00:00:08,602 --> 00:00:15,166
+Graph
+Package call graph (GQL structure)
 
 3
-00:00:10,000 --> 00:00:15,000
-semantic search
-Vocab / code-daemon index · Hamming + late fusion
+00:00:16,055 --> 00:00:22,618
+Search
+Semantic query · vocab Hamming + fusion
 
 4
-00:00:15,000 --> 00:00:20,000
-metrics
+00:00:23,412 --> 00:00:29,977
+Functions
 PageRank · betweenness · blast hotspots
 
 5
-00:00:20,000 --> 00:00:25,000
-inspect cfg
-Control-flow blocks & dominators
+00:00:31,970 --> 00:00:38,534
+CFG
+Control-flow blocks & edges
 
 6
-00:00:25,000 --> 00:00:30,000
-inspect pdg
-Data & control dependencies
+00:00:38,985 --> 00:00:53,390
+Dataflow
+CPG field mutations · PDG · dominator tree
 
 7
-00:00:30,000 --> 00:00:35,000
-inspect dom
-Dominator tree & frontiers
+00:00:55,353 --> 00:01:01,919
+Slice
+Backward slice · criterion & highlights
 
 8
-00:00:35,000 --> 00:00:40,000
-slice
-Backward slice — criterion & highlighted lines
+00:01:03,768 --> 00:01:10,331
+Blast radius
+Upstream impact score & callers
 
 9
-00:00:40,000 --> 00:00:45,000
-blast-radius
-Upstream impact score & caller table
-
-10
-00:00:45,000 --> 00:00:50,000
-taint
+00:01:16,182 --> 00:01:22,748
+Taint
 Source → sink flows
 
+10
+00:01:23,597 --> 00:01:30,161
+Migration
+Package roadmap · presets & ordering
+
 11
-00:00:50,000 --> 00:00:55,000
-migration
-Package roadmap · presets & dual ordering
-
-12
-00:00:55,000 --> 00:01:00,000
-check
-CI policy · blast-radius gates
-
-13
-00:01:00,000 --> 00:01:05,000
-export
-GraphML · Mermaid · JSON subgraphs
+00:01:32,595 --> 00:01:39,160
+Query Guide
+CLI cookbook · check & export recipes

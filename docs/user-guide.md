@@ -19,14 +19,15 @@ For JSON field reference see [cli-output-schemas.md](cli-output-schemas.md) and 
 7. [Blast radius (change impact)](#7-blast-radius-change-impact)
 8. [Program slicing and taint](#8-program-slicing-and-taint)
 9. [Inspect CFG / PDG / dominance](#9-inspect-cfg--pdg--dominance)
-10. [Graph metrics](#10-graph-metrics)
-11. [Semantic search](#11-semantic-search)
-12. [Export graph projections](#12-export-graph-projections)
-13. [CI policy check](#13-ci-policy-check)
-14. [HTTP server (`serve`)](#14-http-server-serve)
-15. [Recommended workflow](#15-recommended-workflow)
-16. [Command reference](#16-command-reference)
-17. [Troubleshooting](#17-troubleshooting)
+10. [Hybrid CPG (`cpg`)](#10-hybrid-cpg-cpg)
+11. [Graph metrics](#11-graph-metrics)
+12. [Semantic search](#12-semantic-search)
+13. [Export graph projections](#13-export-graph-projections)
+14. [CI policy check](#14-ci-policy-check)
+15. [HTTP server (`serve`)](#15-http-server-serve)
+16. [Recommended workflow](#16-recommended-workflow)
+17. [Command reference](#17-command-reference)
+18. [Troubleshooting](#18-troubleshooting)
 
 ---
 
@@ -138,7 +139,7 @@ This guide uses the in-tree Spring Boot fixture shipped with rBuilder:
 
 **[`rbuilder-tests/ecommerce-java`](../rbuilder-tests/ecommerce-java)**
 
-It implements the same e-commerce domain as the other `ecommerce-*` fixtures (cart, orders, products, auth). No separate clone is required when you have the rBuilder repo.
+It implements the same e-commerce domain as the other `ecommerce-*` fixtures (cart, orders, products, auth), plus a **CoolStore-compatible dual API** under `/services/*` (additive next to `/api/*`). No separate clone is required when you have the rBuilder repo.
 
 ```bash
 # From the rBuilder repository root
@@ -152,14 +153,27 @@ Layout (simplified):
 ecommerce-java/
 ├── pom.xml
 └── src/main/java/com/example/ecommerce/
-    ├── controller/     # CartController, OrderController, ProductController, …
+    ├── controller/     # /api/* — CartController, OrderController, ProductController, …
     ├── service/        # CartService, OrderService, ProductService, …
     ├── entity/         # Cart, Order, Product, User, …
     ├── repository/     # Spring Data JPA repos
-    └── security/       # JWT filter / token provider
+    ├── security/       # JWT filter / token provider
+    └── coolstore/      # /services/* — CoolStore cart pricing + orders (in-memory)
+        ├── rest/       # ProductEndpoint, CartEndpoint, OrderEndpoint
+        ├── service/    # ShoppingCartService, PromoService, ShippingService, …
+        └── model/      # ShoppingCart, ShoppingCartItem, CatalogProduct, …
 ```
 
-Sibling fixtures (`ecommerce-python`, `ecommerce-rust`, …) share the same REST shape — see [`rbuilder-tests/README.md`](../rbuilder-tests/README.md).
+**Dual REST surface** (same contract on every `ecommerce-*` language):
+
+| Surface | Role |
+|---------|------|
+| `/api/*` | JWT e-commerce API (auth, categories, cart ownership, reviews, …) |
+| `/services/*` | CoolStore-style products / cart / checkout / orders (`cartId` session carts) |
+
+`ShoppingCartService.priceShoppingCart` mutates cart totals (promo + shipping) — the Layer F target for `cpg mutations --type ShoppingCart`. Full route table: [`rbuilder-tests/README.md`](../rbuilder-tests/README.md).
+
+Sibling fixtures (`ecommerce-python`, `ecommerce-rust`, `ecommerce-c`, …) share both REST shapes.
 
 All commands below assume `REPO` points at `ecommerce-java`, or that you run from inside that directory and use `.` instead of `"$REPO"`.
 
@@ -756,7 +770,75 @@ rbuilder -r "$REPO" inspect checkout dom --frontiers
 
 ---
 
-## 10. Graph metrics
+## 10. Hybrid CPG (`cpg`)
+
+The `cpg` façade bridges the **repo call graph** (L_repo) with the **per-function CFG/PDG archive** (L_proc) built by `discover --with-cfg`. Use it for typed field mutations, data flows, and Joern-style handoffs without stitching several CLI tools yourself.
+
+Requires a prior `discover … --with-cfg` (the ecommerce walkthrough already uses that flag).
+
+### Status and CALL neighborhood
+
+```bash
+rbuilder -r "$REPO" cpg status
+# → CPG L_proc: ready (… functions) at …/cfg_pdg.archive.bin
+# → CPG field writes: N indexed (cpg mutations)
+
+rbuilder -r "$REPO" cpg function priceShoppingCart
+rbuilder -r "$REPO" cpg calls 'ShoppingCartService::priceShoppingCart'
+```
+
+### Field mutations (CoolStore `ShoppingCart`)
+
+Find non-constructor writes to a type — useful before converting a mutable DTO/cart model to an immutable record, or to prove pricing still mutates totals:
+
+```bash
+rbuilder -r "$REPO" cpg mutations --type ShoppingCart --exclude-ctors
+```
+
+Example (paths shortened):
+
+```text
+Mutations of ShoppingCart [excl. ctors] (7 hits):
+  …/coolstore/model/ShoppingCart.java:61  this.cartTotal = cartTotal
+  …/coolstore/model/ShoppingCart.java:45  this.cartItemTotal = cartItemTotal
+  …
+```
+
+Pair with blast-radius on the CoolStore pricing entrypoint:
+
+```bash
+rbuilder -r "$REPO" blast-radius 'ShoppingCartService::priceShoppingCart'
+# → Callers include CartEndpoint.add / delete / checkout and checkOutShoppingCart
+```
+
+**Dashboard:** after `discover --with-cfg --with-dashboard`, the **Dataflow** tab includes a **Field mutations (CPG)** panel (same filters). Click a hit to open that function’s PDG and highlight the write line. See [Dashboard user guide](dashboard-user-guide.md#dataflow).
+
+JSON for agents:
+
+```bash
+rbuilder -r "$REPO" -f json cpg mutations --type ShoppingCart --exclude-ctors
+```
+
+Empty result means no **typed** non-ctor writes were recovered (receivers without a resolved type are omitted unless `--include-unresolved`). On C fixtures, query the struct typedef name (e.g. `shopping_cart_t`). See [agent-recipes.md](agent-recipes.md) Recipe 11 and [hybrid-cpg-plan.md](design/hybrid-cpg-plan.md).
+
+### Flows, AST, export
+
+```bash
+# Forward flows from a variable at a line (wraps slice; optional --with-alias)
+rbuilder -r "$REPO" -f json cpg flows \
+  src/main/java/com/example/ecommerce/coolstore/service/ShoppingCartService.java \
+  --line 75 --variable sc --function priceShoppingCart --direction forward
+
+# Optional: discover --with-ast-skeleton then:
+rbuilder -r "$REPO" -f json cpg ast priceShoppingCart
+
+rbuilder -r "$REPO" cpg export --format graphson --output /tmp/ecommerce-cpg.json \
+  --path-contains coolstore/
+```
+
+---
+
+## 11. Graph metrics
 
 `metrics` reports network analytics on the indexed call graph. Prefer **JSON** for scripting (text mode prints debug-style structs).
 
@@ -801,7 +883,7 @@ rbuilder -r "$REPO" -f json metrics --pagerank --iterations 50 | jq .
 
 ---
 
-## 11. Semantic search
+## 12. Semantic search
 
 Semantic search is **opt-in** — it does not run during `discover`. Build a separate Hamming index over function symbols, then query by natural language or keywords.
 
@@ -855,7 +937,7 @@ Design → **[Semantic search design](design/semantic-search-design.md)** · tim
 
 ---
 
-## 12. Export graph projections
+## 13. Export graph projections
 
 `export` writes the graph or a **filter-selected** subgraph to a file. The `--query` flag uses **filter syntax**, not GQL `MATCH` (all formats honor the filter, including JSON):
 
@@ -888,7 +970,7 @@ For GQL pattern matching, use `rbuilder gql` — or `rbuilder serve` + [HTTP API
 
 ---
 
-## 13. CI policy check
+## 14. CI policy check
 
 `check` evaluates blast-radius policy rules against functions changed in the current git working tree (or all functions if git is unavailable).
 
@@ -904,7 +986,7 @@ The fixture also ships a shared policy at [`rbuilder-tests/rbuilder-policy.json`
 
 ---
 
-## 14. HTTP server (`serve`)
+## 15. HTTP server (`serve`)
 
 `serve` starts a local HTTP server with the **dashboard** and **GQL query API** (default `http://127.0.0.1:8080/`). Discover with `--with-dashboard` first if you want the static UI assets.
 
@@ -943,7 +1025,7 @@ Disable auto-connect: `RBUILDER_NO_QUERY_DAEMON=1`.
 
 ---
 
-## 15. Recommended workflow
+## 16. Recommended workflow
 
 ```bash
 # 1. Point at the in-tree fixture
@@ -966,27 +1048,32 @@ rbuilder -r "$REPO" gql \
 rbuilder -r "$REPO" blast-radius 'CartService::clearCart'
 rbuilder -r "$REPO" -f json blast-radius 'CartService::clearCart' | jq '.metrics'
 
-# 5. Architectural hotspots
+# 5. CoolStore dual API + hybrid CPG (field mutations)
+rbuilder -r "$REPO" cpg status
+rbuilder -r "$REPO" cpg mutations --type ShoppingCart --exclude-ctors
+rbuilder -r "$REPO" blast-radius 'ShoppingCartService::priceShoppingCart'
+
+# 6. Architectural hotspots
 rbuilder -r "$REPO" -f json metrics --communities | jq .
 rbuilder -r "$REPO" -f json metrics --pagerank | jq '.pagerank.top[:5]'
 
-# 6. Deep dive on checkout
+# 7. Deep dive on checkout
 rbuilder -r "$REPO" inspect checkout cfg
 rbuilder -r "$REPO" slice \
   src/main/java/com/example/ecommerce/service/CartService.java \
   --line 53 --variable item --function addItem
 
-# 7. Export / dashboard
+# 8. Export / dashboard
 rbuilder -r "$REPO" export --export-format mermaid \
   --export-output clearCart.mmd --query 'name:clearCart'
 rbuilder -r "$REPO" serve --open
 ```
 
-Migration hints (with `--export-migration-hints`) land under `.rbuilder/migration_plan.json` and `.rbuilder/dashboard/migration_plan.json` — package-level steps such as `com.example.ecommerce.service`, `…repository`, `…controller`.
+Migration hints (with `--export-migration-hints`) land under `.rbuilder/migration_plan.json` and `.rbuilder/dashboard/migration_plan.json` — package-level steps such as `com.example.ecommerce.service`, `…repository`, `…controller`, and CoolStore `…coolstore.*`.
 
 ---
 
-## 16. Command reference
+## 17. Command reference
 
 | Command | Purpose |
 |---------|---------|
@@ -996,6 +1083,7 @@ Migration hints (with `--export-migration-hints`) land under `.rbuilder/migratio
 | `blast-radius` | Upstream call-graph impact for a symbol |
 | `slice` | Line-level program slice or taint trace |
 | `inspect` | CFG / PDG / dominance for a function |
+| `cpg` | Hybrid CPG: status, mutations, flows, calls, export (needs `--with-cfg`) |
 | `metrics` | PageRank, betweenness, communities summary |
 | `export` | Serialize graph (json, graphml, dot, mermaid) |
 | `check` | CI policy gateway |
@@ -1021,7 +1109,7 @@ There is no umbrella `--all` flag — combine `--with-cfg --with-security --with
 
 ---
 
-## 17. Troubleshooting
+## 18. Troubleshooting
 
 ### `Graph not found` / `run discover first`
 
@@ -1052,6 +1140,10 @@ rbuilder -r "$REPO" slice \
   src/main/java/com/example/ecommerce/service/CartService.java \
   --line 53 --variable item --function addItem --language java
 ```
+
+### Empty `cpg mutations`
+
+Confirm `cpg status` shows a field-write index, then match the **resolved type name** (Java/C#/…: `ShoppingCart`; C: `shopping_cart_t`). Setters count as mutation sites; unresolved receivers are omitted unless `--include-unresolved`. Re-run `discover --with-cfg` after adding CoolStore sources.
 
 ### Slow `discover`
 

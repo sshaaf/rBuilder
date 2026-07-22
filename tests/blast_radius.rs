@@ -100,6 +100,7 @@ fn test_blast_radius_pdg_enriches_data_flow_depth() {
         to: n2,
         variable: "tmp".into(),
         dep_type: DataDepType::Flow,
+        loop_carried: false,
     });
     cache.insert_pdg(id_b, pdg);
 

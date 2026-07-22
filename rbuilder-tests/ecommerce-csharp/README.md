@@ -15,7 +15,7 @@ Listens on `http://localhost:5000` (or ports in `launchSettings.json`).
 
 ## rBuilder
 
-See [summary report](../rbuilder-reports/REPORT.md) · language report (after `./scripts/run_rbuilder_report.py`).
+See [summary report](../rbuilder-reports/REPORT.md) · [language report](../rbuilder-reports/languages/csharp.md) · [HTML](../rbuilder-reports/languages/csharp.html) (2026-07-22).
 
 ```bash
 rbuilder -f json discover . --cfg -e bin,obj,data
@@ -26,18 +26,31 @@ rbuilder -f json check --policy-file ../rbuilder-policy.json
 
 | Metric | Value |
 |--------|------:|
-| Files indexed | 46 |
-| Nodes | 272 |
-| Edges | 488 |
-| Discover ms | 142 |
+| Files indexed | 62 |
+| Nodes | 624 |
+| Edges | 1321 |
+| Discover ms | 309 |
+| Cache MB | 1.31 |
 
 | Feature | Status |
 |---------|:------:|
 | discover | ✓ |
-| blast-radius | ✓ (expected) |
+| blast-radius | ✓ |
 | metrics | ✓ |
-| export | ✓ |
+| export | ✗ |
 | check | ✓ |
-| slice / taint / CFG | ✓ |
+| slice / taint | — / ✓ |
 
-Regenerate suite reports: [`../scripts/run_rbuilder_report.py`](../scripts/run_rbuilder_report.py)
+### Top symbols
+
+| Symbol | Score | Callers | Impact |
+|--------|------:|--------:|-------:|
+| `GetUserCartAsync` | 40.25 | 5 | 5 |
+| `GetProductAsync` | 25.10 | 1 | 2 |
+| `InitShoppingCartForPricing` | 25.10 | 1 | 2 |
+| `GetByProductIdAsync` | 25.10 | 1 | 2 |
+| `CorrectnessLeaf` | 25.10 | 1 | 2 |
+
+ASP.NET Core mirror of Java; Tier 1 CFG/taint/calls.
+
+Raw: [`../rbuilder-reports/csharp-summary.json`](../rbuilder-reports/csharp-summary.json)

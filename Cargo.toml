@@ -36,39 +36,39 @@ members = [
 resolver = "2"
 
 [workspace.dependencies]
-rbuilder-plugin-api = { path = "crates/rbuilder-plugin-api", version = "0.4.1" }
-rbuilder-plugin-helpers = { path = "crates/rbuilder-plugin-helpers", version = "0.4.1" }
-rbuilder-config-formats = { path = "crates/rbuilder-config-formats", version = "0.4.1" }
-rbuilder-lang-runtime = { path = "crates/rbuilder-lang-runtime", version = "0.4.1" }
-rbuilder-registry = { path = "crates/rbuilder-registry", version = "0.4.1" }
-rbuilder-error = { path = "crates/rbuilder-error", version = "0.4.1" }
-rbuilder-graph = { path = "crates/rbuilder-graph", version = "0.4.1" }
-rbuilder-extraction = { path = "crates/rbuilder-extraction", version = "0.4.1" }
-rbuilder-pipeline = { path = "crates/rbuilder-pipeline", version = "0.4.1" }
-rbuilder-analysis = { path = "crates/rbuilder-analysis", version = "0.4.1", default-features = false }
-rbuilder-gql = { path = "crates/rbuilder-gql", version = "0.4.1" }
-rbuilder-export = { path = "crates/rbuilder-export", version = "0.4.1" }
-rbuilder-dashboard = { path = "crates/rbuilder-dashboard", version = "0.4.1" }
-rbuilder-wasm = { path = "crates/rbuilder-wasm", version = "0.4.1" }
-rbuilder-security = { path = "crates/rbuilder-security", version = "0.4.1" }
-rbuilder-project-config = { path = "crates/rbuilder-project-config", version = "0.4.1" }
-rbuilder-incremental = { path = "crates/rbuilder-incremental", version = "0.4.1" }
-rbuilder-semantic = { path = "crates/rbuilder-semantic", version = "0.4.1" }
-rbuilder-rules = { path = "crates/rbuilder-rules", version = "0.4.1" }
-rbuilder-core = { path = "crates/rbuilder-core", version = "0.4.1" }
+rbuilder-plugin-api = { path = "crates/rbuilder-plugin-api", version = "0.4.2" }
+rbuilder-plugin-helpers = { path = "crates/rbuilder-plugin-helpers", version = "0.4.2" }
+rbuilder-config-formats = { path = "crates/rbuilder-config-formats", version = "0.4.2" }
+rbuilder-lang-runtime = { path = "crates/rbuilder-lang-runtime", version = "0.4.2" }
+rbuilder-registry = { path = "crates/rbuilder-registry", version = "0.4.2" }
+rbuilder-error = { path = "crates/rbuilder-error", version = "0.4.2" }
+rbuilder-graph = { path = "crates/rbuilder-graph", version = "0.4.2" }
+rbuilder-extraction = { path = "crates/rbuilder-extraction", version = "0.4.2" }
+rbuilder-pipeline = { path = "crates/rbuilder-pipeline", version = "0.4.2" }
+rbuilder-analysis = { path = "crates/rbuilder-analysis", version = "0.4.2", default-features = false }
+rbuilder-gql = { path = "crates/rbuilder-gql", version = "0.4.2" }
+rbuilder-export = { path = "crates/rbuilder-export", version = "0.4.2" }
+rbuilder-dashboard = { path = "crates/rbuilder-dashboard", version = "0.4.2" }
+rbuilder-wasm = { path = "crates/rbuilder-wasm", version = "0.4.2" }
+rbuilder-security = { path = "crates/rbuilder-security", version = "0.4.2" }
+rbuilder-project-config = { path = "crates/rbuilder-project-config", version = "0.4.2" }
+rbuilder-incremental = { path = "crates/rbuilder-incremental", version = "0.4.2" }
+rbuilder-semantic = { path = "crates/rbuilder-semantic", version = "0.4.2" }
+rbuilder-rules = { path = "crates/rbuilder-rules", version = "0.4.2" }
+rbuilder-core = { path = "crates/rbuilder-core", version = "0.4.2" }
 tempfile = "3"
 zstd = "0.13"
 rayon = "1.7"
-rbuilder-lang-go = { path = "crates/rbuilder-lang-go", version = "0.4.1" }
-rbuilder-lang-java = { path = "crates/rbuilder-lang-java", version = "0.4.1" }
-rbuilder-lang-javascript = { path = "crates/rbuilder-lang-javascript", version = "0.4.1" }
-rbuilder-lang-python = { path = "crates/rbuilder-lang-python", version = "0.4.1" }
-rbuilder-lang-rust = { path = "crates/rbuilder-lang-rust", version = "0.4.1" }
-rbuilder-lang-typescript = { path = "crates/rbuilder-lang-typescript", version = "0.4.1" }
-rbuilder-lang-csharp = { path = "crates/rbuilder-lang-csharp", version = "0.4.1" }
-rbuilder-lang-c = { path = "crates/rbuilder-lang-c", version = "0.4.1" }
-rbuilder-lang-cpp = { path = "crates/rbuilder-lang-cpp", version = "0.4.1" }
-rbuilder-languages = { path = "crates/rbuilder-languages", version = "0.4.1" }
+rbuilder-lang-go = { path = "crates/rbuilder-lang-go", version = "0.4.2" }
+rbuilder-lang-java = { path = "crates/rbuilder-lang-java", version = "0.4.2" }
+rbuilder-lang-javascript = { path = "crates/rbuilder-lang-javascript", version = "0.4.2" }
+rbuilder-lang-python = { path = "crates/rbuilder-lang-python", version = "0.4.2" }
+rbuilder-lang-rust = { path = "crates/rbuilder-lang-rust", version = "0.4.2" }
+rbuilder-lang-typescript = { path = "crates/rbuilder-lang-typescript", version = "0.4.2" }
+rbuilder-lang-csharp = { path = "crates/rbuilder-lang-csharp", version = "0.4.2" }
+rbuilder-lang-c = { path = "crates/rbuilder-lang-c", version = "0.4.2" }
+rbuilder-lang-cpp = { path = "crates/rbuilder-lang-cpp", version = "0.4.2" }
+rbuilder-languages = { path = "crates/rbuilder-languages", version = "0.4.2" }
 tree-sitter = "0.25"
 
 [workspace.lints.rust]
@@ -99,7 +99,7 @@ expect_used = "warn"
 
 [package]
 name = "rbuilder"
-version = "0.4.1"
+version = "0.4.2"
 edition = "2021"
 authors = ["rBuilder Contributors"]
 description = "A Code knowledge graph system"

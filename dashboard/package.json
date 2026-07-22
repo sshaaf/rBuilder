@@ -8,7 +8,8 @@
     "build": "tsc -b && vite build",
     "preview": "vite preview",
     "test": "vitest run",
-    "test:unit": "vitest run src/migration"
+    "test:unit": "vitest run src/migration src/MutationsPanel.test.ts",
+    "test:mutations": "node scripts/test-mutations-panel.mjs"
   },
   "dependencies": {
     "@codemirror/lang-java": "^6.0.2",

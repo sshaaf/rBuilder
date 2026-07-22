@@ -13,6 +13,7 @@ import { FunctionListLayout, FunctionListSidebar } from "./FunctionListSidebar";
 import { dataflowEntryToListItem } from "./functionListUtils";
 import { layoutForceAtlas2 } from "./graphLayout";
 import { GraphZoomControls } from "./GraphZoomControls";
+import { MutationsPanel, type MutationSelectTarget } from "./MutationsPanel";
 import { mountSigmaInWrap } from "./sigmaMount";
 import { ViewLegend } from "./ViewLegend";
 import {
@@ -28,6 +29,7 @@ import type {
   CfgIndexPayload,
   DataflowGraphPayload,
   DataflowIndexPayload,
+  MutationsIndexPayload,
   SliceBundlePayload,
   SlicePdgNode,
 } from "./types";
@@ -40,6 +42,8 @@ interface DataflowViewProps {
 export function DataflowView({ wasmReady, loadCfgDetail }: DataflowViewProps) {
   const [index, setIndex] = useState<DataflowIndexPayload | null>(null);
   const [cfgIndex, setCfgIndex] = useState<CfgIndexPayload | null>(null);
+  const [mutationsIndex, setMutationsIndex] = useState<MutationsIndexPayload | null>(null);
+  const [mutationsError, setMutationsError] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [bundle, setBundle] = useState<SliceBundlePayload | null>(null);
@@ -51,6 +55,8 @@ export function DataflowView({ wasmReady, loadCfgDetail }: DataflowViewProps) {
   const [viewMode, setViewMode] = useState<DataflowViewMode>("dataflow");
   const [graph, setGraph] = useState<DataflowGraphPayload | null>(null);
   const [selectedGraphNodeId, setSelectedGraphNodeId] = useState<string | null>(null);
+  const [focusLine, setFocusLine] = useState<number | null>(null);
+  const [mutationActiveKey, setMutationActiveKey] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
   useEffect(() => {
@@ -80,6 +86,30 @@ export function DataflowView({ wasmReady, loadCfgDetail }: DataflowViewProps) {
       })
       .catch((e) => {
         if (!cancelled) setError(e instanceof Error ? e.message : String(e));
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    fetch(bundleDataUrl("mutations_index.json"))
+      .then((r) => {
+        if (!r.ok) throw new Error(`mutations_index.json HTTP ${r.status}`);
+        return r.json();
+      })
+      .then((data: MutationsIndexPayload) => {
+        if (!cancelled) {
+          setMutationsIndex(data);
+          setMutationsError(null);
+        }
+      })
+      .catch((e) => {
+        if (!cancelled) {
+          setMutationsIndex(null);
+          setMutationsError(e instanceof Error ? e.message : String(e));
+        }
       });
     return () => {
       cancelled = true;
@@ -127,8 +157,9 @@ export function DataflowView({ wasmReady, loadCfgDetail }: DataflowViewProps) {
         if (cancelled) return;
         setBundle(sliceBundle);
         setCfg(cfgDetail);
-        setVariables(listPdgVariables(sliceBundle.pdg.nodes, sliceBundle.pdg.edges));
-        setVariable("");
+        const vars = listPdgVariables(sliceBundle.pdg.nodes, sliceBundle.pdg.edges);
+        setVariables(vars);
+        setVariable((prev) => (prev && vars.includes(prev) ? prev : ""));
       })
       .catch((e) => {
         if (!cancelled) setError(e instanceof Error ? e.message : String(e));
@@ -177,6 +208,24 @@ export function DataflowView({ wasmReady, loadCfgDetail }: DataflowViewProps) {
     );
   }, [bundle, cfg, variable, includeControl, includeCfg, viewMode]);
 
+  useEffect(() => {
+    if (focusLine == null || !bundle || loading) return;
+    const node = bundle.pdg.nodes.find((n) => n.line === focusLine);
+    if (node) {
+      setSelectedGraphNodeId(node.id);
+    }
+  }, [focusLine, bundle, loading]);
+
+  const onMutationSelect = (target: MutationSelectTarget) => {
+    setMutationActiveKey(`${target.functionId}:${target.line}:${target.member}`);
+    setFocusLine(target.line);
+    setViewMode("dataflow");
+    if (target.variable) {
+      setVariable(target.variable);
+    }
+    setSelectedId(target.functionId);
+  };
+
   const source = bundle?.source ?? "";
   const pdgNodes = bundle?.pdg.nodes ?? [];
 
@@ -194,10 +243,10 @@ export function DataflowView({ wasmReady, loadCfgDetail }: DataflowViewProps) {
         <h2 class="h5 mb-2">Dataflow (CFG + PDG)</h2>
         <p class="text-muted mb-2">
           Dataflow visualization requires CFG/PDG analysis. Run discover with{" "}
-          <code>--cfg</code>:
+          <code>--with-cfg</code>:
         </p>
         <pre class="bg-light border rounded p-3 small mb-0">
-          rbuilder discover . --languages java --cfg
+          rbuilder discover . --languages java --with-cfg --with-dashboard
         </pre>
       </div>
     );
@@ -210,11 +259,22 @@ export function DataflowView({ wasmReady, loadCfgDetail }: DataflowViewProps) {
           count={index.function_count}
           items={index.functions.map(dataflowEntryToListItem)}
           selectedId={selectedId}
-          onSelect={setSelectedId}
+          onSelect={(id) => {
+            setMutationActiveKey(null);
+            setFocusLine(null);
+            setSelectedId(id);
+          }}
         />
       }
     >
-      <div class="dataflow-view d-flex flex-column flex-grow-1 min-h-0 p-3">
+      <div class="dataflow-view d-flex flex-column flex-grow-1 min-h-0 p-3 gap-2">
+        <MutationsPanel
+          index={mutationsIndex}
+          loadError={mutationsError}
+          onSelect={onMutationSelect}
+          activeKey={mutationActiveKey}
+        />
+
         <div class="d-flex flex-wrap align-items-end gap-2 flex-shrink-0">
           <div style={{ minWidth: "200px" }}>
             <label class="form-label small mb-1" for="df-view">
@@ -302,6 +362,7 @@ export function DataflowView({ wasmReady, loadCfgDetail }: DataflowViewProps) {
                 graph={graph}
                 viewMode={viewMode}
                 selectedGraphNodeId={selectedGraphNodeId}
+                focusLine={focusLine}
                 onStatementSelect={setSelectedGraphNodeId}
               />
             </div>
@@ -322,8 +383,8 @@ export function DataflowView({ wasmReady, loadCfgDetail }: DataflowViewProps) {
 
         {!selectedId && (
           <p class="text-muted small mb-0">
-            Select a function to visualize CFG control flow, PDG data dependencies, and dominance
-            structure.
+            Select a mutation hit above or a function in the sidebar to visualize CFG control flow,
+            PDG data dependencies, and dominance structure.
           </p>
         )}
       </div>
@@ -496,6 +557,7 @@ function SourcePanel({
   graph,
   viewMode,
   selectedGraphNodeId,
+  focusLine,
   onStatementSelect,
 }: {
   source: string;
@@ -504,13 +566,17 @@ function SourcePanel({
   graph: DataflowGraphPayload;
   viewMode: DataflowViewMode;
   selectedGraphNodeId: string | null;
+  focusLine: number | null;
   onStatementSelect: (graphNodeId: string | null) => void;
 }) {
   const scrollRef = useRef<HTMLDivElement>(null);
-  const highlightLines = useMemo(
-    () => highlightLinesForGraphNode(pdgNodes, cfg, graph, selectedGraphNodeId),
-    [pdgNodes, cfg, graph, selectedGraphNodeId],
-  );
+  const highlightLines = useMemo(() => {
+    const fromGraph = highlightLinesForGraphNode(pdgNodes, cfg, graph, selectedGraphNodeId);
+    if (focusLine != null) {
+      fromGraph.add(focusLine);
+    }
+    return fromGraph;
+  }, [pdgNodes, cfg, graph, selectedGraphNodeId, focusLine]);
 
   const statements = useMemo(
     () => [...pdgNodes].sort((a, b) => a.line - b.line || a.id.localeCompare(b.id)),
@@ -521,10 +587,13 @@ function SourcePanel({
 
   useEffect(() => {
     if (highlightLines.size === 0) return;
-    const firstLine = [...highlightLines].sort((a, b) => a - b)[0];
+    const firstLine =
+      focusLine != null && highlightLines.has(focusLine)
+        ? focusLine
+        : [...highlightLines].sort((a, b) => a - b)[0];
     const row = scrollRef.current?.querySelector(`[data-line="${firstLine}"]`);
     row?.scrollIntoView({ block: "nearest", behavior: "smooth" });
-  }, [highlightLines, selectedGraphNodeId]);
+  }, [highlightLines, selectedGraphNodeId, focusLine]);
 
   const panelTitle =
     graph.view_mode === "dominator" ? "Statements (click a block or row)" : "Statements in flow";

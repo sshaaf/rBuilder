@@ -4,7 +4,7 @@ E-commerce reference app.
 
 ## rBuilder
 
-See [summary report](../rbuilder-reports/REPORT.md) · [language report](../rbuilder-reports/languages/python.md) · [HTML](../rbuilder-reports/languages/python.html) (2026-07-07).
+See [summary report](../rbuilder-reports/REPORT.md) · [language report](../rbuilder-reports/languages/python.md) · [HTML](../rbuilder-reports/languages/python.html) (2026-07-22).
 
 ```bash
 rbuilder -f json discover . --cfg -e .venv,__pycache__
@@ -15,24 +15,30 @@ rbuilder -f json check --policy-file ../rbuilder-policy.json
 
 | Metric | Value |
 |--------|------:|
-| Files indexed | 54 |
-| Nodes | 189 |
-| Edges | 270 |
-| Discover ms | 120 |
-| Cache MB | 2.41 |
+| Files indexed | 59 |
+| Nodes | 571 |
+| Edges | 1407 |
+| Discover ms | 307 |
+| Cache MB | 1.17 |
 
 | Feature | Status |
 |---------|:------:|
 | discover | ✓ |
 | blast-radius | ✓ |
 | metrics | ✓ |
-| export | ✓ |
+| export | ✗ |
 | check | ✓ |
 | slice / taint | ◐ / ✓ |
 
 ### Top symbols
 
-_No functions with score > 0._
+| Symbol | Score | Callers | Impact |
+|--------|------:|--------:|-------:|
+| `get_product_by_item_id` | 40.45 | 2 | 9 |
+| `add` | 40.45 | 8 | 9 |
+| `get_shopping_cart` | 40.25 | 4 | 5 |
+| `price_shopping_cart` | 40.20 | 3 | 4 |
+| `_cart_out` | 40.20 | 4 | 4 |
 
 Second full CFG/PDG language; rich class nodes.
 

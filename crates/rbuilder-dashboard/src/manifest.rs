@@ -5,6 +5,7 @@ use crate::cfg_export::CfgExportSummary;
 use crate::dataflow_export::DataflowExportSummary;
 use crate::metagraph::MetagraphExport;
 use crate::migration_export::MigrationExportSummary;
+use crate::mutations_export::MutationsExportSummary;
 use crate::slice_export::SliceExportSummary;
 use crate::taint_export::TaintExportSummary;
 use serde::{Deserialize, Serialize};
@@ -86,6 +87,15 @@ pub struct AnalysisSection {
     pub dataflow_index_path: String,
     pub dataflow_detail_dir: String,
     pub dataflow_function_count: usize,
+    /// Hybrid CPG field mutations (`mutations_index.json` from `field_write.index.bin`).
+    #[serde(default)]
+    pub mutations_available: bool,
+    #[serde(default = "default_mutations_index_path")]
+    pub mutations_index_path: String,
+    #[serde(default)]
+    pub mutations_write_count: usize,
+    #[serde(default)]
+    pub mutations_type_count: usize,
     pub taint_available: bool,
     pub taint_index_path: String,
     pub taint_detail_dir: String,
@@ -110,6 +120,10 @@ pub struct MetricsSection {
     pub high_blast_radius_count: usize,
 }
 
+fn default_mutations_index_path() -> String {
+    crate::mutations_export::MUTATIONS_INDEX_FILE.into()
+}
+
 impl DashboardManifest {
     #[allow(clippy::too_many_arguments)]
     pub fn with_phases(
@@ -123,6 +137,7 @@ impl DashboardManifest {
         slice: &SliceExportSummary,
         blast: &BlastExportSummary,
         dataflow: &DataflowExportSummary,
+        mutations: &MutationsExportSummary,
         taint: &TaintExportSummary,
         migration: &MigrationExportSummary,
         semantic: Option<SemanticSection>,
@@ -201,6 +216,10 @@ impl DashboardManifest {
             dataflow_index_path: crate::dataflow_export::DATAFLOW_INDEX_FILE.into(),
             dataflow_detail_dir: crate::slice_export::SLICE_DETAIL_DIR.into(),
             dataflow_function_count: dataflow.function_count,
+            mutations_available: mutations.available,
+            mutations_index_path: crate::mutations_export::MUTATIONS_INDEX_FILE.into(),
+            mutations_write_count: mutations.write_count,
+            mutations_type_count: mutations.type_count,
             taint_available: taint.available,
             taint_index_path: crate::taint_export::TAINT_INDEX_FILE.into(),
             taint_detail_dir: crate::taint_export::TAINT_DETAIL_DIR.into(),
@@ -341,6 +360,7 @@ mod tests {
             &SliceExportSummary::default(),
             &BlastExportSummary::default(),
             &DataflowExportSummary::default(),
+            &MutationsExportSummary::default(),
             &TaintExportSummary::default(),
             &MigrationExportSummary::default(),
             None,

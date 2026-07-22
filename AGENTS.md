@@ -37,6 +37,12 @@ rbuilder -r "$REPO" -f json gql 'MATCH (n:Function) RETURN n LIMIT 20'
 | Impact before editing | `rbuilder -f json blast-radius <Symbol> [--depth N]` |
 | Architectural hotspots | `rbuilder -f json metrics --pagerank` |
 | Call neighborhood | `rbuilder -f json gql "MATCH (a:Function)-[:CALLS*1..3]->(b:Function) RETURN a,b LIMIT 50"` |
+| Hybrid CPG status / CALL / PDG / slice | `rbuilder -f json cpg status` then `cpg function\|calls\|pdg\|slice` (needs `discover --with-cfg` for PDG/slice) |
+| Field mutations (cart / DTO safety) | `rbuilder -f json cpg mutations --type ShoppingCart --exclude-ctors` (ecommerce CoolStore; or any type name; needs `--with-cfg`) |
+| Data flows / slice (CPG) | `rbuilder -f json cpg flows FILE --line N --variable V --function F [--direction forward\|backward] [--with-alias]` |
+| Loop-carried DFG tags | `rbuilder discover . --with-cfg --with-dfg-loops` (tags `DataDependency.loop_carried` in PDG) |
+| AST skeleton | `rbuilder discover --with-ast-skeleton` then `rbuilder -f json cpg ast <Symbol>` |
+| CPG export | `rbuilder cpg export --format graphson --output cpg.json [--path-contains src/]` |
 | Migration plan | `rbuilder discover . --with-cfg --with-security --with-taint --with-dashboard --with-harmonic --export-migration-hints` then read `.rbuilder/migration_plan.json` (or dashboard copy) |
 | CI gate on changes | `rbuilder -f json check --policy-file policy.json` (exit 1 = violations) |
 

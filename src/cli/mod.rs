@@ -7,6 +7,7 @@ mod check;
 pub mod check_output;
 mod communities;
 mod context;
+mod cpg;
 mod discover;
 mod discover_cfg;
 mod discover_impl;
@@ -32,7 +33,7 @@ pub use args::OutputFormat;
 
 use crate::analysis::{DEFAULT_CANDIDATE_POOL, DEFAULT_EMBEDDING_DIMENSIONS};
 use crate::BUILD_INFO;
-use args::{ExportFormat, InspectLayer, SliceDirection, SliceView};
+use args::{ExportFormat, InspectLayer, PdgEdgeLayer, SliceDirection, SliceView};
 use clap::{Parser, Subcommand};
 use context::CliContext;
 
@@ -90,6 +91,14 @@ pub enum Commands {
         /// Off by default. On-demand: `slice ... --taint`.
         #[arg(long = "with-taint")]
         with_taint: bool,
+
+        /// Classify loop-carried data dependencies on the PDG (implies CFG).
+        #[arg(long = "with-dfg-loops")]
+        with_dfg_loops: bool,
+
+        /// Write coarse AST skeleton archive under `.rbuilder/analysis/` (implies CFG).
+        #[arg(long = "with-ast-skeleton")]
+        with_ast_skeleton: bool,
 
         /// Write legacy JSON graph files (`graph.db` / `graph.json`); default is snapshot-only.
         #[arg(long = "write-json-graph")]
@@ -227,6 +236,12 @@ pub enum Commands {
     Communities {
         #[command(subcommand)]
         action: CommunitiesCommands,
+    },
+
+    /// Hybrid CPG façade (topology + CFG/PDG archive)
+    Cpg {
+        #[command(subcommand)]
+        action: CpgCommands,
     },
 
     /// CI policy gateway
@@ -391,6 +406,104 @@ pub enum CommunitiesCommands {
     },
 }
 
+#[derive(Subcommand)]
+pub enum CpgCommands {
+    /// Show L_proc archive readiness (CFG/PDG)
+    Status,
+    /// Resolve a function in L_repo and whether L_proc exists
+    Function {
+        #[arg(value_name = "SYMBOL")]
+        symbol: String,
+    },
+    /// CALL neighborhood for a function
+    Calls {
+        #[arg(value_name = "SYMBOL")]
+        symbol: String,
+    },
+    /// Field mutations for a type (requires discover --with-cfg)
+    Mutations {
+        /// Type / class name (e.g. OrderDTO)
+        #[arg(long = "type", value_name = "NAME")]
+        type_name: String,
+        /// Exclude constructor / `<init>` writes
+        #[arg(long, default_value_t = false)]
+        exclude_ctors: bool,
+        /// Optional field name filter
+        #[arg(long)]
+        member: Option<String>,
+        /// Include writes whose receiver type could not be resolved
+        #[arg(long, default_value_t = false)]
+        include_unresolved: bool,
+    },
+    /// Data/control flows from a variable at a line (wraps slice)
+    Flows {
+        file: String,
+        #[arg(long)]
+        line: usize,
+        #[arg(long)]
+        variable: String,
+        /// Enclosing method / function name
+        #[arg(long)]
+        function: String,
+        #[arg(long)]
+        language: Option<String>,
+        #[arg(long, value_enum, default_value = "forward")]
+        direction: SliceDirection,
+        /// Expand may-alias names (copies / field bases) — P3 T2 on-demand
+        #[arg(long = "with-alias")]
+        with_alias: bool,
+    },
+    /// Show coarse AST skeleton for a function (requires --with-ast-skeleton)
+    Ast {
+        #[arg(value_name = "SYMBOL")]
+        symbol: String,
+    },
+    /// Export hybrid CPG view (GraphML / GraphSON)
+    Export {
+        /// graphml | graphson
+        #[arg(long = "format", default_value = "graphson")]
+        format: String,
+        #[arg(long, value_name = "FILE")]
+        output: String,
+        /// Keep only nodes whose file_path contains this substring
+        #[arg(long = "path-contains")]
+        path_contains: Option<String>,
+        /// Include PDG DATA_FLOW edges from CFG archive
+        #[arg(long = "include-l-proc", default_value_t = true)]
+        include_l_proc: bool,
+        /// Include field-write sites from the mutation index
+        #[arg(long = "include-field-writes", default_value_t = true)]
+        include_field_writes: bool,
+    },
+    /// PDG overlay (wraps `inspect pdg`; prefers live rebuild today)
+    Pdg {
+        #[arg(value_name = "SYMBOL")]
+        symbol: String,
+        #[arg(long, value_enum, default_value = "all")]
+        edge_layer: PdgEdgeLayer,
+        #[arg(long)]
+        def_use: bool,
+    },
+    /// Line-level slice (wraps `slice`)
+    Slice {
+        file: String,
+        #[arg(long)]
+        line: usize,
+        #[arg(long)]
+        variable: String,
+        #[arg(long)]
+        function: Option<String>,
+        #[arg(long)]
+        language: Option<String>,
+        #[arg(long, value_enum, default_value = "backward")]
+        direction: SliceDirection,
+        #[arg(long)]
+        taint: bool,
+        #[arg(long, value_enum, default_value = "text")]
+        view: SliceView,
+    },
+}
+
 impl Cli {
     pub fn run(self) -> anyhow::Result<()> {
         let verbose = matches!(self.command, Commands::Discover { verbose: true, .. });
@@ -415,6 +528,8 @@ impl Cli {
                 with_security,
                 with_cfg,
                 with_taint,
+                with_dfg_loops,
+                with_ast_skeleton,
                 write_json_graph,
                 with_dashboard,
                 export_migration_hints,
@@ -430,6 +545,8 @@ impl Cli {
                     with_security,
                     with_cfg,
                     with_taint,
+                    with_dfg_loops,
+                    with_ast_skeleton,
                     write_json_graph,
                     with_dashboard,
                     export_migration_hints,
@@ -567,6 +684,84 @@ impl Cli {
                 CommunitiesCommands::Label { write } => {
                     communities::run_label(&ctx, communities::CommunitiesLabelArgs { write })
                 }
+            },
+            Commands::Cpg { action } => {
+                let mapped = match action {
+                    CpgCommands::Status => cpg::CpgAction::Status,
+                    CpgCommands::Function { symbol } => cpg::CpgAction::Function { symbol },
+                    CpgCommands::Calls { symbol } => cpg::CpgAction::Calls { symbol },
+                    CpgCommands::Mutations {
+                        type_name,
+                        exclude_ctors,
+                        member,
+                        include_unresolved,
+                    } => cpg::CpgAction::Mutations {
+                        type_name,
+                        exclude_ctors,
+                        member,
+                        include_unresolved,
+                    },
+                    CpgCommands::Flows {
+                        file,
+                        line,
+                        variable,
+                        function,
+                        language,
+                        direction,
+                        with_alias,
+                    } => cpg::CpgAction::Flows {
+                        file,
+                        line,
+                        variable,
+                        function,
+                        language,
+                        direction,
+                        with_alias,
+                    },
+                    CpgCommands::Ast { symbol } => cpg::CpgAction::Ast { symbol },
+                    CpgCommands::Export {
+                        format,
+                        output,
+                        path_contains,
+                        include_l_proc,
+                        include_field_writes,
+                    } => cpg::CpgAction::Export {
+                        format,
+                        output,
+                        path_contains,
+                        include_l_proc,
+                        include_field_writes,
+                    },
+                    CpgCommands::Pdg {
+                        symbol,
+                        edge_layer,
+                        def_use,
+                    } => cpg::CpgAction::Pdg {
+                        symbol,
+                        edge_layer,
+                        def_use,
+                    },
+                    CpgCommands::Slice {
+                        file,
+                        line,
+                        variable,
+                        function,
+                        language,
+                        direction,
+                        taint,
+                        view,
+                    } => cpg::CpgAction::Slice {
+                        file,
+                        line,
+                        variable,
+                        function,
+                        language,
+                        direction,
+                        taint,
+                        view,
+                    },
+                };
+                cpg::run(&ctx, mapped)
             },
             Commands::Check { policy_file } => check::run(&ctx, check::CheckArgs { policy_file }),
             Commands::Export {

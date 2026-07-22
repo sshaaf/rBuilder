@@ -41,6 +41,8 @@ impl CPlugin {
             return Ok(None);
         };
 
+        let parameters = extract_parameters(node, source)?;
+
         Ok(Some(Symbol {
             name: name.clone(),
             symbol_type: SymbolType::Function,
@@ -48,7 +50,7 @@ impl CPlugin {
             location: source_location(node, file_path),
             signature: Some(first_line(node, source)),
             return_type: None,
-            parameters: vec![],
+            parameters,
             fields: vec![],
             modifiers: vec![],
             documentation: None,
@@ -56,12 +58,16 @@ impl CPlugin {
         }))
     }
 
+    /// F1: struct fields from `field_declaration` in `field_declaration_list`.
+    /// F2: C has no real constructors — do not invent fake ctor symbols.
     fn extract_struct(&self, node: Node, source: &[u8], file_path: &str) -> Result<Symbol> {
         let name = struct_name(node, source).ok_or_else(|| Error::ParseError {
             file: file_path.into(),
             line: node.start_position().row + 1,
             message: "Struct missing name".to_string(),
         })?;
+
+        let fields = extract_struct_fields(node, source)?;
 
         Ok(Symbol {
             name: name.clone(),
@@ -71,7 +77,7 @@ impl CPlugin {
             signature: None,
             return_type: None,
             parameters: vec![],
-            fields: vec![],
+            fields,
             modifiers: vec![],
             documentation: None,
             metadata: serde_json::json!({ "language": "c" }),
@@ -246,6 +252,88 @@ fn function_name_from_node(node: Node, source: &[u8]) -> Option<String> {
     None
 }
 
+/// Walk a function/declaration node's declarator chain to its `parameter_list`.
+fn find_parameter_list(node: Node) -> Option<Node> {
+    let mut current = node.child_by_field_name("declarator")?;
+    const MAX_DEPTH: usize = 512;
+    for _ in 0..MAX_DEPTH {
+        if current.kind() == "function_declarator" {
+            return current.child_by_field_name("parameters");
+        }
+        match current.child_by_field_name("declarator") {
+            Some(inner) => current = inner,
+            None => return None,
+        }
+    }
+    None
+}
+
+/// F3: typed parameters from `parameter_list` / `parameter_declaration`.
+fn extract_parameters(node: Node, source: &[u8]) -> Result<Vec<Parameter>> {
+    let mut parameters = Vec::new();
+    let Some(params_node) = find_parameter_list(node) else {
+        return Ok(parameters);
+    };
+
+    let mut cursor = params_node.walk();
+    for child in params_node.children(&mut cursor) {
+        if child.kind() != "parameter_declaration" {
+            continue;
+        }
+        let param_type = child
+            .child_by_field_name("type")
+            .and_then(|n| n.utf8_text(source).ok().map(str::to_string));
+        let name = child
+            .child_by_field_name("declarator")
+            .and_then(|d| name_from_declarator(d, source));
+        if let Some(name) = name {
+            parameters.push(Parameter {
+                name,
+                param_type,
+                default_value: None,
+            });
+        }
+    }
+    Ok(parameters)
+}
+
+fn extract_struct_fields(struct_node: Node, source: &[u8]) -> Result<Vec<Field>> {
+    let mut fields = Vec::new();
+    let Some(body) = struct_node.child_by_field_name("body") else {
+        return Ok(fields);
+    };
+    if body.kind() != "field_declaration_list" {
+        return Ok(fields);
+    }
+
+    let mut cursor = body.walk();
+    for child in body.children(&mut cursor) {
+        if child.kind() != "field_declaration" {
+            continue;
+        }
+        let field_type = child
+            .child_by_field_name("type")
+            .and_then(|n| n.utf8_text(source).ok().map(str::to_string));
+
+        for i in 0..child.child_count() {
+            if child.field_name_for_child(i as u32) != Some("declarator") {
+                continue;
+            }
+            let Some(declarator) = child.child(i) else {
+                continue;
+            };
+            if let Some(name) = name_from_declarator(declarator, source) {
+                fields.push(Field {
+                    name,
+                    field_type: field_type.clone(),
+                    visibility: None,
+                });
+            }
+        }
+    }
+    Ok(fields)
+}
+
 /// Iterative declarator name parser to avoid deep nested recursion stack frames.
 fn name_from_declarator(root: Node, source: &[u8]) -> Option<String> {
     const MAX_DEPTH: usize = 512;
@@ -257,12 +345,15 @@ fn name_from_declarator(root: Node, source: &[u8]) -> Option<String> {
         }
 
         match node.kind() {
-            "identifier" | "type_identifier" => {
+            "identifier" | "type_identifier" | "field_identifier" => {
                 if let Ok(text) = node.utf8_text(source) {
                     return Some(text.to_string());
                 }
             }
-            "function_declarator" | "pointer_declarator" | "parenthesized_declarator" => {
+            "function_declarator"
+            | "pointer_declarator"
+            | "array_declarator"
+            | "parenthesized_declarator" => {
                 if let Some(inner) = node.child_by_field_name("declarator") {
                     stack.push((inner, depth + 1));
                 } else {
@@ -336,6 +427,51 @@ int add(int a, int b) {
         let symbols = plugin.extract_symbols(Path::new("cart.c"), source).unwrap();
         assert!(symbols.iter().any(|s| s.name == "add"));
         assert!(symbols.iter().any(|s| s.name == "Cart"));
+    }
+
+    #[test]
+    fn test_extract_c_struct_fields() {
+        let source = br#"
+struct Cart {
+    int user_id;
+    char *name;
+};
+"#;
+        let plugin = CPlugin::new().unwrap();
+        let symbols = plugin.extract_symbols(Path::new("cart.c"), source).unwrap();
+        let cart = symbols
+            .iter()
+            .find(|s| s.name == "Cart" && s.symbol_type == SymbolType::Struct)
+            .expect("Cart struct");
+        assert!(
+            cart.fields
+                .iter()
+                .any(|f| f.name == "user_id" && f.field_type.as_deref() == Some("int")),
+            "fields: {:?}",
+            cart.fields
+        );
+        assert!(
+            cart.fields.iter().any(|f| f.name == "name"),
+            "fields: {:?}",
+            cart.fields
+        );
+    }
+
+    #[test]
+    fn test_extract_c_typed_parameters() {
+        let source = br#"
+int add(int a, int b) {
+    return a + b;
+}
+"#;
+        let plugin = CPlugin::new().unwrap();
+        let symbols = plugin.extract_symbols(Path::new("math.c"), source).unwrap();
+        let add = symbols.iter().find(|s| s.name == "add").expect("add");
+        assert_eq!(add.parameters.len(), 2);
+        assert_eq!(add.parameters[0].name, "a");
+        assert_eq!(add.parameters[0].param_type.as_deref(), Some("int"));
+        assert_eq!(add.parameters[1].name, "b");
+        assert_eq!(add.parameters[1].param_type.as_deref(), Some("int"));
     }
 
     #[test]

@@ -2,6 +2,8 @@
 
 #![warn(missing_docs)]
 
+pub mod alias;
+pub mod ast_skeleton;
 pub mod blast_engine_snapshot;
 pub mod blast_radius;
 pub mod blast_radius_scc;
@@ -17,10 +19,14 @@ pub mod community;
 pub mod community_label;
 pub mod community_query;
 pub mod complexity;
+pub mod cpg;
+pub mod cpg_export;
 pub mod dataflow;
 pub mod def_use;
 pub mod dependency;
 pub mod dominance;
+pub mod field_write;
+pub mod field_write_locals;
 pub mod flow_cache;
 pub mod graph_utils;
 pub mod interprocedural_cfg;
@@ -52,6 +58,11 @@ pub mod structural_topology;
 pub mod taint;
 pub mod type_inference;
 
+pub use alias::may_alias_names;
+pub use ast_skeleton::{
+    build_function_skeleton, AstSkeletonArchive, AstSkeletonKind, AstSkeletonNode,
+    AstSkeletonRecord, AST_SKELETON_ARCHIVE_FILE, AST_SKELETON_VERSION,
+};
 pub use blast_engine_snapshot::{try_load_engine, BlastEngineSnapshot, BLAST_SNAPSHOT_FILE};
 pub use blast_radius::{
     resolve_unique_symbol, BlastRadiusAnalyzer, BlastRadiusReport, DataFlowImpact,
@@ -101,10 +112,20 @@ pub use community_query::{
     VIRTUAL_COMMUNITY_VALUE,
 };
 pub use complexity::{classify_complexity, ComplexityAnalyzer, ComplexityLevel, ComplexityReport};
+pub use cpg::{
+    archive_path, cpg_calls, cpg_flows, cpg_function, cpg_mutations, cpg_status, CpgCallEdge,
+    CpgCallsInfo, CpgFlowStep, CpgFlowsArgs, CpgFlowsResult, CpgFunctionInfo, CpgMutationHit,
+    CpgMutationsResult, CpgStatus,
+};
+pub use cpg_export::{export_cpg, CpgExportFormat, CpgExportScope};
 pub use dataflow::{compute_reaching_definitions, Definition, ReachingDefs};
 pub use def_use::{extract_def_use, extract_used_variables};
 pub use dependency::{CircularDependency, DependencyAnalyzer, ImpactResult};
 pub use dominance::{verify_idom_acyclic, DominatorTree};
+pub use field_write::{
+    build_and_save_field_write_index, FieldWrite, FieldWriteIndex, FieldWriteKind, MutationQuery,
+    FIELD_WRITE_INDEX_FILE,
+};
 pub use flow_cache::{CachedAnalysis, CfgPdgCache, FlowCache, NodePdgCache};
 pub use graph_utils::{
     edge_type_set, filter_impact_by_caller_depth, PetGraphView, TraversalConfig,
@@ -133,7 +154,8 @@ pub use migration::{
 };
 pub use node_lookup::NodeLookup;
 pub use pdg::{
-    ControlDependency, DataDepType, DataDependency, PdgNode, PdgNodeId, ProgramDependenceGraph,
+    ControlDependency, DataDepType, DataDependency, PdgBuildOptions, PdgNode, PdgNodeId,
+    ProgramDependenceGraph,
 };
 pub use policy::{check_policies, evaluate_policies, DomainId, PolicyRegistry, PolicyViolation};
 pub use results::{
@@ -177,7 +199,10 @@ pub use semantic_vocab::{
     TokenSpaceAccumulator, VocabAccumulateEmbedder, VOCAB_ACCUMULATE_MODEL_ID,
     VOCAB_NATIVE_DIMENSIONS,
 };
-pub use slicing::{BackwardSlicer, CodeSlice, SliceCriterion};
+pub use slicing::{
+    compute_slice, compute_slice_with_options, BackwardSlicer, CodeSlice, ForwardSlicer,
+    SliceCriterion, SliceDirection, SliceOptions,
+};
 pub use storage::{AnalysisIndexEntry, AnalysisStorage, FunctionAnalysis, FunctionIdSyncEntry};
 pub use structural_topology::StructuralTopology;
 pub use taint::{Sanitizer, TaintAnalyzer, TaintFlow, TaintSink, TaintSource};

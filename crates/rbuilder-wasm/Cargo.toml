@@ -1,6 +1,6 @@
 [package]
 name = "rbuilder-wasm"
-version = "0.4.1"
+version = "0.4.2"
 edition = "2021"
 description = "WASM graph engine for rBuilder dashboard"
 license = "MIT OR Apache-2.0"

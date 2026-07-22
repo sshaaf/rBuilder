@@ -23,7 +23,7 @@ Seeds **Electronics** category with **Wireless Headphones** and **USB-C Hub** on
 
 ## rBuilder
 
-See [summary report](../rbuilder-reports/REPORT.md) · [language report](../rbuilder-reports/languages/rust.md) · [HTML](../rbuilder-reports/languages/rust.html) (2026-07-07).
+See [summary report](../rbuilder-reports/REPORT.md) · [language report](../rbuilder-reports/languages/rust.md) · [HTML](../rbuilder-reports/languages/rust.html) (2026-07-22).
 
 ```bash
 rbuilder -f json discover . --cfg -e target
@@ -34,24 +34,30 @@ rbuilder -f json check --policy-file ../rbuilder-policy.json
 
 | Metric | Value |
 |--------|------:|
-| Files indexed | 51 |
-| Nodes | 195 |
-| Edges | 293 |
-| Discover ms | 118 |
-| Cache MB | 2.08 |
+| Files indexed | 68 |
+| Nodes | 513 |
+| Edges | 1111 |
+| Discover ms | 307 |
+| Cache MB | 1.21 |
 
 | Feature | Status |
 |---------|:------:|
 | discover | ✓ |
 | blast-radius | ✓ |
 | metrics | ✓ |
-| export | ✓ |
+| export | ✗ |
 | check | ✓ |
 | slice / taint | ◐ / ✓ |
 
 ### Top symbols
 
-_No functions with score > 0._
+| Symbol | Score | Callers | Impact |
+|--------|------:|--------:|-------:|
+| `now_iso` | 40.35 | 6 | 7 |
+| `correctness_shared` | 40.15 | 2 | 3 |
+| `find_by_email` | 40.10 | 2 | 2 |
+| `items_for_order` | 40.10 | 2 | 2 |
+| `to_response` | 40.10 | 2 | 2 |
 
 Best deep-analysis reference (CFG/PDG/inspect/taint).
 

@@ -754,7 +754,7 @@ See [cli-io-sanity-qe.md](cli-io-sanity-qe.md) for the full coverage matrix.
 
 ## Related
 
-- [user-guide.md](user-guide.md) — install, coolstore walkthrough, CLI examples
+- [user-guide.md](user-guide.md) — install, ecommerce-java walkthrough (CoolStore dual API), CLI examples
 - [cli-output-schemas.md](cli-output-schemas.md) — exhaustive field tables per command
 - [http-api.md](http-api.md) — `rbuilder serve` and `/api/query`
 - [cli-io-sanity-qe.md](cli-io-sanity-qe.md) — subprocess JSON contract and release perf gates

@@ -369,6 +369,7 @@ mod tests {
             to: n2,
             variable: "tmp".into(),
             dep_type: DataDepType::Flow,
+            loop_carried: false,
         });
         pdg
     }

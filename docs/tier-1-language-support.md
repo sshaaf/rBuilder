@@ -2,9 +2,9 @@
 
 This document defines what **fully supported** means for a programming language in rBuilder, and the concrete steps to add or promote a language to that level.
 
-**Audience:** contributors adding a new Tier 1 language or bringing Rust / Python / C / C# / etc. to parity with Java and Go.
+**Audience:** contributors adding a new Tier 1 language or bringing a language to parity with the current bar (Java-shaped Layer F + Layers A–E).
 
-**Related docs:** [Code_structure.md](Code_structure.md) (crate layout), [dashboard-design.md](dashboard-design.md) (dashboard bundle), [cli-getting-started.md](cli-getting-started.md) (discover / serve workflow).
+**Related docs:** [Code_structure.md](Code_structure.md) (crate layout), [dashboard-design.md](dashboard-design.md) (dashboard bundle), [cli-getting-started.md](cli-getting-started.md) (discover / serve workflow), [hybrid-cpg-plan.md](design/hybrid-cpg-plan.md) (CPG).
 
 ---
 
@@ -12,15 +12,17 @@ This document defines what **fully supported** means for a programming language 
 
 rBuilder uses a **hybrid tiering** model:
 
-| Tier | Handler | Crate pattern | Indexing | CFG / PDG / taint | Call graph |
-|------|---------|---------------|----------|-------------------|------------|
-| **Tier 1** | `custom` — dedicated `LanguagePlugin` | `rbuilder-lang-{id}/` | Rich symbols + relations | **Required** for “fully supported” | **Required** (`Calls` at minimum) |
-| **Tier 2** | Generic tree-sitter | `rbuilder-lang-{id}/` + `config.rs` | Kinds from `LanguageConfig` | Optional | Usually none |
-| **Tier 3** | Regex | `rbuilder-lang-{id}/` + regex patterns | Pattern-based symbols | No | No |
+| Tier | Handler | Crate pattern | Indexing | CFG / PDG / taint | Call graph | Hybrid CPG (Layer F) |
+|------|---------|---------------|----------|-------------------|------------|----------------------|
+| **Tier 1** | `custom` — dedicated `LanguagePlugin` | `rbuilder-lang-{id}/` | Rich symbols + relations | **Required** | **Required** (`Calls` at minimum) | **Required** — same bar as Java |
+| **Tier 2** | Generic tree-sitter | `rbuilder-lang-{id}/` + `config.rs` | Kinds from `LanguageConfig` | Optional | Usually none | Not required |
+| **Tier 3** | Regex | `rbuilder-lang-{id}/` + regex patterns | Pattern-based symbols | No | No | No |
 
-**Tier 1 custom plugins today (indexing):** Rust, Python, TypeScript, JavaScript, Go, Java, C# — see `languages.toml` (`handler = "custom"`).
+**Tier 1 custom plugins today:** Rust, Python, TypeScript, JavaScript, Go, Java, C#, C, C++ — see `languages.toml` (`handler = "custom"`).
 
-**Fully supported (analysis parity)** is a **subset** of Tier 1: languages that pass the [capability checklist](#2-capability-checklist--fully-supported) below. Today that bar is met most completely by **Java** and **Go**; Rust and Python have CFG + taint but shallower taint / fewer golden tests.
+**Fully supported** means the language passes **all** of [Layers A–F](#2-capability-checklist--fully-supported) with automated tests. Layer F (hybrid CPG: fields, constructors, typed params, field-write mutations) is **not optional** for Tier 1 — Java is the reference implementation, not a special case.
+
+Honesty limits still apply (no full points-to, no reflection, dynamic languages may emit more `Unresolved` receivers) — but plugins must ship the same *shapes* and golden mutation fixture as Java.
 
 ---
 
@@ -85,6 +87,36 @@ A language is **fully supported** when all rows are ✅ and backed by automated 
 | E5 | Dashboard golden gate: `discover --with-cfg --with-security --with-taint` + bundle assertions | e.g. `tests/dashboard_ecommerce_go.rs` + `tests/dashboard_harness.rs` |
 | E6 | `cargo test` + `cargo clippy` clean for touched crates | CI |
 
+### Layer F — CPG readiness (hybrid CPG) — **required for Tier 1**
+
+Required for high-quality `cpg mutations` / typed field writes. Reference: Java (`rbuilder-lang-java`) + `field_write` golden tests. See [hybrid-cpg-plan.md](design/hybrid-cpg-plan.md).
+
+| # | Requirement | Where | Acceptance |
+|---|-------------|--------|------------|
+| F1 | Type symbols populate **`fields[]`** (name + best-effort type string) | `extract_symbols()` | Plugin unit test lists ≥1 field with type when the grammar has types |
+| F2 | **Constructors** (or language equivalent) extracted as functions; detectable as ctor | Plugin metadata | `metadata.is_constructor: true` **and** qualified name ending in `.<init>` or `::<init>` (Java/C#/TS/JS/Python/`New*` Go / Rust `new` / C++ same-name ctor). Languages without ctors (C): document limit; golden test may mark an init helper as ctor in the graph node |
+| F3 | Methods expose **typed parameters** when the grammar has them | `parameters[].param_type` | Plugin unit test; dynamic langs may leave `None` but still extract names |
+| F4 | CFG/`def_use`: **field-access LHS** recorded as member write (`obj.field`; `->` normalized to `.`) | `def_use.rs` + lang kinds | Covered by shared field-access kinds + lang decl kinds (`lexical_declaration`, etc.) |
+| F5 | Best-effort local/param types for CFG functions | `field_write_locals.rs` | `merge_local_types("{id}", …)` recovers formals + typed locals (or copy-assign inference for JS) |
+| F6 | Golden mutation fixture: type `T` with field write outside ctor → `cpg mutations` / index query hits it with `--exclude-ctors` | `field_write::tests::{id}_cfg_captures_field_write_and_query` | Exactly one non-ctor hit for the typed write |
+| F7 | Document resolution limits (no reflection, no full inference) | This doc + hybrid plan | Honesty note in PR / language section |
+
+**Graph extract** must **materialize** `Symbol.fields` as `Variable` nodes under the owning type (`Contains`) — empty `fields` on the symbol is not enough (`rbuilder-extraction` graph builder).
+
+**Non-negotiable:** a new Tier 1 language that skips Layer F is **not mergeable** as Tier 1. Ship it as Tier 2 until F1–F6 land.
+
+#### Layer F language notes (honesty)
+
+| Language | Ctor convention | Type strength |
+|----------|-----------------|---------------|
+| Java / C# | Real constructors → `Type.<init>` | Strong |
+| C++ | Name == enclosing class → `Type::<init>` | Strong |
+| Go | `NewT` returning `T`/`*T` → `T.<init>` (heuristic) | Strong on structs |
+| Rust | `fn new` in impl → `Type::<init>` | Strong on structs |
+| TypeScript / JavaScript | `constructor` method → class `.<init>` | TS strong; JS weak (params may be untyped; graph param types / copy inference help) |
+| Python | `__init__` → `Class.<init>`; harvest `self.x` fields | Annotations when present |
+| C | No language ctors; struct fields + typed params required | Strong on structs |
+
 ---
 
 ## 3. Repository layout
@@ -105,6 +137,8 @@ crates/
       language_profile.rs               # CFG/taint gating registry
       cfg_builder.rs                    # Per-language CFG visitors
       def_use.rs                        # Per-language def/use AST cases
+      field_write.rs                    # Mutation index (Layer F)
+      field_write_locals.rs             # Per-language local/param type recovery (F5)
       taint.rs                          # Per-language taint patterns
   rbuilder-languages/                   # Wire register() into default binary
 tests/
@@ -308,7 +342,7 @@ Many languages exist as **generic tree-sitter** plugins (`TreeSitterLanguagePlug
 1. Replace generic plugin with **custom** `plugin.rs` (copy from Go/Java).
 2. Change `languages.toml` `handler` from `"tree_sitter"` to `"custom"`.
 3. Implement `extract_relations` (at least `Calls`).
-4. Complete [Layer B–E](#layer-b--analysis-profile-cfg-pipeline) checklist.
+4. Complete [Layers B–F](#2-capability-checklist--fully-supported) checklist (**including Layer F**).
 5. Keep `config.rs` only if scripts still generate it; otherwise delete to avoid dual sources of truth.
 
 **Do not** add CFG support only in `cfg_builder.rs` without a `language_profile` entry — `discover` will skip the language.
@@ -322,9 +356,11 @@ Many languages exist as **generic tree-sitter** plugins (`TreeSitterLanguagePlug
 | Parse language X in `rbuilder-graph` or `discover_impl.rs` | Belongs in `rbuilder-lang-*` + `rbuilder-analysis` |
 | Hardcode `.ext` lists in CLI | Use `language_profile` / `languages.toml` |
 | Tier 1 plugin without `Calls` relations | Blast radius and call graph stay empty |
+| Tier 1 without Layer F (fields / ctors / mutation golden) | `cpg mutations` is Java-only quality; **not** Tier 1 |
 | CFG enabled without tests | Dashboard shows blocks but regressions go unnoticed |
 | Duplicate grammar only in plugin crate | `rbuilder-analysis` needs its own `tree-sitter-*` dep for CFG |
 | Skip `rbuilder-languages` registration | Language won’t ship in default `rbuilder` binary |
+| Full type checker inside the plugin | Out of scope — bound resolution only (decl / param / field) |
 
 ---
 
@@ -337,7 +373,10 @@ Copy into your PR description:
 - [ ] Workspace `Cargo.toml` + bundle registration
 - [ ] `language_profile.rs` entry (`cfg_enabled`, `taint_enabled`, grammar)
 - [ ] `cfg_builder.rs` + tests for control-flow constructs
-- [ ] `def_use.rs` cases for declarations/assignments
+- [ ] `def_use.rs` cases for declarations/assignments **including field-access LHS**
+- [ ] **Layer F:** `fields[]`, `is_constructor` + `.<init>`/`::<init>`, typed params
+- [ ] **Layer F:** `merge_local_types` arm in `field_write_locals.rs` (or documented N/A)
+- [ ] **Layer F:** golden `{id}_cfg_captures_field_write_and_query` in `field_write` tests
 - [ ] `taint.rs` `detect_{id}_patterns`
 - [ ] `extract_relations` emits `Calls` (and inheritance if applicable)
 - [ ] Integration test + dashboard gate (or documented fixture path)
@@ -348,18 +387,18 @@ Copy into your PR description:
 
 ## 8. Current parity snapshot (2026-07)
 
-| Language | Tier | Calls | CFG | Taint | Dashboard gate |
-|----------|------|-------|-----|-------|----------------|
-| Java | 1 custom | ✅ + Extends/Implements | ✅ | ✅ rich | gbuilder golden |
-| Go | 1 custom | ✅ | ✅ deep | ✅ rich | `dashboard_ecommerce_go` |
-| C# | 1 custom | ✅ | ✅ | ✅ | `dashboard_ecommerce_csharp` |
-| C | 1 custom | ✅ | ✅ | ✅ | `dashboard_ecommerce_c` |
-| C++ | 1 custom | ✅ | ✅ | ✅ | `dashboard_ecommerce_cpp` |
-| Python | 1 custom | ✅ | ✅ | ✅ richest | `dashboard_ecommerce_python` |
-| Rust | 1 custom | ✅ | ✅ | ✅ rich | `dashboard_ecommerce_rust` |
-| JS / TS | 1 custom | ✅ | ✅ | ✅ rich | `dashboard_ecommerce_javascript`, `dashboard_ecommerce_typescript` |
+| Language | Tier | Calls | CFG | Taint | Dashboard gate | Layer F (CPG mutations) |
+|----------|------|-------|-----|-------|----------------|-------------------------|
+| Java | 1 custom | ✅ + Extends/Implements | ✅ | ✅ rich | gbuilder golden | ✅ F1–F6 |
+| Go | 1 custom | ✅ | ✅ deep | ✅ rich | `dashboard_ecommerce_go` | ✅ F1–F6 |
+| C# | 1 custom | ✅ | ✅ | ✅ | `dashboard_ecommerce_csharp` | ✅ F1–F6 |
+| C | 1 custom | ✅ | ✅ | ✅ | `dashboard_ecommerce_c` | ✅ F1/F3–F6 (no native ctors) |
+| C++ | 1 custom | ✅ | ✅ | ✅ | `dashboard_ecommerce_cpp` | ✅ F1–F6 |
+| Python | 1 custom | ✅ | ✅ | ✅ richest | `dashboard_ecommerce_python` | ✅ F1–F6 |
+| Rust | 1 custom | ✅ | ✅ | ✅ rich | `dashboard_ecommerce_rust` | ✅ F1–F6 |
+| JS / TS | 1 custom | ✅ | ✅ | ✅ rich | `dashboard_ecommerce_javascript`, `dashboard_ecommerce_typescript` | ✅ F1–F6 (JS weaker types) |
 
-Use this table to prioritize gaps; updating it when a language completes Layer E is encouraged.
+Layer F golden coverage lives in `crates/rbuilder-analysis/src/field_write.rs` (`*_cfg_captures_field_write_and_query`). Update this table when promoting a language or when F tests regress.
 
 ---
 

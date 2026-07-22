@@ -49,6 +49,15 @@ impl RustPlugin {
             }
         }
 
+        // Prefer explicit return type field when present
+        if let Some(rt) = node
+            .child_by_field_name("return_type")
+            .and_then(|n| n.utf8_text(source).ok())
+            .map(|s| s.trim_start_matches("->").trim().to_string())
+        {
+            return_type = Some(rt);
+        }
+
         // Look for doc comments
         if let Some(prev_sibling) = node.prev_sibling() {
             if prev_sibling.kind() == "line_comment" {
@@ -65,16 +74,33 @@ impl RustPlugin {
             }
         }
 
-        let name = name.ok_or_else(|| Error::ParseError {
+        let raw_name = name.ok_or_else(|| Error::ParseError {
             file: file_path.into(),
             line: node.start_position().row + 1,
             message: "Function missing name".to_string(),
         })?;
 
+        let impl_type = self.find_containing_impl_type(node, source);
+        let is_constructor = raw_name == "new" && impl_type.is_some();
+        let (qualified_name, metadata) = if is_constructor {
+            let ty = impl_type.clone().unwrap_or_else(|| "Unknown".to_string());
+            (
+                Some(format!("{ty}::<init>")),
+                serde_json::json!({ "language": "rust", "is_constructor": true }),
+            )
+        } else if let Some(ty) = impl_type {
+            (
+                Some(format!("{ty}::{raw_name}")),
+                serde_json::json!({ "language": "rust" }),
+            )
+        } else {
+            (None, serde_json::json!({ "language": "rust" }))
+        };
+
         Ok(Symbol {
-            name: name.clone(),
+            name: raw_name,
             symbol_type: SymbolType::Function,
-            qualified_name: None, // Will be set by module path resolution
+            qualified_name,
             location: SourceLocation {
                 file: file_path.to_string(),
                 start_line: node.start_position().row + 1,
@@ -95,8 +121,31 @@ impl RustPlugin {
             fields: vec![],
             modifiers,
             documentation,
-            metadata: serde_json::json!({}),
+            metadata,
         })
+    }
+
+    fn find_containing_impl_type(&self, node: Node, source: &[u8]) -> Option<String> {
+        let mut current = node;
+        while let Some(parent) = current.parent() {
+            if parent.kind() == "impl_item" {
+                if let Some(ty) = parent
+                    .child_by_field_name("type")
+                    .and_then(|n| n.utf8_text(source).ok())
+                    .map(str::to_string)
+                {
+                    return Some(ty);
+                }
+                let mut cursor = parent.walk();
+                for child in parent.children(&mut cursor) {
+                    if child.kind() == "type_identifier" {
+                        return child.utf8_text(source).ok().map(str::to_string);
+                    }
+                }
+            }
+            current = parent;
+        }
+        None
     }
 
     /// Extract function parameters
@@ -107,7 +156,10 @@ impl RustPlugin {
         for child in params_node.children(&mut cursor) {
             if child.kind() == "parameter" {
                 let mut name = None;
-                let mut param_type = None;
+                let mut param_type = child
+                    .child_by_field_name("type")
+                    .and_then(|n| n.utf8_text(source).ok())
+                    .map(str::to_string);
                 let mut param_cursor = child.walk();
 
                 for param_child in child.children(&mut param_cursor) {
@@ -115,10 +167,23 @@ impl RustPlugin {
                         "identifier" => {
                             name = Some(param_child.utf8_text(source)?.to_string());
                         }
-                        _ if param_child.kind().contains("type") => {
+                        "self" | "mutable_self" => {
+                            name = Some(param_child.utf8_text(source)?.to_string());
+                        }
+                        _ if param_type.is_none() && param_child.kind().contains("type") => {
                             param_type = Some(param_child.utf8_text(source)?.to_string());
                         }
                         _ => {}
+                    }
+                }
+
+                // Pattern field may wrap the identifier (e.g. `mut name`)
+                if name.is_none() {
+                    if let Some(pattern) = child.child_by_field_name("pattern") {
+                        name = pattern
+                            .utf8_text(source)
+                            .ok()
+                            .map(|s| s.trim_start_matches("mut ").trim().to_string());
                     }
                 }
 
@@ -129,6 +194,12 @@ impl RustPlugin {
                         default_value: None, // Rust doesn't have default params
                     });
                 }
+            } else if child.kind() == "self_parameter" {
+                parameters.push(Parameter {
+                    name: child.utf8_text(source)?.to_string(),
+                    param_type: None,
+                    default_value: None,
+                });
             }
         }
 
@@ -214,11 +285,18 @@ impl RustPlugin {
                         "visibility_modifier" => {
                             visibility = Some(field_child.utf8_text(source)?.to_string());
                         }
-                        _ if field_child.kind().contains("type") => {
+                        _ if field_type.is_none() && field_child.kind().contains("type") => {
                             field_type = Some(field_child.utf8_text(source)?.to_string());
                         }
                         _ => {}
                     }
+                }
+
+                if field_type.is_none() {
+                    field_type = child
+                        .child_by_field_name("type")
+                        .and_then(|n| n.utf8_text(source).ok())
+                        .map(str::to_string);
                 }
 
                 if let Some(name) = name {
@@ -563,6 +641,52 @@ mod tests {
         assert_eq!(symbols[0].fields.len(), 2);
         assert_eq!(symbols[0].fields[0].name, "name");
         assert_eq!(symbols[0].fields[1].name, "age");
+    }
+
+    #[test]
+    fn test_extract_struct_fields_and_new_constructor() {
+        let source = br#"
+pub struct User {
+    pub name: String,
+    age: u32,
+}
+
+impl User {
+    pub fn new(name: String, age: u32) -> Self {
+        Self { name, age }
+    }
+}
+"#;
+        let plugin = RustPlugin::new().unwrap();
+        let symbols = plugin
+            .extract_symbols(Path::new("user.rs"), source)
+            .unwrap();
+        let st = symbols
+            .iter()
+            .find(|s| s.name == "User" && s.symbol_type == SymbolType::Struct)
+            .expect("struct");
+        assert_eq!(st.fields.len(), 2);
+        assert_eq!(st.fields[0].field_type.as_deref(), Some("String"));
+        assert_eq!(st.fields[1].field_type.as_deref(), Some("u32"));
+        let ctor = symbols
+            .iter()
+            .find(|s| {
+                s.symbol_type == SymbolType::Function
+                    && s.metadata
+                        .get("is_constructor")
+                        .and_then(|v| v.as_bool())
+                        == Some(true)
+            })
+            .expect("constructor");
+        assert_eq!(ctor.name, "new");
+        assert_eq!(ctor.qualified_name.as_deref(), Some("User::<init>"));
+        assert!(ctor.parameters.iter().any(|p| {
+            p.name == "name" && p.param_type.as_deref() == Some("String")
+        }));
+        assert!(ctor
+            .parameters
+            .iter()
+            .any(|p| p.name == "age" && p.param_type.as_deref() == Some("u32")));
     }
 
     #[test]

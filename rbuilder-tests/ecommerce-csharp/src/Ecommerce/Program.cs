@@ -1,4 +1,5 @@
 using System.Text;
+using Ecommerce.Coolstore.Services;
 using Ecommerce.Data;
 using Ecommerce.Exceptions;
 using Ecommerce.Repositories;
@@ -41,6 +42,13 @@ builder.Services.AddScoped<CartService>();
 builder.Services.AddScoped<OrderService>();
 builder.Services.AddScoped<ReviewService>();
 builder.Services.AddScoped<InventoryService>();
+
+// CoolStore dual-API (/services/*) — in-memory catalog, carts, orders
+builder.Services.AddSingleton<CoolstoreProductService>();
+builder.Services.AddSingleton<PromoService>();
+builder.Services.AddSingleton<ShippingService>();
+builder.Services.AddSingleton<CoolstoreOrderService>();
+builder.Services.AddSingleton<ShoppingCartService>();
 
 var jwtSettings = builder.Configuration.GetSection(JwtSettings.SectionName).Get<JwtSettings>()
     ?? throw new InvalidOperationException("JWT settings are not configured.");

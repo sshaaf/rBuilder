@@ -275,7 +275,53 @@ impl GraphBuilder {
         self.commit_node(node);
         self.add_edge(id, file_id, EdgeType::DefinedIn);
         self.add_edge(file_id, id, EdgeType::Contains);
+        self.add_field_members(id, symbol, file_id);
         id
+    }
+
+    /// Materialize `Symbol.fields` as Variable nodes contained by the owning type.
+    ///
+    /// Enables hybrid CPG member queries without waiting for per-language Variable
+    /// symbols. Idempotent via `symbol_index` keys (`Owner.field` FQN).
+    fn add_field_members(&mut self, owner_id: Uuid, symbol: &Symbol, file_id: Uuid) {
+        if symbol.fields.is_empty() {
+            return;
+        }
+        let owner_qn = symbol
+            .qualified_name
+            .clone()
+            .unwrap_or_else(|| symbol.name.clone());
+        for field in &symbol.fields {
+            let field_qn = format!("{owner_qn}.{}", field.name);
+            let key = symbol_key(
+                &symbol.location.file,
+                &field.name,
+                Some(field_qn.as_str()),
+            );
+            if self.symbol_index.contains_key(&key) {
+                continue;
+            }
+            let mut node = Node::new(NodeType::Variable, field.name.clone())
+                .with_file_path(symbol.location.file.clone())
+                .with_location(symbol.location.start_line, symbol.location.end_line)
+                .with_qualified_name(field_qn.clone())
+                .with_label("field".to_string())
+                .with_property("member_of".to_string(), symbol.name.clone())
+                .with_property("owner_qualified_name".to_string(), owner_qn.clone());
+            if let Some(ty) = &field.field_type {
+                node = node.with_property("field_type".to_string(), ty.clone());
+            }
+            if let Some(vis) = &field.visibility {
+                node = node.with_property("visibility".to_string(), vis.clone());
+            }
+            let field_id = node.id;
+            self.symbol_index.insert(key.clone(), field_id);
+            self.index_symbol_resolution(&key, &node);
+            self.commit_node(node);
+            self.add_edge(field_id, file_id, EdgeType::DefinedIn);
+            self.add_edge(file_id, field_id, EdgeType::Contains);
+            self.add_edge(owner_id, field_id, EdgeType::Contains);
+        }
     }
 
     /// Attach complexity metrics to an existing symbol node.
@@ -865,6 +911,44 @@ mod tests {
 
         assert_eq!(builder.node_count(), 2);
         assert_eq!(builder.edge_count(), 2);
+    }
+
+    #[test]
+    fn test_add_symbol_materializes_fields() {
+        let mut builder = GraphBuilder::new();
+        let file_id = builder.ensure_file_node(Path::new("OrderDTO.java"));
+        let mut symbol = sample_symbol();
+        symbol.name = "OrderDTO".to_string();
+        symbol.symbol_type = SymbolType::Class;
+        symbol.location.file = "OrderDTO.java".to_string();
+        symbol.fields = vec![rbuilder_plugin_api::Field {
+            name: "status".to_string(),
+            field_type: Some("String".to_string()),
+            visibility: Some("private".to_string()),
+        }];
+        builder.add_symbol(&symbol, file_id);
+
+        let field = builder
+            .nodes()
+            .iter()
+            .find(|n| n.name == "status" && n.node_type == NodeType::Variable)
+            .expect("field variable node");
+        assert_eq!(
+            field.properties.get("member_of").map(String::as_str),
+            Some("OrderDTO")
+        );
+        assert_eq!(
+            field.properties.get("field_type").map(String::as_str),
+            Some("String")
+        );
+        let owner = builder
+            .nodes()
+            .iter()
+            .find(|n| n.name == "OrderDTO")
+            .unwrap();
+        assert!(builder.edges.iter().any(|e| {
+            e.from == owner.id && e.to == field.id && e.edge_type == EdgeType::Contains
+        }));
     }
 
     #[test]

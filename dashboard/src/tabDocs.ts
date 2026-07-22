@@ -75,7 +75,7 @@ export const TAB_DOCS: Record<TabId, TabDocContent> = {
     title: "CFG / PDG analysis",
     goal: "Inspect how code executes inside a single function — branches, loops, and control flow.",
     description:
-      "The control-flow graph (CFG) shows blocks and branches: what can run after what. This view requires `discover --cfg` or `discover --all` so CFG data is exported into the dashboard bundle.",
+      "The control-flow graph (CFG) shows blocks and branches: what can run after what. This view requires `discover --with-cfg` so CFG data is exported into the dashboard bundle.",
     benefits: [
       "Compiler-minded debugging without leaving the repo toolchain",
       "Foundation for slice, taint, and dataflow features",
@@ -89,16 +89,18 @@ export const TAB_DOCS: Record<TabId, TabDocContent> = {
   },
   dataflow: {
     title: "Dataflow",
-    goal: "See data and control dependencies between statements inside a function.",
+    goal: "See data and control dependencies between statements inside a function, and browse typed field mutations (CPG).",
     description:
-      "The program dependence graph (PDG) connects statements through data and control edges. Filter by variable to highlight def-use paths relevant to a specific name. Requires CFG/PDG export from discover.",
+      "The program dependence graph (PDG) connects statements through data and control edges. The Field mutations panel lists typed writes from `mutations_index.json` (built with discover --with-cfg). Click a hit to open that function and highlight the write line. Filter by variable to highlight def-use paths. Requires CFG/PDG export from discover.",
     benefits: [
       "Trace how values flow between statements",
+      "Find non-constructor field writes by type (record / DTO safety)",
       "Narrow large graphs with a variable filter",
       "Complement slicing with a visual dependency map",
     ],
     usage: [
-      "Pick a function from the sidebar list.",
+      "Filter mutations by type (e.g. ShoppingCart) and click a hit to jump.",
+      "Or pick a function from the sidebar list.",
       "Choose Data Flow (CFG + PDG) or Dominator Tree from the view dropdown.",
       "Optionally filter by variable; toggle control deps and CFG edges.",
     ],
@@ -107,7 +109,7 @@ export const TAB_DOCS: Record<TabId, TabDocContent> = {
     title: "Taint analysis",
     goal: "Find flows where untrusted input (sources) may reach dangerous operations (sinks).",
     description:
-      "Taint analysis tracks data from sources such as request parameters or files to sinks such as SQL, shell, or HTML output. Flows may be sanitized on the path; vulnerable flows lack an effective sanitizer. Produced when you run `discover --cfg` or `--all`.",
+      "Taint analysis tracks data from sources such as request parameters or files to sinks such as SQL, shell, or HTML output. Flows may be sanitized on the path; vulnerable flows lack an effective sanitizer. Produced when you run `discover --with-cfg --with-taint`.",
     benefits: [
       "Security review without manual path tracing on every endpoint",
       "Per-function flow lists with severity context",
@@ -121,16 +123,16 @@ export const TAB_DOCS: Record<TabId, TabDocContent> = {
   },
   guide: {
     title: "Query guide (GQL)",
-    goal: "Reproduce every dashboard tab from the CLI — discover, GQL, inspect, slice, blast-radius, and migration export.",
+    goal: "Reproduce every dashboard tab from the CLI — discover, GQL, inspect, cpg, slice, blast-radius, and migration export.",
     description:
-      "The Query Guide tab lists CLI command sequences that mirror each dashboard view: graph exploration, function inventory, CFG/PDG, dataflow, slicing, blast radius, taint, and migration planning. Use it when you prefer terminals, CI, or agents over the browser UI.",
+      "The Query Guide tab lists CLI command sequences that mirror each dashboard view: graph exploration, semantic search, function inventory, CFG/PDG, dataflow (including CPG mutations), slicing, blast radius, taint, and migration planning. Use it when you prefer terminals, CI, or agents over the browser UI.",
     benefits: [
       "One place for tab → CLI mapping",
       "Copy-paste workflows with prerequisites per analysis depth",
       "JSON (-f json) examples for automation",
     ],
     usage: [
-      "Start with Prerequisites (discover / discover --all).",
+      "Start with Prerequisites (prefer discover --with-cfg --with-dashboard; there is no --all).",
       "Open the section for the dashboard tab you are replacing.",
       "Substitute your symbol names and file paths from GQL or the Functions table.",
       "Add -f json and pipe to jq for scripts and CI gates.",

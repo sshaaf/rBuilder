@@ -114,6 +114,28 @@ PROJECTS: list[ProjectConfig] = [
         slice_file="src/services/orderService.js",
         notes="Mirror of TypeScript graph without types.",
     ),
+    ProjectConfig(
+        id="c",
+        dir_name="ecommerce-c",
+        language="C",
+        exclude="build,cmake-build-debug,.rbuilder",
+        blast_symbol="src/coolstore/services/shopping_cart_service.c::price_shopping_cart",
+        slice_file="src/coolstore/services/shopping_cart_service.c",
+        slice_function="price_shopping_cart",
+        slice_variable="cart",
+        notes="C fixture with CoolStore /services cart pricing mutations.",
+    ),
+    ProjectConfig(
+        id="cpp",
+        dir_name="ecommerce-cpp",
+        language="C++",
+        exclude="build,cmake-build-debug,.rbuilder",
+        blast_symbol="src/coolstore/services/shopping_cart_service.cpp::priceShoppingCart",
+        slice_file="src/coolstore/services/shopping_cart_service.cpp",
+        slice_function="priceShoppingCart",
+        slice_variable="cart",
+        notes="C++ fixture with CoolStore /services cart pricing mutations.",
+    ),
 ]
 
 FEATURE_ROWS: list[tuple[str, str]] = [

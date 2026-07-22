@@ -1,4 +1,5 @@
 mod config;
+mod coolstore;
 mod correctness;
 mod db;
 mod dto;
@@ -28,7 +29,11 @@ async fn main() -> error::AppResult<()> {
     db::migrate(&pool).await?;
     seed_demo(&pool).await?;
 
-    let state = state::AppState { pool, config: config.clone() };
+    let state = state::AppState {
+        pool,
+        config: config.clone(),
+        coolstore: coolstore::CoolstoreState::new(),
+    };
     let app = routes::router().layer(CorsLayer::permissive()).with_state(state);
 
     let addr: SocketAddr = config.bind_addr.parse().expect("invalid BIND_ADDR");

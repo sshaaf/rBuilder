@@ -48,6 +48,15 @@ flowchart TB
 
 PDG is built after CFG dominator analysis (`crates/rbuilder-analysis/src/pdg.rs`).
 
+### Opt-in fidelity (hybrid CPG P3)
+
+| Flag / option | Effect |
+|---------------|--------|
+| `discover --with-dfg-loops` | Sets `PdgBuildOptions::classify_loop_carried` — tags `DataDependency.loop_carried` when the use block can reach the def block on the CFG (loop-carried) |
+| `cpg flows --with-alias` | On-demand may-alias expansion (`alias::may_alias_names`) for copies + field bases; does not rewrite the PDG archive |
+
+Default `discover --with-cfg` leaves `loop_carried = false` on all edges.
+
 ---
 
 ## 3. Dashboard dataflow mode

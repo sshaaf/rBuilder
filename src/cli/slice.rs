@@ -5,12 +5,11 @@ use super::context::{language_from_path, CliContext};
 use super::slice_output::{
     cfg_topology_json, pdg_topology_json, taint_slice_json, text_slice_json,
 };
-use crate::analysis::pdg::PdgNodeId;
 use crate::analysis::{
-    build_cfg_for_function, BackwardSlicer, ProgramDependenceGraph, SliceCriterion, TaintAnalyzer,
+    build_cfg_for_function, BackwardSlicer, ForwardSlicer, ProgramDependenceGraph, SliceCriterion,
+    TaintAnalyzer,
 };
 use anyhow::{bail, Context, Result};
-use std::collections::{HashSet, VecDeque};
 use std::fs;
 use std::path::PathBuf;
 
@@ -77,7 +76,7 @@ pub fn run(ctx: &CliContext, args: SliceArgs) -> Result<()> {
 
     let slice = match args.direction {
         SliceDirection::Backward => BackwardSlicer::new(&pdg, &cfg).slice(criterion.clone())?,
-        SliceDirection::Forward => forward_slice(&pdg, &cfg, &criterion)?,
+        SliceDirection::Forward => ForwardSlicer::new(&pdg, &cfg).slice(criterion.clone())?,
     };
 
     match args.view {
@@ -138,55 +137,6 @@ fn resolve_slice_path(ctx: &CliContext, file: &str) -> Result<PathBuf> {
         "source file not found: {file} (also tried {})",
         under_repo.display()
     );
-}
-
-fn forward_slice(
-    pdg: &ProgramDependenceGraph,
-    cfg: &crate::analysis::ControlFlowGraph,
-    criterion: &SliceCriterion,
-) -> Result<crate::analysis::CodeSlice> {
-    let criterion_node = pdg
-        .nodes
-        .values()
-        .find(|n| {
-            n.statement.line == criterion.line
-                && (n.used_vars.contains(&criterion.variable)
-                    || n.defined_vars.contains(&criterion.variable))
-        })
-        .map(|n| n.id)
-        .ok_or_else(|| anyhow::anyhow!("criterion not found in PDG"))?;
-
-    let mut slice = HashSet::<PdgNodeId>::new();
-    let mut work = VecDeque::from([criterion_node]);
-    while let Some(id) = work.pop_front() {
-        if !slice.insert(id) {
-            continue;
-        }
-        for dep in pdg.data_deps.iter().filter(|d| d.from == id) {
-            work.push_back(dep.to);
-        }
-        for ctrl in pdg.control_deps.iter().filter(|c| c.controller == id) {
-            work.push_back(ctrl.dependent);
-        }
-    }
-
-    let lines: HashSet<usize> = slice
-        .iter()
-        .filter_map(|id| pdg.nodes.get(id).map(|n| n.statement.line))
-        .collect();
-    let total_lines = cfg
-        .blocks
-        .values()
-        .map(|b| b.statements.len())
-        .sum::<usize>()
-        .max(1);
-    let line_count = lines.len();
-    Ok(crate::analysis::CodeSlice {
-        criterion: criterion.clone(),
-        statements: slice,
-        lines,
-        reduction_percent: 100.0 * (1.0 - (line_count as f64 / total_lines as f64)),
-    })
 }
 
 fn render_slice_text(

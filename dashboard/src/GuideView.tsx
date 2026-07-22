@@ -13,9 +13,11 @@ export function GuideView() {
   return (
     <div class="guide-view p-4 overflow-auto">
       <p class="text-muted mb-4">
-        Each dashboard tab has a CLI workflow below. Run commands from your repository root after{" "}
-        <code>discover</code>. Replace example symbols (<code>ShoppingCartService</code>, paths) with
-        names from your project. Use <code>-r "$REPO"</code> when not in the repo directory.
+        Each dashboard tab has a CLI workflow below. Examples use{" "}
+        <code>rbuilder-tests/ecommerce-java</code> (JWT <code>/api/*</code> + CoolStore{" "}
+        <code>/services/*</code>). Run from your repository root after <code>discover</code>. Swap
+        symbols such as <code>priceShoppingCart</code> / <code>CartService::clearCart</code> for
+        your project. Use <code>-r "$REPO"</code> when not in the repo directory.
       </p>
 
       <section class="mb-4">

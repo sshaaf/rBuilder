@@ -18,6 +18,22 @@ impl JavaScriptPlugin {
         Ok(Self)
     }
 
+    fn find_containing_class_name(&self, node: Node, source: &[u8]) -> Option<String> {
+        let mut current = node;
+        while let Some(parent) = current.parent() {
+            if parent.kind() == "class_declaration" {
+                let mut cursor = parent.walk();
+                for child in parent.children(&mut cursor) {
+                    if child.kind() == "identifier" {
+                        return child.utf8_text(source).ok().map(str::to_string);
+                    }
+                }
+            }
+            current = parent;
+        }
+        None
+    }
+
     fn extract_function(&self, node: Node, source: &[u8], file_path: &str) -> Result<Symbol> {
         let mut cursor = node.walk();
         let mut name = None;
@@ -37,7 +53,7 @@ impl JavaScriptPlugin {
             }
         }
 
-        let name = name.unwrap_or_else(|| "anonymous".to_string());
+        let raw_name = name.unwrap_or_else(|| "anonymous".to_string());
 
         // Infer types for parameters
         let function_source = node.utf8_text(source).unwrap_or("");
@@ -53,10 +69,31 @@ impl JavaScriptPlugin {
             }
         }
 
+        let is_constructor = raw_name == "constructor" && node.kind() == "method_definition";
+        let class_name = if is_constructor {
+            self.find_containing_class_name(node, source)
+        } else {
+            None
+        };
+        let (name, qualified_name, metadata) = if is_constructor {
+            let class_name = class_name.unwrap_or_else(|| "anonymous".to_string());
+            (
+                class_name.clone(),
+                Some(format!("{class_name}.<init>")),
+                serde_json::json!({ "language": "javascript", "is_constructor": true }),
+            )
+        } else {
+            (
+                raw_name,
+                None,
+                serde_json::json!({ "language": "javascript" }),
+            )
+        };
+
         Ok(Symbol {
-            name: name.clone(),
+            name,
             symbol_type: SymbolType::Function,
-            qualified_name: None,
+            qualified_name,
             location: SourceLocation {
                 file: file_path.to_string(),
                 start_line: node.start_position().row + 1,
@@ -77,7 +114,7 @@ impl JavaScriptPlugin {
             fields: vec![],
             modifiers: vec![],
             documentation: None,
-            metadata: serde_json::json!({}),
+            metadata,
         })
     }
 
@@ -121,11 +158,19 @@ impl JavaScriptPlugin {
     fn extract_class(&self, node: Node, source: &[u8], file_path: &str) -> Result<Symbol> {
         let mut cursor = node.walk();
         let mut name = None;
+        let mut fields = Vec::new();
 
         for child in node.children(&mut cursor) {
-            if child.kind() == "identifier" {
-                name = Some(child.utf8_text(source)?.to_string());
-                break;
+            match child.kind() {
+                "identifier" => {
+                    if name.is_none() {
+                        name = Some(child.utf8_text(source)?.to_string());
+                    }
+                }
+                "class_body" => {
+                    fields = self.extract_class_fields(child, source)?;
+                }
+                _ => {}
             }
         }
 
@@ -145,11 +190,105 @@ impl JavaScriptPlugin {
             signature: None,
             return_type: None,
             parameters: vec![],
-            fields: vec![],
+            fields,
             modifiers: vec![],
             documentation: None,
-            metadata: serde_json::json!({}),
+            metadata: serde_json::json!({ "language": "javascript" }),
         })
+    }
+
+    fn extract_class_fields(&self, class_body: Node, source: &[u8]) -> Result<Vec<Field>> {
+        let mut fields = Vec::new();
+        let mut seen = std::collections::HashSet::new();
+        let mut cursor = class_body.walk();
+
+        for child in class_body.children(&mut cursor) {
+            match child.kind() {
+                "field_definition" | "public_field_definition" => {
+                    let name = child
+                        .child_by_field_name("property")
+                        .and_then(|n| n.utf8_text(source).ok().map(str::to_string))
+                        .or_else(|| {
+                            let mut c = child.walk();
+                            for n in child.children(&mut c) {
+                                if n.kind() == "property_identifier" {
+                                    return n.utf8_text(source).ok().map(str::to_string);
+                                }
+                            }
+                            None
+                        });
+                    if let Some(name) = name {
+                        if seen.insert(name.clone()) {
+                            fields.push(Field {
+                                name,
+                                field_type: None,
+                                visibility: None,
+                            });
+                        }
+                    }
+                }
+                "method_definition" => {
+                    let method_name = child
+                        .child_by_field_name("name")
+                        .and_then(|n| n.utf8_text(source).ok().map(str::to_string))
+                        .or_else(|| {
+                            let mut c = child.walk();
+                            for n in child.children(&mut c) {
+                                if matches!(n.kind(), "property_identifier" | "identifier") {
+                                    return n.utf8_text(source).ok().map(str::to_string);
+                                }
+                            }
+                            None
+                        });
+                    if method_name.as_deref() == Some("constructor") {
+                        self.collect_this_assignments(child, source, &mut fields, &mut seen)?;
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        Ok(fields)
+    }
+
+    fn collect_this_assignments(
+        &self,
+        node: Node,
+        source: &[u8],
+        fields: &mut Vec<Field>,
+        seen: &mut std::collections::HashSet<String>,
+    ) -> Result<()> {
+        if node.kind() == "assignment_expression" {
+            if let Some(left) = node.child_by_field_name("left") {
+                if left.kind() == "member_expression" {
+                    let object = left.child_by_field_name("object");
+                    let property = left.child_by_field_name("property");
+                    let is_this = object
+                        .and_then(|o| o.utf8_text(source).ok())
+                        .is_some_and(|t| t == "this");
+                    if is_this {
+                        if let Some(name) = property
+                            .and_then(|p| p.utf8_text(source).ok())
+                            .map(str::to_string)
+                        {
+                            if seen.insert(name.clone()) {
+                                fields.push(Field {
+                                    name,
+                                    field_type: None,
+                                    visibility: None,
+                                });
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        let mut cursor = node.walk();
+        for child in node.children(&mut cursor) {
+            self.collect_this_assignments(child, source, fields, seen)?;
+        }
+        Ok(())
     }
 
     fn calculate_cyclomatic(&self, node: Node) -> usize {
@@ -457,6 +596,42 @@ mod tests {
         assert!(!symbols.is_empty());
         assert_eq!(symbols[0].name, "User");
         assert_eq!(symbols[0].symbol_type, SymbolType::Class);
+    }
+
+    #[test]
+    fn test_extract_fields_and_constructor() {
+        let source = br#"
+class User {
+  role = "user";
+  constructor(name) {
+    this.name = name;
+  }
+}
+"#;
+        let plugin = JavaScriptPlugin::new().unwrap();
+        let symbols = plugin
+            .extract_symbols(Path::new("User.js"), source)
+            .unwrap();
+        let class = symbols
+            .iter()
+            .find(|s| s.name == "User" && s.symbol_type == SymbolType::Class)
+            .expect("class");
+        assert!(class.fields.iter().any(|f| f.name == "role"));
+        assert!(class.fields.iter().any(|f| f.name == "name"));
+        let ctor = symbols
+            .iter()
+            .find(|s| {
+                s.symbol_type == SymbolType::Function
+                    && s.metadata
+                        .get("is_constructor")
+                        .and_then(|v| v.as_bool())
+                        == Some(true)
+            })
+            .expect("constructor");
+        assert_eq!(ctor.name, "User");
+        assert_eq!(ctor.qualified_name.as_deref(), Some("User.<init>"));
+        assert_eq!(ctor.parameters.len(), 1);
+        assert_eq!(ctor.parameters[0].name, "name");
     }
 
     #[test]

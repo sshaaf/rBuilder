@@ -5,6 +5,7 @@ import categoryRoutes from './categories';
 import healthRoutes from './health';
 import orderRoutes from './orders';
 import productRoutes from './products';
+import coolstoreRoutes from '../coolstore/routes';
 
 const router = Router();
 
@@ -14,5 +15,6 @@ router.use('/api/categories', categoryRoutes);
 router.use('/api/products', productRoutes);
 router.use('/api/cart', cartRoutes);
 router.use('/api/orders', orderRoutes);
+router.use(coolstoreRoutes);
 
 export default router;

@@ -22,6 +22,7 @@ impl GoPlugin {
         let mut name = None;
         let mut parameters = Vec::new();
         let mut return_type = None;
+        let mut saw_param_list = false;
 
         for child in node.children(&mut cursor) {
             match child.kind() {
@@ -30,14 +31,31 @@ impl GoPlugin {
                         name = Some(child.utf8_text(source)?.to_string());
                     }
                 }
-                "parameter_list" => {
-                    parameters = self.extract_parameters(child, source)?;
+                "field_identifier" => {
+                    // method_declaration name
+                    if name.is_none() {
+                        name = Some(child.utf8_text(source)?.to_string());
+                    }
                 }
-                "type_identifier" => {
+                "parameter_list" => {
+                    // method_declaration: first list is receiver; second is params
+                    if node.kind() == "method_declaration" && !saw_param_list {
+                        saw_param_list = true;
+                        continue;
+                    }
+                    parameters = self.extract_parameters(child, source)?;
+                    saw_param_list = true;
+                }
+                "type_identifier" | "pointer_type" | "slice_type" | "qualified_type" => {
                     return_type = Some(child.utf8_text(source)?.to_string());
                 }
                 _ => {}
             }
+        }
+
+        // Prefer result field when present (may wrap pointer_type / type_identifier)
+        if let Some(result) = node.child_by_field_name("result") {
+            return_type = Some(result.utf8_text(source)?.to_string());
         }
 
         let name = name.ok_or_else(|| Error::ParseError {
@@ -46,10 +64,20 @@ impl GoPlugin {
             message: "Function missing name".to_string(),
         })?;
 
+        let (qualified_name, metadata) =
+            if let Some(type_name) = self.constructor_type_name(&name, return_type.as_deref()) {
+                (
+                    Some(format!("{type_name}.<init>")),
+                    serde_json::json!({ "language": "go", "is_constructor": true }),
+                )
+            } else {
+                (None, serde_json::json!({ "language": "go" }))
+            };
+
         Ok(Symbol {
             name: name.clone(),
             symbol_type: SymbolType::Function,
-            qualified_name: None,
+            qualified_name,
             location: SourceLocation {
                 file: file_path.to_string(),
                 start_line: node.start_position().row + 1,
@@ -70,8 +98,20 @@ impl GoPlugin {
             fields: vec![],
             modifiers: vec![],
             documentation: None,
-            metadata: serde_json::json!({}),
+            metadata,
         })
+    }
+
+    /// `NewXxx` returning `Xxx` or `*Xxx` → treat as constructor for `Xxx`.
+    fn constructor_type_name(&self, name: &str, return_type: Option<&str>) -> Option<String> {
+        let type_name = name.strip_prefix("New").filter(|s| !s.is_empty())?;
+        let rt = return_type?.trim();
+        let bare = rt.trim_start_matches('*').trim();
+        if bare == type_name {
+            Some(type_name.to_string())
+        } else {
+            None
+        }
     }
 
     fn extract_parameters(&self, params_node: Node, source: &[u8]) -> Result<Vec<Parameter>> {
@@ -80,27 +120,38 @@ impl GoPlugin {
 
         for child in params_node.children(&mut cursor) {
             if child.kind() == "parameter_declaration" {
+                let mut names = Vec::new();
+                let mut param_type = child
+                    .child_by_field_name("type")
+                    .and_then(|n| n.utf8_text(source).ok())
+                    .map(str::to_string);
                 let mut param_cursor = child.walk();
-                let mut name = None;
-                let mut param_type = None;
 
                 for param_child in child.children(&mut param_cursor) {
                     match param_child.kind() {
                         "identifier" => {
-                            name = Some(param_child.utf8_text(source)?.to_string());
+                            names.push(param_child.utf8_text(source)?.to_string());
                         }
-                        "type_identifier" | "pointer_type" | "slice_type" => {
-                            param_type = Some(param_child.utf8_text(source)?.to_string());
+                        "type_identifier" | "pointer_type" | "slice_type" | "qualified_type"
+                        | "map_type" | "channel_type" | "function_type" | "array_type" => {
+                            if param_type.is_none() {
+                                param_type = Some(param_child.utf8_text(source)?.to_string());
+                            }
                         }
                         _ => {}
                     }
                 }
 
-                if let Some(name) = name {
+                // Go allows `func Foo(a, b int)` — one type shared by multiple names
+                if names.is_empty() {
+                    // unnamed parameter (rare in decls) — skip
+                    continue;
+                }
+                for name in names {
                     parameters.push(Parameter {
                         name,
-                        param_type,
-                        default_value: None, // Go doesn't have default parameters
+                        param_type: param_type.clone(),
+                        default_value: None,
                     });
                 }
             }
@@ -522,6 +573,66 @@ mod tests {
         assert_eq!(symbols[0].name, "Add");
         assert_eq!(symbols[0].symbol_type, SymbolType::Function);
         assert_eq!(symbols[0].parameters.len(), 2);
+    }
+
+    #[test]
+    fn test_extract_struct_fields_typed_params_and_new_ctor() {
+        let source = br#"
+package demo
+
+type User struct {
+	Name string
+	Age  int
+}
+
+func NewUser(name string, age int) *User {
+	return &User{Name: name, Age: age}
+}
+
+func Sum(a, b int) int {
+	return a + b
+}
+"#;
+        let plugin = GoPlugin::new().unwrap();
+        let symbols = plugin
+            .extract_symbols(Path::new("user.go"), source)
+            .unwrap();
+        let st = symbols
+            .iter()
+            .find(|s| s.name == "User" && s.symbol_type == SymbolType::Struct)
+            .expect("struct");
+        assert!(st.fields.iter().any(|f| f.name == "Name"));
+        assert!(st.fields.iter().any(|f| f.name == "Age"));
+        assert_eq!(
+            st.fields
+                .iter()
+                .find(|f| f.name == "Name")
+                .and_then(|f| f.field_type.as_deref()),
+            Some("string")
+        );
+
+        let sum = symbols.iter().find(|s| s.name == "Sum").expect("Sum");
+        assert_eq!(sum.parameters.len(), 2);
+        assert_eq!(sum.parameters[0].name, "a");
+        assert_eq!(sum.parameters[1].name, "b");
+        assert_eq!(sum.parameters[0].param_type.as_deref(), Some("int"));
+        assert_eq!(sum.parameters[1].param_type.as_deref(), Some("int"));
+
+        let ctor = symbols
+            .iter()
+            .find(|s| {
+                s.symbol_type == SymbolType::Function
+                    && s.metadata
+                        .get("is_constructor")
+                        .and_then(|v| v.as_bool())
+                        == Some(true)
+            })
+            .expect("constructor");
+        assert_eq!(ctor.name, "NewUser");
+        assert_eq!(ctor.qualified_name.as_deref(), Some("User.<init>"));
+        assert_eq!(ctor.parameters.len(), 2);
+        assert_eq!(ctor.parameters[0].param_type.as_deref(), Some("string"));
+        assert_eq!(ctor.parameters[1].param_type.as_deref(), Some("int"));
     }
 
     #[test]

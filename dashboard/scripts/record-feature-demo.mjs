@@ -1,9 +1,9 @@
 /**
- * Record an rBuilder dashboard feature montage — aligned with the User Guide.
+ * Record an rBuilder dashboard feature montage — one beat per main tab.
  *
- * No on-page caption overlay (same idea as the CLI VHS tape). Captions are
- * burned later from docs/videos/rbuilder-feature-demo.srt via
- * docs/videos/burn-feature-demo-captions.sh.
+ * Timing: prepare each tab, then hold a fixed showcase window. SRT cues use
+ * wall-clock timestamps from those showcase windows (no equal-slot guessing).
+ * Encode stays near 1× so captions stay aligned.
  *
  * Prereq (ecommerce-java fixture recommended):
  *   rbuilder -r rbuilder-tests/ecommerce-java discover . -l java -e target \
@@ -32,10 +32,12 @@ const OUT_DIR = path.join(ROOT, "docs/videos");
 const RAW_WEBM = path.join(OUT_DIR, "rbuilder-feature-demo.raw.webm");
 const OUT_NO_CAPTIONS = path.join(OUT_DIR, "rbuilder-feature-demo-no-captions.mp4");
 const OUT_SRT = path.join(OUT_DIR, "rbuilder-feature-demo.srt");
-const SEC_PER_FEATURE = Number(process.env.DEMO_SEC_PER_FEATURE ?? "5");
-const HOLD_MS = Math.round(SEC_PER_FEATURE * 1000);
 
-/** Defaults match rbuilder-tests/ecommerce-java + user-guide walkthrough. */
+/** Showcase hold per tab (after prep). Override with DEMO_HOLD_SEC. */
+const HOLD_MS = Math.round(Number(process.env.DEMO_HOLD_SEC ?? "6.5") * 1000);
+/** Cap total speedup so captions stay readable (1 = never speed up). */
+const MAX_SPEEDUP = Number(process.env.DEMO_MAX_SPEEDUP ?? "1");
+
 const FN = process.env.CAPTURE_FN_DATAFLOW ?? "checkout";
 const FN_BLAST = process.env.CAPTURE_FN_BLAST ?? "clearCart";
 const FN_TAINT = process.env.CAPTURE_FN_TAINT ?? "checkout";
@@ -44,106 +46,91 @@ const FN_SLICE = process.env.CAPTURE_FN_SLICE ?? "addItem";
 const SEMANTIC_QUERY = process.env.CAPTURE_SEMANTIC_QUERY ?? "shopping cart checkout";
 const SLICE_LINE = process.env.CAPTURE_SLICE_LINE ?? "53";
 const SLICE_VAR = process.env.CAPTURE_SLICE_VAR ?? "item";
+const MUTATIONS_TYPE = process.env.MUTATIONS_TYPE ?? "ShoppingCart";
 
 /**
- * One segment per feature (order matches README / user-guide).
- * `caption` / `body` feed the SRT (not drawn in the page).
+ * One segment per primary tab (Dataflow / Query Guide combine their features).
+ * `caption` / `body` → SRT during the showcase hold only.
  */
-const FEATURE_SEGMENTS = [
+const TAB_SEGMENTS = [
   {
-    key: "discover",
+    key: "overview",
     tab: null,
     panel: ".rb-stats-row",
-    caption: "discover",
-    body: "Graph snapshot & index metrics",
+    caption: "Overview",
+    body: "Discover metrics · graph snapshot ready",
   },
   {
-    key: "gql",
+    key: "graph",
     tab: "Graph Visualization",
     panel: ".graph-panel.h-100",
-    caption: "gql",
-    body: "Package call graph — exact structure for agents",
+    caption: "Graph",
+    body: "Package call graph (GQL structure)",
   },
   {
-    key: "semantic-search",
+    key: "search",
     tab: "Search",
     panel: ".search-view",
-    caption: "semantic search",
-    body: "Vocab / code-daemon index · Hamming + late fusion",
+    caption: "Search",
+    body: "Semantic query · vocab Hamming + fusion",
   },
   {
-    key: "graph-metrics",
+    key: "functions",
     tab: "Functions",
     panel: ".functions-view, .functions-table",
-    caption: "metrics",
+    caption: "Functions",
     body: "PageRank · betweenness · blast hotspots",
   },
   {
     key: "cfg",
     tab: "CFG / PDG Analysis",
     panel: ".cfg-detail, .cfg-graph-panel",
-    caption: "inspect cfg",
-    body: "Control-flow blocks & dominators",
+    caption: "CFG",
+    body: "Control-flow blocks & edges",
   },
   {
-    key: "pdg",
+    key: "dataflow",
     tab: "Dataflow",
-    panel: ".dataflow-graph-panel",
-    caption: "inspect pdg",
-    body: "Data & control dependencies",
+    panel: ".dataflow-view",
+    caption: "Dataflow",
+    body: "CPG field mutations · PDG · dominator tree",
   },
   {
-    key: "dominance",
-    tab: "Dataflow",
-    panel: ".dataflow-graph-panel",
-    caption: "inspect dom",
-    body: "Dominator tree & frontiers",
-  },
-  {
-    key: "program-slicing",
+    key: "slice",
     tab: "Program Slicing",
     panel: ".slice-view",
-    caption: "slice",
-    body: "Backward slice — criterion & highlighted lines",
+    caption: "Slice",
+    body: "Backward slice · criterion & highlights",
   },
   {
-    key: "blast-radius",
+    key: "blast",
     tab: "Blast Radius",
     panel: ".blast-view",
-    caption: "blast-radius",
-    body: "Upstream impact score & caller table",
+    caption: "Blast radius",
+    body: "Upstream impact score & callers",
   },
   {
     key: "taint",
     tab: "Taint Analysis",
     panel: ".taint-view",
-    caption: "taint",
+    caption: "Taint",
     body: "Source → sink flows",
   },
   {
     key: "migration",
     tab: "Migration",
     panel: ".migration-view, .migration-tuning",
-    caption: "migration",
-    body: "Package roadmap · presets & dual ordering",
+    caption: "Migration",
+    body: "Package roadmap · presets & ordering",
   },
   {
-    key: "ci-policy",
+    key: "guide",
     tab: "Query Guide",
     panel: ".guide-view",
-    caption: "check",
-    body: "CI policy · blast-radius gates",
-  },
-  {
-    key: "export",
-    tab: "Query Guide",
-    panel: ".guide-view",
-    caption: "export",
-    body: "GraphML · Mermaid · JSON subgraphs",
+    caption: "Query Guide",
+    body: "CLI cookbook · check & export recipes",
   },
 ];
-
-const TARGET_SECS = FEATURE_SEGMENTS.length * SEC_PER_FEATURE;
 
 fs.mkdirSync(OUT_DIR, { recursive: true });
 
@@ -157,22 +144,22 @@ function resolveFfmpeg() {
   return "ffmpeg";
 }
 
-function writeSrt(outPath, segments, secPer) {
+function formatSrtTime(sec) {
+  const h = Math.floor(sec / 3600);
+  const m = Math.floor((sec % 3600) / 60);
+  const s = Math.floor(sec % 60);
+  const ms = Math.min(999, Math.round((sec - Math.floor(sec)) * 1000));
+  return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")},${String(ms).padStart(3, "0")}`;
+}
+
+/** @param {{ caption: string, body: string, startSec: number, endSec: number }[]} cues */
+function writeSrt(outPath, cues) {
   const lines = [];
-  const ts = (sec) => {
-    const h = Math.floor(sec / 3600);
-    const m = Math.floor((sec % 3600) / 60);
-    const s = Math.floor(sec % 60);
-    const ms = Math.round((sec - Math.floor(sec)) * 1000);
-    return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")},${String(ms).padStart(3, "0")}`;
-  };
-  segments.forEach((seg, i) => {
-    const start = i * secPer;
-    const end = (i + 1) * secPer;
+  cues.forEach((cue, i) => {
     lines.push(String(i + 1));
-    lines.push(`${ts(start)} --> ${ts(end)}`);
-    lines.push(seg.caption);
-    lines.push(seg.body);
+    lines.push(`${formatSrtTime(cue.startSec)} --> ${formatSrtTime(cue.endSec)}`);
+    lines.push(cue.caption);
+    lines.push(cue.body);
     lines.push("");
   });
   fs.writeFileSync(outPath, lines.join("\n"));
@@ -182,14 +169,14 @@ async function clickTab(page, label) {
   const tab = page.locator(".rb-main-tabs").getByRole("button", { name: label, exact: true });
   await tab.scrollIntoViewIfNeeded();
   await tab.click();
-  await sleep(350);
+  await sleep(400);
 }
 
 async function selectFunction(page, name) {
   const search = page.locator('.function-list-sidebar input[type="search"]');
   if (await search.count()) {
     await search.fill("");
-    await sleep(120);
+    await sleep(100);
     await search.fill(name);
     await sleep(400);
   }
@@ -198,13 +185,13 @@ async function selectFunction(page, name) {
   });
   if ((await item.count()) > 0) {
     await item.first().click();
-    await sleep(450);
+    await sleep(500);
     return;
   }
   const fallback = page.locator(".function-list-item").first();
   if (await fallback.count()) {
     await fallback.click();
-    await sleep(450);
+    await sleep(500);
   }
 }
 
@@ -219,7 +206,7 @@ async function waitWasm(page) {
     },
     { timeout: 90000 },
   );
-  await sleep(1200);
+  await sleep(1000);
 }
 
 async function waitForBlastResults(page) {
@@ -231,7 +218,7 @@ async function waitForBlastResults(page) {
     },
     { timeout: 25000 },
   );
-  await sleep(400);
+  await sleep(350);
 }
 
 async function clearHighlights(page) {
@@ -246,12 +233,7 @@ async function clearHighlights(page) {
   });
 }
 
-/** Highlight active tab button + main panel for HOLD_MS (no caption overlay). */
-async function focusTabAndPanel(page, tabLabel, panelSelector) {
-  if (tabLabel) {
-    await clickTab(page, tabLabel);
-  }
-
+async function highlightTabAndPanel(page, tabLabel, panelSelector) {
   await page.evaluate(
     ({ tabLabel, panelSelector }) => {
       const styleHighlight = (el) => {
@@ -270,9 +252,7 @@ async function focusTabAndPanel(page, tabLabel, panelSelector) {
       if (tabLabel) {
         for (const btn of document.querySelectorAll(".rb-main-tabs .nav-link")) {
           const label = btn.querySelector("span")?.textContent?.trim() ?? btn.textContent?.trim();
-          if (label === tabLabel) {
-            styleHighlight(btn);
-          }
+          if (label === tabLabel) styleHighlight(btn);
         }
       }
 
@@ -293,15 +273,64 @@ async function focusTabAndPanel(page, tabLabel, panelSelector) {
     },
     { tabLabel, panelSelector },
   );
+}
 
-  await sleep(HOLD_MS);
+/**
+ * Dataflow tab tour: mutations → PDG → dominator, with short dwells so each
+ * feature is visible inside the single tab segment.
+ */
+async function prepareDataflowTour(page) {
+  const typeInput = page.getByTestId("mutations-type-input");
+  await typeInput.waitFor({ state: "visible", timeout: 15000 });
+  await typeInput.fill("");
+  await typeInput.fill(MUTATIONS_TYPE);
+  await sleep(300);
+  const exclude = page.getByTestId("mutations-exclude-ctors");
+  if ((await exclude.count()) && !(await exclude.isChecked())) {
+    await exclude.check();
+  }
+  await page.getByTestId("mutations-table").waitFor({ state: "visible", timeout: 12000 });
+  await page.getByTestId("mutations-row").first().click();
+  await page
+    .locator(".dataflow-graph-panel, .dataflow-source-panel")
+    .first()
+    .waitFor({ state: "visible", timeout: 20000 })
+    .catch(() => {});
+  await sleep(800);
+
+  // Brief focus on mutations panel, then PDG graph, then dominator.
+  await highlightTabAndPanel(page, "Dataflow", "[data-testid='mutations-panel'], .mutations-panel");
+  await sleep(1800);
   await clearHighlights(page);
+
+  const dfView = page.locator("#df-view");
+  if (await dfView.count()) {
+    await dfView.selectOption("dataflow");
+    await sleep(400);
+  }
+  await highlightTabAndPanel(page, "Dataflow", ".dataflow-graph-panel");
+  await sleep(1800);
+  await clearHighlights(page);
+
+  if (await dfView.count()) {
+    await dfView.selectOption("dominator");
+    await sleep(700);
+  }
+  await highlightTabAndPanel(page, "Dataflow", ".dataflow-graph-panel");
+  await sleep(1400);
+  await clearHighlights(page);
+
+  // Leave on dataflow + mutations context for the final showcase hold.
+  if (await dfView.count()) {
+    await dfView.selectOption("dataflow");
+    await sleep(400);
+  }
 }
 
 async function prepareSegment(page, key) {
   try {
     switch (key) {
-      case "graph-metrics": {
+      case "functions": {
         const prBtn = page.getByRole("button", { name: /Sort by PR/i });
         if (await prBtn.count()) await prBtn.click();
         await sleep(300);
@@ -312,28 +341,14 @@ async function prepareSegment(page, key) {
         const loadCfg = page.getByRole("button", { name: /Load CFG graph/i });
         if (await loadCfg.count()) await loadCfg.click();
         await page.locator(".cfg-detail").first().waitFor({ state: "visible", timeout: 25000 }).catch(() => {});
-        await sleep(600);
-        break;
-      }
-      case "pdg": {
-        await selectFunction(page, FN);
-        const dfView = page.locator("#df-view");
-        if (await dfView.count()) {
-          await dfView.selectOption("dataflow");
-          await page.locator(".dataflow-graph-panel").waitFor({ state: "visible", timeout: 20000 }).catch(() => {});
-        }
         await sleep(500);
         break;
       }
-      case "dominance": {
-        const dfView = page.locator("#df-view");
-        if (await dfView.count()) {
-          await dfView.selectOption("dominator");
-          await sleep(700);
-        }
+      case "dataflow": {
+        await prepareDataflowTour(page);
         break;
       }
-      case "program-slicing": {
+      case "slice": {
         await selectFunction(page, FN_SLICE);
         await page.locator("#slice-line").fill(String(SLICE_LINE));
         await page.locator("#slice-var").fill(SLICE_VAR);
@@ -342,16 +357,20 @@ async function prepareSegment(page, key) {
         await sleep(400);
         break;
       }
-      case "blast-radius": {
-        await waitWasm(page);
+      case "blast": {
         await selectFunction(page, FN_BLAST);
         await waitForBlastResults(page);
         break;
       }
       case "taint": {
         await selectFunction(page, FN_TAINT);
-        await page.locator(".taint-view table tbody tr").first().waitFor({ state: "visible", timeout: 15000 }).catch(() => {});
-        await page.locator(".taint-view table tbody tr").first().click().catch(() => {});
+        const row = page.locator(".taint-view table tbody tr").first();
+        try {
+          await row.waitFor({ state: "visible", timeout: 5000 });
+          await row.click();
+        } catch {
+          // No taint rows — still show the empty tab.
+        }
         await sleep(350);
         break;
       }
@@ -360,7 +379,7 @@ async function prepareSegment(page, key) {
         await sleep(400);
         break;
       }
-      case "semantic-search": {
+      case "search": {
         const input = page.locator('.search-view input[type="search"]');
         await input.waitFor({ state: "visible", timeout: 15000 });
         if (await input.isEnabled()) {
@@ -371,16 +390,22 @@ async function prepareSegment(page, key) {
         }
         break;
       }
-      case "ci-policy": {
-        const section = page.locator(".guide-view section", { hasText: "Blast radius" });
-        if (await section.count()) await section.first().scrollIntoViewIfNeeded();
-        await sleep(300);
-        break;
-      }
-      case "export": {
-        const section = page.locator(".guide-view section", { hasText: "Graph visualization" });
-        if (await section.count()) await section.first().scrollIntoViewIfNeeded();
-        await sleep(300);
+      case "guide": {
+        const blastSection = page.locator(".guide-view section", { hasText: "Blast radius" });
+        if (await blastSection.count()) {
+          await blastSection.first().scrollIntoViewIfNeeded();
+          await sleep(700);
+        }
+        const graphSection = page.locator(".guide-view section", { hasText: "Graph visualization" });
+        if (await graphSection.count()) {
+          await graphSection.first().scrollIntoViewIfNeeded();
+          await sleep(700);
+        }
+        const dataflowSection = page.locator(".guide-view section", { hasText: "Dataflow" });
+        if (await dataflowSection.count()) {
+          await dataflowSection.first().scrollIntoViewIfNeeded();
+          await sleep(500);
+        }
         break;
       }
       default:
@@ -397,19 +422,45 @@ const context = await browser.newContext({
   recordVideo: { dir: OUT_DIR, size: { width: 1280, height: 720 } },
 });
 const page = await context.newPage();
+// Align wall clock with Playwright's video timeline (starts at context creation).
+const recordingStartedAt = Date.now();
 
 await page.goto(BASE, { waitUntil: "networkidle", timeout: 120000 });
 await waitWasm(page);
 
-for (const segment of FEATURE_SEGMENTS) {
+/** @type {{ caption: string, body: string, startSec: number, endSec: number, key: string }[]} */
+const cues = [];
+
+for (const segment of TAB_SEGMENTS) {
   if (segment.tab) {
     await clickTab(page, segment.tab);
   }
+
+  // Dataflow: caption covers the in-tab feature tour (mutations → PDG → dom).
+  const captionFromPrep = segment.key === "dataflow";
+  const startSec = captionFromPrep
+    ? (Date.now() - recordingStartedAt) / 1000
+    : null;
+
   await prepareSegment(page, segment.key);
-  await focusTabAndPanel(page, segment.tab, segment.panel);
+
+  const holdStart = startSec ?? (Date.now() - recordingStartedAt) / 1000;
+  await highlightTabAndPanel(page, segment.tab, segment.panel);
+  await sleep(HOLD_MS);
+  await clearHighlights(page);
+  const endSec = (Date.now() - recordingStartedAt) / 1000;
+
+  cues.push({
+    key: segment.key,
+    caption: segment.caption,
+    body: segment.body,
+    startSec: holdStart,
+    endSec,
+  });
 }
 
 await clearHighlights(page);
+await sleep(400);
 
 const video = page.video();
 await context.close();
@@ -420,8 +471,6 @@ if (!video) throw new Error("Playwright did not return a video handle");
 const saved = await video.path();
 fs.renameSync(saved, RAW_WEBM);
 
-writeSrt(OUT_SRT, FEATURE_SEGMENTS, SEC_PER_FEATURE);
-
 const ffmpegBin = resolveFfmpeg();
 const probe = spawnSync(
   "ffprobe",
@@ -430,12 +479,36 @@ const probe = spawnSync(
 );
 const rawDur = parseFloat(probe.stdout.trim() || "0");
 
+// Align cue times to actual media duration (Playwright start lag).
+const lastCueEnd = cues.length ? cues[cues.length - 1].endSec : rawDur;
+const clockSpan = Math.max(lastCueEnd, 0.001);
+const mediaScale = rawDur > 0 ? rawDur / clockSpan : 1;
+const scaledCues = cues.map((c) => ({
+  ...c,
+  startSec: Math.max(0, c.startSec * mediaScale),
+  endSec: Math.min(rawDur || c.endSec * mediaScale, c.endSec * mediaScale),
+}));
+
+let speedup = 1;
+if (rawDur > 0 && MAX_SPEEDUP > 1) {
+  // Only tiny speedup allowed — prefer longer accurate video over misaligned captions.
+  const ideal = TAB_SEGMENTS.length * (HOLD_MS / 1000) * 1.35;
+  if (rawDur > ideal * 1.4) {
+    speedup = Math.min(MAX_SPEEDUP, rawDur / ideal);
+  }
+}
+
+const timedCues = scaledCues.map((c) => ({
+  caption: c.caption,
+  body: c.body,
+  startSec: c.startSec / speedup,
+  endSec: c.endSec / speedup,
+}));
+writeSrt(OUT_SRT, timedCues);
+
 let vf = "fps=30,scale=1280:720:flags=lanczos";
-let encodeMode = "native";
-if (rawDur > TARGET_SECS + 1) {
-  const factor = rawDur / TARGET_SECS;
-  vf = `setpts=PTS/${factor},fps=30,scale=1280:720:flags=lanczos`;
-  encodeMode = `speedup_${factor.toFixed(2)}x`;
+if (speedup > 1.001) {
+  vf = `setpts=PTS/${speedup},fps=30,scale=1280:720:flags=lanczos`;
 }
 
 const ffArgs = [
@@ -455,8 +528,8 @@ const ffArgs = [
   "-movflags",
   "+faststart",
 ];
-if (rawDur > TARGET_SECS + 1) {
-  ffArgs.push("-t", String(TARGET_SECS));
+if (speedup > 1.001) {
+  ffArgs.push("-t", String(rawDur / speedup));
 }
 
 const ff = spawnSync(ffmpegBin, [...ffArgs, OUT_NO_CAPTIONS], { encoding: "utf8" });
@@ -479,10 +552,14 @@ console.log(
       srt: OUT_SRT,
       raw_duration_s: rawDur,
       final_duration_s: parseFloat(finalProbe.stdout.trim() || "0"),
-      sec_per_feature: SEC_PER_FEATURE,
-      target_secs: TARGET_SECS,
-      encode_mode: encodeMode,
-      features: FEATURE_SEGMENTS.map((s) => s.key),
+      hold_ms: HOLD_MS,
+      speedup,
+      tabs: TAB_SEGMENTS.map((s) => s.key),
+      cue_windows_s: timedCues.map((c) => ({
+        caption: c.caption,
+        start: Number(c.startSec.toFixed(2)),
+        end: Number(c.endSec.toFixed(2)),
+      })),
       next: "./docs/videos/burn-feature-demo-captions.sh",
     },
     null,

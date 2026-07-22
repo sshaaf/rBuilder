@@ -81,7 +81,8 @@ Screenshot placeholders (capture with `dashboard/scripts/capture-migration-scree
 ### Dataflow
 
 - PDG visualization and statement list; dominator tree mode.
-- **CLI:** `inspect <symbol> pdg`, `slice ... --view pdg`
+- **Field mutations (CPG):** type filter (e.g. `ShoppingCart`), exclude constructors, click a hit to open that function and highlight the write line. Backed by `mutations_index.json` from `field_write.index.bin` (`discover --with-cfg --with-dashboard`).
+- **CLI:** `inspect <symbol> pdg`, `cpg mutations --type ShoppingCart --exclude-ctors`, `slice ... --view pdg`
 
 ### Slice
 

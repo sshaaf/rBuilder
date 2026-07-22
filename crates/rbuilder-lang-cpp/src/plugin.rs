@@ -42,7 +42,25 @@ impl CppPlugin {
             return Ok(None);
         };
 
-        let qualified_name = scope.map(|s| format!("{s}::{name}"));
+        // Skip destructors for constructor detection (`~Foo`).
+        let is_destructor = name.starts_with('~');
+        let is_constructor = !is_destructor
+            && scope.is_some_and(|s| s == name)
+            && !name.is_empty();
+
+        let parameters = extract_parameters(node, source)?;
+
+        let qualified_name = if is_constructor {
+            scope.map(|s| format!("{s}::<init>"))
+        } else {
+            scope.map(|s| format!("{s}::{name}"))
+        };
+
+        let metadata = if is_constructor {
+            serde_json::json!({ "language": "cpp", "is_constructor": true })
+        } else {
+            serde_json::json!({ "language": "cpp" })
+        };
 
         Ok(Some(Symbol {
             name: name.clone(),
@@ -51,11 +69,11 @@ impl CppPlugin {
             location: source_location(node, file_path),
             signature: Some(first_line(node, source)),
             return_type: None,
-            parameters: vec![],
+            parameters,
             fields: vec![],
             modifiers: vec![],
             documentation: None,
-            metadata: serde_json::json!({ "language": "cpp" }),
+            metadata,
         }))
     }
 
@@ -72,6 +90,14 @@ impl CppPlugin {
             message: "Type missing name".to_string(),
         })?;
 
+        // F1: fields from field_declaration in class/struct body.
+        // Enums have no fields; leave empty.
+        let fields = if matches!(symbol_type, SymbolType::Class | SymbolType::Struct) {
+            extract_type_fields(node, source)?
+        } else {
+            vec![]
+        };
+
         Ok(Symbol {
             name: name.clone(),
             symbol_type,
@@ -80,7 +106,7 @@ impl CppPlugin {
             signature: None,
             return_type: None,
             parameters: vec![],
-            fields: vec![],
+            fields,
             modifiers: vec![],
             documentation: None,
             metadata: serde_json::json!({ "language": "cpp" }),
@@ -385,6 +411,93 @@ fn function_name_from_node(node: Node, source: &[u8]) -> Option<String> {
     None
 }
 
+fn find_parameter_list(node: Node) -> Option<Node> {
+    let mut current = node.child_by_field_name("declarator")?;
+    const MAX_DEPTH: usize = 512;
+    for _ in 0..MAX_DEPTH {
+        if current.kind() == "function_declarator" {
+            return current.child_by_field_name("parameters");
+        }
+        match current.child_by_field_name("declarator") {
+            Some(inner) => current = inner,
+            None => return None,
+        }
+    }
+    None
+}
+
+/// F3: typed parameters from `parameter_list` / `parameter_declaration`.
+fn extract_parameters(node: Node, source: &[u8]) -> Result<Vec<Parameter>> {
+    let mut parameters = Vec::new();
+    let Some(params_node) = find_parameter_list(node) else {
+        return Ok(parameters);
+    };
+
+    let mut cursor = params_node.walk();
+    for child in params_node.children(&mut cursor) {
+        if !matches!(
+            child.kind(),
+            "parameter_declaration" | "optional_parameter_declaration"
+        ) {
+            continue;
+        }
+        let param_type = child
+            .child_by_field_name("type")
+            .and_then(|n| n.utf8_text(source).ok().map(str::to_string));
+        let name = child
+            .child_by_field_name("declarator")
+            .and_then(|d| name_from_declarator(d, source));
+        let default_value = child
+            .child_by_field_name("default_value")
+            .and_then(|n| n.utf8_text(source).ok().map(str::to_string));
+        if let Some(name) = name {
+            parameters.push(Parameter {
+                name,
+                param_type,
+                default_value,
+            });
+        }
+    }
+    Ok(parameters)
+}
+
+fn extract_type_fields(type_node: Node, source: &[u8]) -> Result<Vec<Field>> {
+    let mut fields = Vec::new();
+    let Some(body) = type_node.child_by_field_name("body") else {
+        return Ok(fields);
+    };
+    if body.kind() != "field_declaration_list" {
+        return Ok(fields);
+    }
+
+    let mut cursor = body.walk();
+    for child in body.children(&mut cursor) {
+        if child.kind() != "field_declaration" {
+            continue;
+        }
+        let field_type = child
+            .child_by_field_name("type")
+            .and_then(|n| n.utf8_text(source).ok().map(str::to_string));
+
+        for i in 0..child.child_count() {
+            if child.field_name_for_child(i as u32) != Some("declarator") {
+                continue;
+            }
+            let Some(declarator) = child.child(i) else {
+                continue;
+            };
+            if let Some(name) = name_from_declarator(declarator, source) {
+                fields.push(Field {
+                    name,
+                    field_type: field_type.clone(),
+                    visibility: None,
+                });
+            }
+        }
+    }
+    Ok(fields)
+}
+
 fn name_from_declarator(root: Node, source: &[u8]) -> Option<String> {
     const MAX_DEPTH: usize = 512;
     let mut stack = vec![(root, 0usize)];
@@ -482,6 +595,59 @@ public:
             .unwrap();
         assert!(symbols.iter().any(|s| s.name == "UserService"));
         assert!(symbols.iter().any(|s| s.name == "authenticate"));
+    }
+
+    #[test]
+    fn test_extract_cpp_fields_ctor_and_typed_params() {
+        let source = br#"
+class Order {
+public:
+    int orderId;
+
+    Order(int id) : orderId(id) {}
+
+    int get(int x) {
+        return x;
+    }
+};
+"#;
+        let plugin = CppPlugin::new().unwrap();
+        let symbols = plugin
+            .extract_symbols(Path::new("Order.cpp"), source)
+            .unwrap();
+
+        let class = symbols
+            .iter()
+            .find(|s| s.name == "Order" && s.symbol_type == SymbolType::Class)
+            .expect("Order class");
+        assert!(
+            class
+                .fields
+                .iter()
+                .any(|f| f.name == "orderId" && f.field_type.as_deref() == Some("int")),
+            "fields: {:?}",
+            class.fields
+        );
+
+        let ctor = symbols
+            .iter()
+            .find(|s| {
+                s.symbol_type == SymbolType::Function
+                    && s.metadata
+                        .get("is_constructor")
+                        .and_then(|v| v.as_bool())
+                        == Some(true)
+            })
+            .expect("constructor");
+        assert_eq!(ctor.qualified_name.as_deref(), Some("Order::<init>"));
+        assert_eq!(ctor.parameters.len(), 1);
+        assert_eq!(ctor.parameters[0].name, "id");
+        assert_eq!(ctor.parameters[0].param_type.as_deref(), Some("int"));
+
+        let get = symbols.iter().find(|s| s.name == "get").expect("get");
+        assert_eq!(get.parameters.len(), 1);
+        assert_eq!(get.parameters[0].name, "x");
+        assert_eq!(get.parameters[0].param_type.as_deref(), Some("int"));
     }
 
     #[test]

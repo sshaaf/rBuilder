@@ -1,6 +1,6 @@
 [package]
 name = "rbuilder-extraction"
-version = "0.4.1"
+version = "0.4.2"
 edition = "2021"
 description = "Code extraction layer for rBuilder"
 license = "MIT OR Apache-2.0"

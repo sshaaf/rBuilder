@@ -17,6 +17,22 @@ impl TypeScriptPlugin {
         Ok(Self)
     }
 
+    fn find_containing_class_name(&self, node: Node, source: &[u8]) -> Option<String> {
+        let mut current = node;
+        while let Some(parent) = current.parent() {
+            if parent.kind() == "class_declaration" {
+                let mut cursor = parent.walk();
+                for child in parent.children(&mut cursor) {
+                    if matches!(child.kind(), "type_identifier" | "identifier") {
+                        return child.utf8_text(source).ok().map(str::to_string);
+                    }
+                }
+            }
+            current = parent;
+        }
+        None
+    }
+
     fn extract_function(&self, node: Node, source: &[u8], file_path: &str) -> Result<Symbol> {
         let mut cursor = node.walk();
         let mut name = None;
@@ -50,12 +66,32 @@ impl TypeScriptPlugin {
             }
         }
 
-        let name = name.unwrap_or_else(|| "anonymous".to_string());
+        let raw_name = name.unwrap_or_else(|| "anonymous".to_string());
+        let is_constructor = raw_name == "constructor" && node.kind() == "method_definition";
+        let class_name = if is_constructor {
+            self.find_containing_class_name(node, source)
+        } else {
+            None
+        };
+        let (name, qualified_name, metadata) = if is_constructor {
+            let class_name = class_name.unwrap_or_else(|| "anonymous".to_string());
+            (
+                class_name.clone(),
+                Some(format!("{class_name}.<init>")),
+                serde_json::json!({ "language": "typescript", "is_constructor": true }),
+            )
+        } else {
+            (
+                raw_name,
+                None,
+                serde_json::json!({ "language": "typescript" }),
+            )
+        };
 
         Ok(Symbol {
-            name: name.clone(),
+            name,
             symbol_type: SymbolType::Function,
-            qualified_name: None,
+            qualified_name,
             location: SourceLocation {
                 file: file_path.to_string(),
                 start_line: node.start_position().row + 1,
@@ -76,7 +112,7 @@ impl TypeScriptPlugin {
             fields: vec![],
             modifiers,
             documentation: None,
-            metadata: serde_json::json!({}),
+            metadata,
         })
     }
 
@@ -637,5 +673,53 @@ function helper(): void {}
                 .any(|r| matches!(r.relation_type, RelationType::Calls) && r.to == "helper"),
             "expected Calls -> helper, got {relations:?}"
         );
+    }
+
+    #[test]
+    fn test_extract_fields_and_constructor() {
+        let source = br#"
+class OrderDTO {
+  orderId: string;
+  status: string;
+
+  constructor(orderId: string, status: string) {
+    this.orderId = orderId;
+    this.status = status;
+  }
+}
+"#;
+        let plugin = TypeScriptPlugin::new().unwrap();
+        let symbols = plugin
+            .extract_symbols(Path::new("OrderDTO.ts"), source)
+            .unwrap();
+        let class = symbols
+            .iter()
+            .find(|s| s.name == "OrderDTO" && s.symbol_type == SymbolType::Class)
+            .expect("class");
+        assert!(class.fields.iter().any(|f| f.name == "orderId"));
+        assert!(class.fields.iter().any(|f| f.name == "status"));
+        assert_eq!(
+            class
+                .fields
+                .iter()
+                .find(|f| f.name == "orderId")
+                .and_then(|f| f.field_type.as_deref()),
+            Some("string")
+        );
+        let ctor = symbols
+            .iter()
+            .find(|s| {
+                s.symbol_type == SymbolType::Function
+                    && s.metadata
+                        .get("is_constructor")
+                        .and_then(|v| v.as_bool())
+                        == Some(true)
+            })
+            .expect("constructor");
+        assert_eq!(ctor.name, "OrderDTO");
+        assert_eq!(ctor.qualified_name.as_deref(), Some("OrderDTO.<init>"));
+        assert_eq!(ctor.parameters.len(), 2);
+        assert_eq!(ctor.parameters[0].param_type.as_deref(), Some("string"));
+        assert_eq!(ctor.parameters[1].param_type.as_deref(), Some("string"));
     }
 }

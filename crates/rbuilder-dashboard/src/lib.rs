@@ -14,6 +14,7 @@ mod function_metrics_export;
 mod manifest;
 mod metagraph;
 mod migration_export;
+mod mutations_export;
 mod profile;
 mod slice_export;
 mod source_catalog;
@@ -33,6 +34,7 @@ pub use migration_export::{
     write_migration_plan_from_repo, write_migration_plan_from_repo_with_context,
     MigrationExportSummary, MIGRATION_GRAPH_FILE, MIGRATION_PLAN_FILE,
 };
+pub use mutations_export::{MutationsExportSummary, MUTATIONS_INDEX_FILE};
 pub use slice_export::{SliceExportSummary, SLICE_INDEX_FILE};
 pub use taint_export::{TaintExportSummary, TAINT_INDEX_FILE};
 
@@ -42,6 +44,7 @@ use dataflow_export::export_dataflow_index;
 use function_metrics_export::export_function_metrics;
 use manifest::DashboardManifest as Manifest;
 use metagraph::write_metagraph;
+use mutations_export::export_mutations_index;
 use profile::profile_stage;
 use rbuilder_analysis::storage::AnalysisStorage;
 use rbuilder_graph::backend::MemoryBackend;
@@ -177,6 +180,9 @@ fn export_dashboard_bundle_inner(
     let dataflow_summary = profile_stage("export_dataflow", || {
         export_dataflow_index(&slice_summary, &out_dir)
     })?;
+    let mutations_summary = profile_stage("export_mutations", || {
+        export_mutations_index(repo_root, &out_dir)
+    })?;
     let taint_summary = profile_stage("export_taint", || export_taint_bundle(repo_root, &out_dir))?;
     let blast_summary = profile_stage("export_blast", || {
         export_blast_bundle(repo_root, snapshot_path, &out_dir, ctx, &uuid_to_index)
@@ -204,6 +210,7 @@ fn export_dashboard_bundle_inner(
         &slice_summary,
         &blast_summary,
         &dataflow_summary,
+        &mutations_summary,
         &taint_summary,
         &migration_summary,
         semantic_summary,
