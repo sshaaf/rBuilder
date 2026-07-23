@@ -4,6 +4,7 @@ rBuilder is designed so agents answer **structural questions** from a pre-built 
 
 **Full JSON reference:** [docs/json-api.md](docs/json-api.md)  
 **Copy-paste recipes:** [docs/agent-recipes.md](docs/agent-recipes.md)
+**Skill bundles:** [SKILLS.md](SKILLS.md) — installable agent workflows (agentskills.io format)
 
 ---
 
