@@ -3,11 +3,14 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
+    "predev": "node scripts/copy-demos.mjs",
+    "prebuild": "node scripts/copy-demos.mjs",
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
-    "export": "next build"
+    "export": "next build",
+    "copy-demos": "node scripts/copy-demos.mjs"
   },
   "dependencies": {
     "@next/third-parties": "^16.2.11",

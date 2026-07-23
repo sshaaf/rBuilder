@@ -72,7 +72,4 @@ website/coverage/
 website/*.tsbuildinfo
 website/.env
 website/.env.*
-website/.pnpm-debug.log*
-website/npm-debug.log*
-website/yarn-debug.log*
-website/yarn-error.log*
+website/public/demos/

@@ -9,6 +9,18 @@ Static marketing + docs hub (Next.js App Router, `output: "export"`).
 - shadcn-style primitives (Button, Tabs, Badge)
 - Warp-inspired tokens from `DESIGN.md`
 
+## Demo media
+
+VHS / dashboard recordings live in `docs/videos/` and are copied into
+`public/demos/` on `pnpm dev` / `pnpm build` (`scripts/copy-demos.mjs`).
+
+```bash
+# regenerate sources
+./docs/videos/record-user-guide-cli.sh
+./docs/videos/burn-user-guide-captions.sh
+./docs/videos/record-feature-demo.sh
+```
+
 ## Develop
 
 ```bash

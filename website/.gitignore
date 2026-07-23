@@ -17,6 +17,9 @@ test-results/
 .next/
 out/
 
+# copied from docs/videos at build/dev time
+public/demos/
+
 # production
 build/
 dist/

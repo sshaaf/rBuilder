@@ -3,6 +3,7 @@ import { ArrowRight, GitFork, Star } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { CommandBar } from "@/components/command-bar";
+import { DemoMedia } from "@/components/demo-media";
 import { TerminalBlock } from "@/components/terminal";
 import { GITHUB_REPO } from "@/lib/utils";
 
@@ -32,7 +33,7 @@ export default function HomePage() {
               "radial-gradient(ellipse 80% 50% at 50% -20%, #4a433c 0%, transparent 55%)",
           }}
         />
-        <div className="relative mx-auto max-w-6xl px-4 pb-20 pt-16 sm:px-6 sm:pt-24">
+        <div className="relative mx-auto max-w-6xl px-4 pb-16 pt-16 sm:px-6 sm:pt-24">
           <Badge className="mb-6">Open source · MIT · Rust</Badge>
           <h1 className="max-w-3xl text-4xl font-normal tracking-tight text-[var(--ink)] sm:text-5xl sm:leading-[1.1]">
             A code knowledge graph{" "}
@@ -57,11 +58,18 @@ export default function HomePage() {
               </a>
             </Button>
             <Button variant="link" asChild>
-              <Link href="/demo/">Watch agent demos</Link>
+              <Link href="/demo/">Watch demos</Link>
             </Button>
           </div>
           <div className="mt-12 max-w-3xl">
             <CommandBar />
+          </div>
+          <div className="mt-10 max-w-4xl">
+            <DemoMedia
+              kind="cli"
+              preferGif
+              caption="VHS terminal demo — same path as the User Guide first hour (ecommerce-java)."
+            />
           </div>
         </div>
       </section>
