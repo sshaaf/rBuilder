@@ -67,6 +67,42 @@ fn collect_assignment_lhs(left: Node, source: &[u8], defined: &mut HashSet<Strin
     }
 }
 
+/// Go `var_spec`: `name` / `name_list` + optional `value` / `value_list`.
+fn collect_go_var_spec(
+    spec: Node,
+    source: &[u8],
+    defined: &mut HashSet<String>,
+    used: &mut HashSet<String>,
+) {
+    if let Some(name) = spec.child_by_field_name("name") {
+        collect_pattern_defs(name, source, defined);
+    }
+    let mut cursor = spec.walk();
+    for child in spec.children(&mut cursor) {
+        match child.kind() {
+            "identifier" => {
+                collect_pattern_defs(child, source, defined);
+            }
+            "expression_list" => {
+                // Could be names or values — tree-sitter-go uses name field when present.
+                if spec.child_by_field_name("name").is_none()
+                    && spec.child_by_field_name("value").is_none()
+                {
+                    // Fallback: first expression_list is often names in older grammars
+                }
+                collect_def_use(child, source, defined, used, false);
+            }
+            _ => {}
+        }
+    }
+    if let Some(value) = spec
+        .child_by_field_name("value")
+        .or_else(|| spec.child_by_field_name("right"))
+    {
+        collect_def_use(value, source, defined, used, false);
+    }
+}
+
 fn collect_def_use(
     node: Node,
     source: &[u8],
@@ -140,12 +176,30 @@ fn collect_def_use(
         }
 
         // Go
-        "short_var_declaration" | "var_declaration" | "assignment_statement" => {
+        "short_var_declaration" | "assignment_statement" => {
             if let Some(left) = node.child_by_field_name("left") {
                 collect_assignment_lhs(left, source, defined, used);
             }
             if let Some(right) = node.child_by_field_name("right") {
                 collect_def_use(right, source, defined, used, false);
+            }
+        }
+        // `var` / `var ( ... )` — children are var_spec / var_spec_list (no left/right fields).
+        "var_declaration" => {
+            let mut cursor = node.walk();
+            for child in node.children(&mut cursor) {
+                match child.kind() {
+                    "var_spec" => collect_go_var_spec(child, source, defined, used),
+                    "var_spec_list" => {
+                        let mut c2 = child.walk();
+                        for spec in child.children(&mut c2) {
+                            if spec.kind() == "var_spec" {
+                                collect_go_var_spec(spec, source, defined, used);
+                            }
+                        }
+                    }
+                    _ => {}
+                }
             }
         }
         "range_clause" => {

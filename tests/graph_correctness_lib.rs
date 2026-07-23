@@ -381,6 +381,18 @@ fn symbol_candidates(m: &MatchSpec) -> Vec<String> {
 }
 
 fn run_blast(bin: &Path, cwd: &Path, m: &MatchSpec) -> Option<Value> {
+    // Go fixtures disambiguate by source file (`class: "methods.go"`).
+    if let Some(cls) = &m.class {
+        if cls.ends_with(".go") || cls.contains('/') {
+            if let Some(v) = run_json(
+                bin,
+                cwd,
+                &["-f", "json", "blast-radius", &m.name, "--file", cls],
+            ) {
+                return Some(v);
+            }
+        }
+    }
     for sym in symbol_candidates(m) {
         if let Some(v) = run_json(bin, cwd, &["-f", "json", "blast-radius", &sym]) {
             return Some(v);
@@ -393,6 +405,15 @@ fn run_inspect(bin: &Path, cwd: &Path, m: &MatchSpec, layer: &str) -> Option<Val
     for sym in symbol_candidates(m) {
         if let Some(v) = run_json(bin, cwd, &["-f", "json", "inspect", &sym, layer]) {
             return Some(v);
+        }
+    }
+    // Prefer FQN when class looks like a Go receiver/type name (not a filename).
+    if let Some(cls) = &m.class {
+        if !cls.ends_with(".go") && !cls.contains('/') {
+            let fqn = format!("{cls}.{}", m.name);
+            if let Some(v) = run_json(bin, cwd, &["-f", "json", "inspect", &fqn, layer]) {
+                return Some(v);
+            }
         }
     }
     None

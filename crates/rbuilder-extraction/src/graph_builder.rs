@@ -44,6 +44,8 @@ pub struct GraphBuilder {
     symbols_by_qualified: HashMap<String, Vec<Uuid>>,
     symbols_by_suffix: HashMap<String, Vec<Uuid>>,
     indexes_built: bool,
+    /// `OwnerType.field` → simple field type (for late Go selector resolution; spill-safe).
+    field_type_index: HashMap<String, String>,
 }
 
 #[derive(Debug, Default)]
@@ -310,6 +312,12 @@ impl GraphBuilder {
                 .with_property("owner_qualified_name".to_string(), owner_qn.clone());
             if let Some(ty) = &field.field_type {
                 node = node.with_property("field_type".to_string(), ty.clone());
+                let simple = go_simple_type_from_str(ty);
+                self.field_type_index
+                    .insert(format!("{owner_qn}.{}", field.name), simple.clone());
+                // Also index by bare owner name when owner_qn == struct name.
+                self.field_type_index
+                    .insert(format!("{}.{}", symbol.name, field.name), simple);
             }
             if let Some(vis) = &field.visibility {
                 node = node.with_property("visibility".to_string(), vis.clone());
@@ -415,13 +423,18 @@ impl GraphBuilder {
         let from_id =
             self.resolve_symbol_tracked(&relation.from, &relation.location.file, None, None);
 
-        // Use hints for cross-file resolution (best-effort)
-        // Hints are language plugin's best guess at the qualified name based on local context
+        let (to_type_hint, to_qualified_hint) =
+            self.enrich_go_type_hints(relation);
+
         let to_id = self.resolve_symbol_tracked(
             &relation.to,
             &relation.location.file,
-            relation.to_qualified_hint.as_deref(),
-            relation.to_type_hint.as_deref(),
+            to_qualified_hint
+                .as_deref()
+                .or(relation.to_qualified_hint.as_deref()),
+            to_type_hint
+                .as_deref()
+                .or(relation.to_type_hint.as_deref()),
         );
 
         if let (Some(from), Some(to)) = (from_id, to_id) {
@@ -436,6 +449,58 @@ impl GraphBuilder {
             self.commit_edge(edge);
         }
         Ok(())
+    }
+
+    /// Late-bind Go `recv.field.Method` using field Variable nodes from Pass 1.
+    fn enrich_go_type_hints(
+        &self,
+        relation: &Relation,
+    ) -> (Option<String>, Option<String>) {
+        if relation.to_type_hint.is_some() {
+            return (None, None);
+        }
+        let lang = relation
+            .metadata
+            .get("language")
+            .and_then(|v| v.as_str());
+        if lang != Some("go") {
+            return (None, None);
+        }
+        let Some(recv_ty) = relation
+            .metadata
+            .get("go_recv_type")
+            .and_then(|v| v.as_str())
+        else {
+            return (None, None);
+        };
+        let Some(field) = relation
+            .metadata
+            .get("go_field")
+            .and_then(|v| v.as_str())
+        else {
+            return (None, None);
+        };
+        let callee = relation
+            .metadata
+            .get("go_callee")
+            .and_then(|v| v.as_str())
+            .unwrap_or_else(|| {
+                relation
+                    .to
+                    .split('.')
+                    .next_back()
+                    .unwrap_or(relation.to.as_str())
+            });
+
+        let Some(ty) = self
+            .field_type_index
+            .get(&format!("{recv_ty}.{field}"))
+            .cloned()
+        else {
+            return (None, None);
+        };
+        let qh = format!("{ty}.{callee}");
+        (Some(ty), Some(qh))
     }
 
     /// Link code to a configuration key or environment variable usage.
@@ -859,6 +924,14 @@ fn relation_type_to_edge_type(relation_type: RelationType) -> EdgeType {
         RelationType::RequiresResource => EdgeType::RequiresResource,
         RelationType::UsesFact => EdgeType::UsesFact,
     }
+}
+
+fn go_simple_type_from_str(ty: &str) -> String {
+    ty.trim_start_matches('*')
+        .rsplit(['.', '/'])
+        .next()
+        .unwrap_or(ty)
+        .to_string()
 }
 
 #[cfg(test)]
