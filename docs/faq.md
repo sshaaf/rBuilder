@@ -1,0 +1,46 @@
+# FAQ
+
+Short answers for common first-hour questions. Commands → [User Guide](user-guide.md). Terms → [Glossary](glossary.md).
+
+### Discover vs semantic index?
+
+`discover` builds the **code knowledge graph** and reachability caches. `semantic index` is a separate **opt-in** embedding index for natural-language / keyword search. Run discover first, then `rbuilder semantic index` if you need Search / `semantic query`.
+
+### When do I need `--with-cfg`?
+
+For CFG/PDG archives used by `inspect`, `slice`, `cpg`, and discover-time taint (`--with-taint` implies the CFG pass). Plain `gql` / `blast-radius` / `metrics` work after a default discover.
+
+### Why is the dashboard empty after `discover .`?
+
+Dashboard export is **off by default**. Pass `--with-dashboard`, then `rbuilder serve --open`.
+
+### How do I get a migration plan?
+
+```bash
+rbuilder discover . --with-cfg --with-security --with-taint \
+  --with-dashboard --with-harmonic --export-migration-hints
+```
+
+### code-daemon vs vocab vs hash?
+
+| Embedder | When |
+|----------|------|
+| `code-daemon` (default) | Best quality; needs `git lfs pull` for ONNX weights (~206 MB) |
+| `vocab` | Offline, deterministic, no ONNX |
+| `hash` | Offline smoke / CI without model weights |
+
+### What does exit code 1 mean?
+
+Usually a **policy violation** (`check`, or `blast-radius --policy-file`) or a command error. JSON still may be on stdout for some commands — see [json-api.md](json-api.md#13-exit-codes).
+
+### Is there an `--all` flag?
+
+No. Combine `--with-cfg --with-security --with-taint` (and dashboard/migration flags) explicitly.
+
+### Louvain or label propagation?
+
+rBuilder runs **label propagation** (Raghavan 2007). The field `louvain_community_id` is a historical name only.
+
+### Coolstore or ecommerce-java?
+
+Prefer the in-tree **ecommerce-java** fixture in [User Guide §3](user-guide.md#3-example-project-ecommerce-java).

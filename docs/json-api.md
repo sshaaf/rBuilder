@@ -24,6 +24,9 @@ Programmatic reference for parsing rBuilder output. Every structured CLI command
 12. [On-disk JSON after `discover`](#12-on-disk-json-after-discover)
 13. [Exit codes](#13-exit-codes)
 14. [Parsing recipes](#14-parsing-recipes)
+15. [`semantic`](#15-semantic)
+16. [`communities`](#16-communities)
+17. [`cpg`](#17-cpg)
 
 ---
 
@@ -79,6 +82,10 @@ if (doc.schema_version !== 2) {
 | `check` | **1** | — |
 | `slice` | **1** | — |
 | `inspect` | **1** | — |
+| `semantic index` | **2** | CLI index telemetry |
+| `semantic query` | **3** | hits + optional expansion / fusion fields |
+| `communities` | **1** | list / label |
+| `cpg` (status / mutations / flows / …) | **1** | per-subcommand shapes |
 
 **Omitted vs null:** optional fields are **absent** when unset (not `null`), unless noted otherwise. Empty collections are usually `[]`, not omitted.
 
@@ -97,6 +104,9 @@ if (doc.schema_version !== 2) {
 | `check` | ✅ | `passed`, `violations` | CI policy gate |
 | `slice` | ✅ | `lines` / `nodes` / `edges` / `taint` | Line-level analysis |
 | `inspect` | ✅ | `layer`, `nodes`, `edges` | CFG/PDG/dominance dumps |
+| `semantic` | ✅ | `hits` / `functions_indexed` | Opt-in NL / keyword search |
+| `communities` | ✅ | `communities`, `modularity` | Named community labels |
+| `cpg` | ✅ | varies by subcommand | Hybrid CPG façade |
 | `export` | ❌ (file) | — | Full-graph serialization |
 | `serve` | ❌ | — | HTTP dashboard + `/api/query` (default); `--daemon` = Unix socket blast daemon |
 
@@ -736,6 +746,175 @@ test "$nodes" -gt 100
 ```bash
 rbuilder -f json discover . | tee discover.json
 rbuilder -f json gql --macro-name all_functions x | jq '.count'
+```
+
+---
+
+## 15. `semantic`
+
+Opt-in embedding index + query. Types: `src/cli/semantic_output.rs`.
+
+### `semantic index`
+
+```bash
+rbuilder -r "$REPO" -f json semantic index
+# offline: --embedder vocab|hash
+```
+
+```typescript
+type SemanticIndexJsonResponse = {
+  schema_version: 2;
+  model_id: string;
+  dimensions: number;          // default 256
+  functions_indexed: number;
+  path: string;                // .rbuilder/semantic_index.bin
+  graph_digest?: string;
+  build_stats?: {
+    total: number;
+    reused: number;
+    embedded: number;
+    removed: number;
+  };
+};
+```
+
+```bash
+rbuilder -r "$REPO" -f json semantic index | jq '{model_id, dimensions, functions_indexed}'
+```
+
+### `semantic query`
+
+```bash
+rbuilder -r "$REPO" -f json semantic query "checkout flow" --limit 10
+```
+
+```typescript
+type SemanticHitJson = {
+  node_id: string;
+  name: string;
+  qualified_name?: string;
+  file_path?: string;
+  distance: number;            // Hamming
+  score: number;
+  fused_score?: number;
+  ranking?: string;            // e.g. "fusion"
+};
+
+type SemanticQueryJsonResponse = {
+  schema_version: 3;
+  query: string;
+  model_id: string;
+  dimensions: number;
+  hits: SemanticHitJson[];
+  expansion?: object;          // optional query expansion payload
+};
+```
+
+```bash
+rbuilder -r "$REPO" -f json semantic query "OrderService" --limit 5 \
+  | jq '.hits[:5] | map({name, score, file_path})'
+rbuilder -r "$REPO" -f json semantic query "cart" --scope community --limit 5 \
+  | jq '.hits[].name'
+```
+
+---
+
+## 16. `communities`
+
+List / refresh heuristic labels over label-propagation clusters. Types: `src/cli/communities.rs`.
+
+```bash
+rbuilder -r "$REPO" -f json communities list
+rbuilder -r "$REPO" -f json communities label --write
+```
+
+```typescript
+type CommunitiesJsonResponse = {
+  schema_version: 1;
+  modularity: number;
+  written: boolean;            // true after `label --write`
+  communities: Array<{
+    id: number;
+    label: string;
+    member_count: number;
+  }>;
+};
+```
+
+```bash
+rbuilder -r "$REPO" -f json communities list | jq '.communities[:10]'
+rbuilder -r "$REPO" -f json communities list | jq '{modularity, n: (.communities|length)}'
+```
+
+GQL alternative: `--macro-name all_communities` (see User Guide §6).
+
+---
+
+## 17. `cpg`
+
+Hybrid CPG façade (needs `discover --with-cfg`). Types: `crates/rbuilder-analysis/src/cpg.rs` + `src/cli/cpg.rs`. All JSON payloads use `schema_version: 1`.
+
+### `cpg status`
+
+```bash
+rbuilder -r "$REPO" -f json cpg status
+```
+
+```typescript
+type CpgStatus = {
+  schema_version: 1;
+  archive_path: string;
+  archive_present: boolean;
+  function_count: number;
+  graph_digest?: string;
+  field_write_index_present: boolean;
+  field_write_count: number;
+  ast_skeleton_present: boolean;
+  ast_skeleton_count: number;
+};
+```
+
+### `cpg mutations`
+
+```bash
+rbuilder -r "$REPO" -f json cpg mutations --type ShoppingCart --exclude-ctors
+```
+
+```typescript
+type CpgMutationsResult = {
+  schema_version: 1;
+  type_name: string;
+  exclude_ctors: boolean;
+  member?: string;
+  include_unresolved: boolean;
+  mutations: Array<{
+    file: string;
+    line: number;
+    code: string;
+    member: string;
+    function: string;
+    is_constructor: boolean;
+    receiver_local?: string;
+    receiver_type?: string;
+    kind: string;
+  }>;
+};
+```
+
+### Other subcommands
+
+| Subcommand | Primary keys |
+|------------|--------------|
+| `cpg function <Symbol>` | `id`, `name`, `has_l_proc`, … |
+| `cpg calls <Symbol>` | `edges[]` (`direction`, `name`, `id`) |
+| `cpg flows …` | `steps[]` (data dependence walk) |
+| `cpg export` | writes a **file** (`--format` / `--output`); not stdout JSON |
+
+```bash
+rbuilder -r "$REPO" -f json cpg status | jq '{archive_present, function_count, field_write_count}'
+rbuilder -r "$REPO" -f json cpg mutations --type ShoppingCart --exclude-ctors \
+  | jq '.mutations | length'
+rbuilder -r "$REPO" -f json cpg calls priceShoppingCart | jq '.edges[:10]'
 ```
 
 ---

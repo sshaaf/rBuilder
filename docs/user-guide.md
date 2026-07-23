@@ -72,11 +72,14 @@ Requires **Rust 1.70+** ([rustup.rs](https://rustup.rs/)).
 ```bash
 git clone https://github.com/sshaaf/rBuilder.git
 cd rBuilder
+# Optional: default semantic embedder (code-daemon ONNX ~206 MB via Git LFS).
+# Skip if you only use `semantic index --embedder vocab|hash`.
+git lfs pull
 cargo build --release
 ./target/release/rbuilder --version
 ```
 
-All seven Tier 1 languages (Rust, Python, JavaScript, TypeScript, Go, Java, C#) are always included in the binary.
+All **nine** Tier 1 languages (Rust, Python, JavaScript, TypeScript, Go, Java, C#, C, C++) are always included in the binary.
 
 ---
 
@@ -1098,11 +1101,15 @@ Migration hints (with `--export-migration-hints`) land under `.rbuilder/migratio
 | `-e, --exclude` | Comma-separated path exclude patterns |
 | `-v, --verbose` | Debug logging + stage profile lines |
 | `--with-security` | Secret scanning |
-| `--with-cfg` | CFG / PDG (not taint) |
+| `--with-cfg` | CFG / PDG (not taint); alias `--cfg` |
 | `--with-taint` | Discover-time taint (implies CFG pass) |
-| `--with-harmonic` | Harmonic centrality (default off) |
+| `--with-dfg-loops` | Tag loop-carried `DataDependency` edges in PDG (with `--with-cfg`) |
+| `--with-ast-skeleton` | Build AST skeleton archive for `cpg ast` |
+| `--with-harmonic` | Harmonic centrality (default off; needed for migration ranking) |
 | `--with-dashboard` | Static dashboard bundle (default off) |
-| `--export-migration-hints` | Migration roadmap JSON |
+| `--export-migration-hints` | Migration roadmap JSON (alias `--export-migration-plan`) |
+| `--migration-preset` | Preset for migration hints (`hybrid`, `foundational`, …) |
+| `--migration-order` | `scheduled` (topological) or `priority` |
 | `--write-json-graph` | Also write legacy `graph.db` / `graph.json` |
 
 There is no umbrella `--all` flag — combine `--with-cfg --with-security --with-taint` explicitly when you want the former deep pass.
@@ -1166,7 +1173,7 @@ RUST_LOG=info,profile=info rbuilder discover . -v 2>&1 | grep '\[profile\]'
 ### Further reading
 
 - [Introduction](Introduction.md) — concepts and feature goals
-- [cli-getting-started.md](cli-getting-started.md) — shorter walkthrough
+- [cli-getting-started.md](cli-getting-started.md) — deprecated stub (use this User Guide)
 - [http-api.md](http-api.md) — dashboard HTTP API
 - [json-api.md](json-api.md) / [cli-output-schemas.md](cli-output-schemas.md) — machine-readable output
 - [AGENTS.md](../AGENTS.md) — agent-oriented command recipes

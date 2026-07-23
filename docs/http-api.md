@@ -157,6 +157,18 @@ Subsequent `blast-radius` commands may auto-connect to `.rbuilder/query.sock` un
 
 ---
 
+## Not exposed over HTTP
+
+These CLI surfaces are **not** available as HTTP routes today (use `-f json` on the CLI instead):
+
+- `blast-radius`, `metrics`, `check`, `slice`, `inspect`
+- `communities`, `cpg`, `export`
+- `discover` (indexing remains a local CLI operation)
+
+**Exposed today:** `POST /api/query` (GQL), `GET/POST /api/semantic/*` (see above), plus the static dashboard UI.
+
+---
+
 ## See also
 
 - [AGENTS.md](../AGENTS.md) — agent integration patterns

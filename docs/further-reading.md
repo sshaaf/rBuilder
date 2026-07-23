@@ -32,7 +32,7 @@ Legend: **Implemented** = algorithm or structure in the codebase with tests; **I
 | [Page & Brin — PageRank (1998)](https://doi.org/10.1109/69.681760) | **Implemented** | [`centrality.rs`](../crates/rbuilder-analysis/src/centrality.rs) — `FastPageRank` on `FlatGraphIndex`; adaptive gating >500k nodes | `rbuilder metrics --pagerank` |
 | [Brandes — Betweenness centrality (2001)](https://doi.org/10.1080/00207160108942084) | **Implemented** | [`centrality.rs`](../crates/rbuilder-analysis/src/centrality.rs), [`centrality_approx.rs`](../crates/rbuilder-analysis/src/centrality_approx.rs) — exact / sampled Brandes | `rbuilder metrics --betweenness` |
 | Boldi & Vigna — HyperANF / HyperBall | **Implemented** | [`centrality_approx.rs`](../crates/rbuilder-analysis/src/centrality_approx.rs) — parallel HyperLogLog propagation | discover / migration harmonic term |
-| [Raghavan et al. — Label propagation (2007)](https://doi.org/10.1107/S1744309107073516) + Newman modularity | **Implemented** | [`community.rs`](../crates/rbuilder-analysis/src/community.rs) | `rbuilder metrics --communities` |
+| [Raghavan et al. — Label propagation (2007)](https://doi.org/10.1103/PhysRevE.76.036106) + Newman modularity | **Implemented** | [`community.rs`](../crates/rbuilder-analysis/src/community.rs) | `rbuilder metrics --communities` |
 
 **Tests:** [`centrality_audit.rs`](../tests/centrality_audit.rs).
 

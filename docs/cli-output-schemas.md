@@ -12,14 +12,14 @@ Reference for JSON (and related) output shapes emitted by rBuilder CLI commands.
 
 ## Conventions matrix
 
-| Convention | blast-radius | discover | gql | metrics | check | slice | inspect |
-|------------|:------------:|:--------:|:---:|:-------:|:-----:|:-----:|:-------:|
-| `schema_version` | ✅ v2 | ✅ v2 | ✅ v1 | ✅ v1 | ✅ v1 | ✅ v1 | ✅ v1 |
-| Typed `*_output.rs` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
-| Explicit empty arrays | ✅ | — | ✅ | ✅ | ✅ | ✅ | ✅ |
-| Omitted optional keys | — | — | — | ✅ | ✅ | ✅ | ✅ |
-| Composable graph topology | ✅ | — | — | — | — | ✅ | ✅ |
-| Stable node UUIDs (no nil) | ✅ | — | — | — | — | — | — |
+| Convention | blast-radius | discover | gql | metrics | check | slice | inspect | semantic | communities | cpg |
+|------------|:------------:|:--------:|:---:|:-------:|:-----:|:-----:|:-------:|:--------:|:-----------:|:---:|
+| `schema_version` | ✅ v2 | ✅ v2 | ✅ v1 | ✅ v1 | ✅ v1 | ✅ v1 | ✅ v1 | ✅ v2/v3 | ✅ v1 | ✅ v1 |
+| Typed `*_output.rs` / analysis types | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Explicit empty arrays | ✅ | — | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Omitted optional keys | — | — | — | ✅ | ✅ | ✅ | ✅ | ✅ | — | ✅ |
+| Composable graph topology | ✅ | — | — | — | — | ✅ | ✅ | — | — | — |
+| Stable node UUIDs (no nil) | ✅ | — | — | — | — | — | — | — | — | — |
 
 **Tests:** See [cli-io-sanity-qe.md](cli-io-sanity-qe.md) for the full coverage matrix, harness design, and extension guide.
 
@@ -598,6 +598,65 @@ Writes to `-o`; stdout is a one-line summary unless output is redirected via glo
 | `graphml` | GraphML XML |
 | `graphviz` | DOT |
 | `mermaid` | Mermaid flowchart |
+
+---
+
+## 9. `semantic`
+
+See [json-api.md §15](json-api.md#15-semantic) for TypeScript shapes and jq recipes.
+
+| Subcommand | `schema_version` | Source |
+|------------|-----------------:|--------|
+| `semantic index` | **2** | `SEMANTIC_INDEX_CLI_SCHEMA_VERSION` |
+| `semantic query` | **3** | `SEMANTIC_QUERY_CLI_SCHEMA_VERSION` |
+
+| Field (index) | Type | Notes |
+|---------------|------|-------|
+| `model_id` | string | Embedder / model id |
+| `dimensions` | number | Default **256** |
+| `functions_indexed` | number | Entries written |
+| `path` | string | Index file path |
+| `build_stats` | object? | Incremental counters |
+
+| Field (query hit) | Type | Notes |
+|-------------------|------|-------|
+| `node_id` | string | Graph node UUID |
+| `name` | string | Function name |
+| `distance` | number | Hamming distance |
+| `score` | number | Similarity or fused score |
+| `fused_score` | number? | Present when fusion ranking applied |
+
+---
+
+## 10. `communities`
+
+See [json-api.md §16](json-api.md#16-communities).
+
+| Field | Type | Notes |
+|-------|------|-------|
+| `schema_version` | number | **1** |
+| `modularity` | number | Newman Q |
+| `written` | bool | True after `label --write` |
+| `communities[].id` | number | Community id |
+| `communities[].label` | string | Heuristic label |
+| `communities[].member_count` | number | Members |
+
+---
+
+## 11. `cpg`
+
+See [json-api.md §17](json-api.md#17-cpg). Requires `discover --with-cfg`.
+
+| Subcommand | Primary fields |
+|------------|----------------|
+| `status` | `archive_present`, `function_count`, `field_write_*`, `ast_skeleton_*` |
+| `function` | `id`, `name`, `has_l_proc`, `is_constructor` |
+| `calls` | `edges[]` |
+| `mutations` | `mutations[]` (file, line, member, function, …) |
+| `flows` | `steps[]` |
+| `export` | file output (`--format` / `--output`), not stdout JSON |
+
+All `-f json` CPG payloads use `schema_version: 1`.
 
 ---
 

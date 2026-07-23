@@ -55,12 +55,12 @@ Exact plugin set evolves with releases — search `crates/rbuilder-config-format
 
 | Command | When to use |
 |---------|-------------|
-| `discover .` | Fast graph + metrics + dashboard (default) |
+| `discover .` | Fast graph + metrics (dashboard **off**; pass `--with-dashboard`) |
 | `discover . --with-security` | Add secret scanning on config-like files (alias `--security`) |
-| `discover . --cfg` | Per-function CFG, PDG, slice, inspect, taint |
-| `discover . --with-cfg --with-security --with-taint` | Full analysis + migration export + complete dashboard bundles |
+| `discover . --with-cfg` | Per-function CFG, PDG, slice, inspect (alias `--cfg`) |
+| `discover . --with-cfg --with-security --with-taint --with-dashboard --with-harmonic --export-migration-hints` | Full analysis + dashboard + migration export |
 
-CFG analysis is **much slower** on large repos (tens of thousands of functions). Run `discover . --cfg` on a small sample first; golden-repo timing checks live in `tests/discover_perf_baselines.rs` (manual, `#[ignore]`).
+CFG analysis is **much slower** on large repos (tens of thousands of functions). Run `discover . --with-cfg` on a small sample first; golden-repo timing checks live in `tests/discover_perf_baselines.rs` (manual, `#[ignore]`).
 
 ---
 

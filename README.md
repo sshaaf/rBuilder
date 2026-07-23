@@ -18,23 +18,11 @@ Quick cli tour:
 
 https://github.com/user-attachments/assets/25420e1d-6cb4-4869-b03d-8bb2c9534f7a
 
-Dashboard tour: (Even though dashboard is not the main function here, but it's good for some visualtization) 
+Dashboard tour (optional visualization):
 
 https://github.com/user-attachments/assets/d8fd1d23-1c15-4e8c-800e-4e29420fa4b9
 
 ---
-
-## What the **R** stands for
-
-| **R** | Meaning |
-|-------|---------|
-| **Rust** | Memory-safe, predictable performance at scale — the foundation for parsing large monorepos without blowing the heap |
-| **Reachability** | Pre-computed call reachability (sparse bitsets, not multi‑GB dense matrices) so “what breaks if I change this?” stays sub-second |
-| **Rich** code graph | 30+ typed relations — CALLS, IMPORTS, CONTAINS, IMPLEMENTS, and more — not just files and folders |
-
-Together: **rBuilder** is the **reachability builder** — it constructs the graph and the compressed reachability engine agents need for trustworthy structural reasoning.
-
-Algorithm and complexity details: crate READMEs under `crates/rbuilder-analysis/` and [CLI I/O sanity QE](docs/cli-io-sanity-qe.md) for automated perf gates.
 
 ## Built for agents
 
@@ -49,7 +37,7 @@ Algorithm and complexity details: crate READMEs under `crates/rbuilder-analysis/
 
 rBuilder answers **reachability and relation questions deterministically** from the indexed graph. The LLM reasons on **summaries and facts**, not raw repo grep — fewer tokens, less hallucination, faster turns.
 
-**Primary outputs for agents:** `-f json` on `discover`, `gql`, `blast-radius`, `metrics`, `semantic query`, and `export`. See **[JSON API](docs/json-api.md)**.
+**Primary outputs for agents:** `-f json` on `discover`, `gql`, `blast-radius`, `metrics`, `semantic`, `communities`, `cpg`, `check`, `slice`, and `inspect`. File export uses `export --export-format` (not stdout JSON). See **[JSON API](docs/json-api.md)**.
 
 ---
 
@@ -66,8 +54,10 @@ Most codebase tools stop at **text search**, **file trees**, or a **shallow call
 | **CFG** | **Control-flow graph** per function — branches, loops, executable paths | [cfg-design.md](docs/design/cfg-design.md) |
 | **PDG** | **Program dependence graph** — data and control deps between statements; foundation for slice and taint | [pdg-design.md](docs/design/pdg-design.md) |
 | **Dominance** | **Dominator trees** and frontiers — the same structures compilers use for advanced analysis | [dominance-design.md](docs/design/dominance-design.md) |
+| **Hybrid CPG** | **Unified façade** over L_repo CALL graph + L_proc CFG/PDG — mutations, flows, calls (`cpg`) | [hybrid-cpg-plan.md](docs/design/hybrid-cpg-plan.md) |
 | **GQL** | **Graph query language** over 30+ relation types — inventory, call chains, patterns | [gql-design.md](docs/design/gql-design.md) |
-| **Graph metrics** | **PageRank**, **betweenness**, **communities** on the live call graph | [graph-metrics-design.md](docs/design/graph-metrics-design.md) |
+| **Graph metrics** | **PageRank**, **betweenness**, **communities** (label propagation) on the live call graph | [graph-metrics-design.md](docs/design/graph-metrics-design.md) |
+| **Named communities** | **`communities` CLI** — list / refresh heuristic labels over label-propagation clusters | [graph-metrics-design.md](docs/design/graph-metrics-design.md) |
 | **Migration planner** | **Package-level roadmap** — PageRank + harmonic centrality − blast radius; dependency-aware schedule and priority rank; ForceAtlas2 graph in the dashboard | [migration-planner-design.md](docs/design/migration-planner-design.md) |
 | **CI policy checks** | **`check`** — fail builds when blast-radius rules are violated on touched symbols | [ci-policy-checks-design.md](docs/design/ci-policy-checks-design.md) |
 
@@ -203,6 +193,20 @@ rbuilder -f json semantic query "checkout flow" --limit 10
 
 ---
 
+## What the **R** stands for
+
+| **R** | Meaning |
+|-------|---------|
+| **Rust** | Memory-safe, predictable performance at scale — the foundation for parsing large monorepos without blowing the heap |
+| **Reachability** | Pre-computed call reachability (sparse bitsets, not multi‑GB dense matrices) so “what breaks if I change this?” stays sub-second |
+| **Rich** code graph | 30+ typed relations — CALLS, IMPORTS, CONTAINS, IMPLEMENTS, and more — not just files and folders |
+
+Together: **rBuilder** is the **reachability builder** — it constructs the graph and the compressed reachability engine agents need for trustworthy structural reasoning.
+
+Algorithm and complexity details: crate READMEs under `crates/rbuilder-analysis/` and [CLI I/O sanity QE](docs/cli-io-sanity-qe.md) for automated perf gates.
+
+---
+
 ## Command reference
 
 Quick links into **[Introduction](docs/Introduction.md)** — see [Where most tools stop](#where-most-tools-stop) for the differentiators.
@@ -215,7 +219,9 @@ Quick links into **[Introduction](docs/Introduction.md)** — see [Where most to
 | `slice` | [Program slicing](docs/Introduction.md#program-slicing) · [Taint](docs/Introduction.md#taint-analysis) |
 | `inspect` | [CFG, PDG, dominance](docs/Introduction.md#cfg-pdg-and-dominance-deep-structure) |
 | `metrics` | [Graph metrics](docs/Introduction.md#graph-metrics-architecture-hotspots) |
-| `semantic` | [Semantic search](docs/design/semantic-search-design.md) (opt-in index + query) |
+| `semantic` | [Semantic search](docs/Introduction.md#semantic-search-opt-in) (opt-in index + query) |
+| `communities` | [Graph metrics](docs/Introduction.md#graph-metrics-architecture-hotspots) · [User Guide](docs/user-guide.md#6-query-the-graph-with-gql) |
+| `cpg` | [Hybrid CPG](docs/Introduction.md#hybrid-cpg-mutations-and-flows) |
 | `export` | [Export](docs/Introduction.md#export-and-sharing) |
 | `check` | [CI policy](docs/Introduction.md#ci-policy-checks) |
 | `serve` | [HTTP server](docs/Introduction.md#http-server-serve) |

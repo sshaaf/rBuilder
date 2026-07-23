@@ -19,13 +19,14 @@ This document explains **what rBuilder is**, how a **code knowledge graph** work
 8. [Taint analysis](#taint-analysis)
 9. [CFG, PDG, and dominance (deep structure)](#cfg-pdg-and-dominance-deep-structure)
 10. [Hybrid CPG (mutations and flows)](#hybrid-cpg-mutations-and-flows)
-11. [Graph metrics (architecture hotspots)](#graph-metrics-architecture-hotspots)
-12. [Migration planner (package roadmap)](#migration-planner-package-roadmap)
-13. [Export and sharing](#export-and-sharing)
-14. [CI policy checks](#ci-policy-checks)
-15. [HTTP server (`serve`)](#http-server-serve)
-16. [Dashboard (visual exploration)](#dashboard-visual-exploration)
-17. [Where to go next](#where-to-go-next)
+11. [Semantic search (opt-in)](#semantic-search-opt-in)
+12. [Graph metrics (architecture hotspots)](#graph-metrics-architecture-hotspots)
+13. [Migration planner (package roadmap)](#migration-planner-package-roadmap)
+14. [Export and sharing](#export-and-sharing)
+15. [CI policy checks](#ci-policy-checks)
+16. [HTTP server (`serve`)](#http-server-serve)
+17. [Dashboard (visual exploration)](#dashboard-visual-exploration)
+18. [Where to go next](#where-to-go-next)
 
 ---
 
@@ -287,6 +288,38 @@ The in-tree fixtures keep **`/api/*`** and add CoolStore-compatible **`/services
 
 ---
 
+## Semantic search (opt-in)
+
+### Goal
+
+Answer: **“Which functions match this natural-language or keyword intent?”** — without grepping the whole tree into an LLM context.
+
+### Description
+
+**Semantic search** is a separate opt-in index over function embeddings. After `discover`, run `semantic index`, then `semantic query` (or the dashboard **Search** tab via `serve`). Default embedder is **code-daemon** (ONNX weights via Git LFS); offline alternatives are `--embedder vocab` or `--embedder hash`. Retrieval uses Hamming distance over packed bit vectors, with optional late fusion against blast / PageRank / sketches.
+
+It does **not** replace GQL or blast-radius — use it when you know the *intent* but not the exact symbol name.
+
+### Key benefits
+
+- **Intent → symbols** for agents and humans  
+- **Offline modes** when ONNX weights are unavailable  
+- **Same JSON contract** as other `-f json` commands (`schema_version` on stdout)
+
+### How to run it
+
+```bash
+rbuilder discover .
+rbuilder semantic index                  # or: --embedder vocab|hash
+rbuilder -f json semantic query "checkout flow" --limit 10
+rbuilder serve --open                    # Search tab (needs index + HTTP API)
+```
+
+→ [User Guide §12 — Semantic search](user-guide.md#12-semantic-search)  
+→ Design: **[Semantic search design](design/semantic-search-design.md)** · JSON: **[json-api.md § semantic](json-api.md#15-semantic)**
+
+---
+
 ## Graph metrics (architecture hotspots)
 
 ### Goal
@@ -335,7 +368,7 @@ Two orderings are available:
 - **Scheduled step** — Kahn topological sort so callees appear before callers (dependency-aware)  
 - **Priority rank** — score-only ordering without dependency constraints  
 
-Strategy **presets** (Hybrid Default, Foundational First, Dense Cluster Extraction, Risk Mitigation) adjust α/β/γ. The dashboard **Migration** tab lets you tune weights live and explore a ForceAtlas2 layout (cluster color from Louvain communities, node size from priority). Every `discover` exports `migration_graph.json` and a default `migration_plan.json` under **`.rbuilder/dashboard/`** when analysis metrics are available. Use `--export-migration-hints` for a preset-tuned plan file (default **`.rbuilder/migration_plan.json`**, or `-o`).
+Strategy **presets** (Hybrid Default, Foundational First, Dense Cluster Extraction, Risk Mitigation) adjust α/β/γ. The dashboard **Migration** tab lets you tune weights live and explore a ForceAtlas2 layout (cluster color from **label-propagation communities** — UI field still named `louvain_community_id`; see [community naming](design/graph-metrics-design.md#31-community-detection-naming) — node size from priority). **With `--with-dashboard`**, discover writes `migration_graph.json` and a default `migration_plan.json` under **`.rbuilder/dashboard/`** when analysis metrics are available. Use `--export-migration-hints` for a preset-tuned plan file (default **`.rbuilder/migration_plan.json`**, or `-o`). Dashboard and migration JSON are **opt-in**.
 
 ### Key benefits
 
@@ -347,7 +380,7 @@ Strategy **presets** (Hybrid Default, Foundational First, Dense Cluster Extracti
 ### How to run it
 
 ```bash
-rbuilder discover . --with-cfg --with-security --with-taint --export-migration-hints
+rbuilder discover . --with-cfg --with-security --with-taint --with-dashboard --with-harmonic --export-migration-hints
 rbuilder serve --open   # http://127.0.0.1:8080/ → Migration tab + query API
 ```
 
@@ -432,7 +465,7 @@ Serve the **dashboard** and **GQL HTTP API** in one process, or keep a legacy so
 
 ### Description
 
-After `discover`, rBuilder writes a static bundle under **`.rbuilder/dashboard/`** (`index.html`, `manifest.json`, graph payload, metagraph, migration indexes when analysis is available, and per-feature indexes for CFG, slice, blast, taint, etc.). Serve that folder over HTTP (WASM graph engine requires a real server, not `file://`).
+After `discover --with-dashboard`, rBuilder writes a static bundle under **`.rbuilder/dashboard/`** (`index.html`, `manifest.json`, graph payload, metagraph, migration indexes when analysis is available, and per-feature indexes for CFG, slice, blast, taint, etc.). Dashboard export is **off by default**. Serve that folder over HTTP (WASM graph engine requires a real server, not `file://`).
 
 The dashboard complements the CLI: same underlying graph and analysis artifacts. The **Migration** tab mirrors the Rust planner in TypeScript for live preset and weight changes. The **Query Guide** tab lists CLI commands for each view.
 
@@ -456,8 +489,8 @@ The dashboard complements the CLI: same underlying graph and analysis artifacts.
 ### How to run it
 
 ```bash
-rbuilder discover .          # produces .rbuilder/dashboard/
-rbuilder serve --open        # recommended: dashboard + /api/query
+rbuilder discover . --with-dashboard   # writes .rbuilder/dashboard/
+rbuilder serve --open                  # recommended: dashboard + /api/query
 # or: cd .rbuilder/dashboard && python3 -m http.server 8765
 ```
 

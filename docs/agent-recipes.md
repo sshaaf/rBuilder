@@ -8,6 +8,8 @@ export REPO=/path/to/repo   # contains .rbuilder/ after discover
 
 **JSON shapes:** [json-api.md](json-api.md) · **Field tables:** [cli-output-schemas.md](cli-output-schemas.md)
 
+> **jq field contract:** use the exact field names from [cli-output-schemas.md](cli-output-schemas.md) (e.g. `direct_callers_count`, not `direct_caller_count`). Smoke-test recipes after schema bumps.
+
 ---
 
 ## Recipe 1 — Orient in an unfamiliar repo
@@ -43,10 +45,10 @@ rbuilder -r "$REPO" communities label --write
 SYMBOL=ShoppingCartService
 rbuilder -r "$REPO" -f json blast-radius "$SYMBOL" | jq '{
   score: .metrics.score,
-  direct_callers: .metrics.direct_caller_count,
-  impact_zone: .metrics.impact_zone_count
+  direct_callers: .metrics.direct_callers_count,
+  impact_zone: .metrics.impact_zone_size
 }'
-rbuilder -r "$REPO" -f json blast-radius "$SYMBOL" --depth 3 | jq '.topology.callers[:10]'
+rbuilder -r "$REPO" -f json blast-radius "$SYMBOL" --depth 3 | jq '.topology.direct_callers[:10]'
 ```
 
 If the name is ambiguous, disambiguate:

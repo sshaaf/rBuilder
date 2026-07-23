@@ -215,7 +215,7 @@ Dashboard: **Roadmap sort** dropdown in Metrics & tuning.
 
 ### 6.1 `migration_graph.json` (schema v2)
 
-Written to `.rbuilder/dashboard/migration_graph.json` on discover.
+Written to `.rbuilder/dashboard/migration_graph.json` on `discover --with-dashboard`.
 
 ```json
 {
@@ -244,7 +244,7 @@ Note: field name `communities` is historical — entries are **macro packages**.
 
 ### 6.2 `migration_plan.json` (schema v2)
 
-Default export on discover uses `hybrid_default` + `scheduled`. CLI can override.
+Default export on `discover --with-dashboard` uses `hybrid_default` + `scheduled`. CLI can override.
 
 ```json
 {
@@ -367,7 +367,7 @@ Top → bottom:
 
 ```bash
 # Full analysis + dashboard bundle (includes migration_graph.json + default plan)
-rbuilder discover . --with-cfg --with-security --with-taint
+rbuilder discover . --with-cfg --with-security --with-taint --with-dashboard --with-harmonic --export-migration-hints
 
 # Export plan to file (harmonic required for β term in ranking)
 rbuilder discover . --with-harmonic --export-migration-hints \

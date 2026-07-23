@@ -131,10 +131,10 @@ Screenshot placeholders (capture with `dashboard/scripts/capture-migration-scree
 | Problem | Fix |
 |---------|-----|
 | “Graph not found” / empty stats | Run `rbuilder discover . --with-dashboard` in repo root |
-| WASM engine error in notifications | Rebuild dashboard (`npm run build` in `dashboard/`) and re-run `discover` |
-| Stale data after git pull | Re-run `discover` |
-| Semantic search empty / warning | Index not built or served without API | `rbuilder semantic index` then `rbuilder serve --open` |
-| Migration tab empty | `discover . --with-cfg --with-security --with-taint --with-dashboard --with-harmonic --export-migration-hints` |
+| WASM engine error in notifications | Rebuild dashboard (`npm run build` in `dashboard/`) and re-run `discover --with-dashboard` |
+| Stale data after git pull | Re-run `discover` (with `--with-dashboard` if using UI) |
+| Semantic search empty / warning | `rbuilder semantic index` then `rbuilder serve --open` |
+| Migration tab empty | `rbuilder discover . --with-cfg --with-security --with-taint --with-dashboard --with-harmonic --export-migration-hints` |
 
 ---
 

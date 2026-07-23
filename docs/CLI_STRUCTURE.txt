@@ -1,6 +1,7 @@
 rBuilder CLI Structure (developer reference)
 ==========================================
-Last synced: 2026-07-03 — see docs/cli-output-schemas.md for JSON contracts.
+Last synced: 2026-07-23 — prefer `rbuilder --help` and docs/cli-output-schemas.md / docs/json-api.md for JSON contracts.
+User Guide is the canonical human reference; this file is a maintainer cheat sheet.
 
 rbuilder [GLOBAL OPTIONS] <COMMAND>
 
@@ -20,9 +21,13 @@ Active Commands:
 │   ├── --with-security [--security] Secret scanning pass
 │   ├── --with-cfg [--cfg]          CFG / dominators / PDG archive
 │   ├── --with-taint                Discover-time taint (implies CFG pass)
+│   ├── --with-dfg-loops            Tag loop-carried DFG edges (with --with-cfg)
+│   ├── --with-ast-skeleton         AST skeleton archive for `cpg ast`
 │   ├── --with-harmonic             Harmonic centrality
-│   ├── --with-dashboard            Static dashboard bundle
+│   ├── --with-dashboard            Static dashboard bundle (off by default)
 │   ├── --export-migration-hints    Migration roadmap JSON
+│   ├── --migration-preset          Preset for migration hints
+│   ├── --migration-order           scheduled|priority
 │   └── --write-json-graph          Also write legacy graph.db / graph.json (opt-in)
 │
 │   Writes (default, under {repo}/.rbuilder/):
@@ -72,6 +77,18 @@ Active Commands:
 │   ├── --betweenness
 │   ├── --communities
 │   └── --iterations <N>
+│
+├── semantic
+│   ├── index [--embedder code-daemon|vocab|hash] [--dimensions N]
+│   └── query <TEXT> [--limit N] [--scope function|community] …
+│
+├── communities
+│   ├── list
+│   └── label [--write]
+│
+├── cpg
+│   ├── status | function | calls | mutations | flows | ast | pdg | slice | export
+│   └── (requires discover --with-cfg for L_proc / field-write index)
 │
 ├── check
 │   └── --policy-file <PATH>
