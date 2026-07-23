@@ -1,4 +1,8 @@
 # Website — deploy
+#
+# Builds the static Next.js site under website/ and publishes to GitHub Pages.
+# Allowed deployment branches (github-pages environment): main, docs
+# Triggers: push to main|docs (website paths) or manual workflow_dispatch on either branch.
 
 name: Website
 
@@ -16,7 +20,7 @@ permissions:
   id-token: write
 
 concurrency:
-  group: website-pages
+  group: website-pages-${{ github.ref_name }}
   cancel-in-progress: true
 
 jobs:
@@ -43,7 +47,7 @@ jobs:
 
       - name: Build static export
         env:
-          # Project Pages site: https://sshaaf.github.io/rBuilder/
+          # Custom domain Pages site: https://shaaf.dev/rBuilder/
           NEXT_PUBLIC_BASE_PATH: /rBuilder
           # Optional: repo Settings → Secrets → Actions → NEXT_PUBLIC_GA_MEASUREMENT_ID (G-…)
           NEXT_PUBLIC_GA_MEASUREMENT_ID: ${{ secrets.NEXT_PUBLIC_GA_MEASUREMENT_ID }}
@@ -56,6 +60,8 @@ jobs:
 
   deploy:
     needs: build
+    # github-pages environment allows branches: main, docs
+    if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/docs'
     runs-on: ubuntu-latest
     environment:
       name: github-pages

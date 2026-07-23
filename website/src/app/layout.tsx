@@ -32,7 +32,7 @@ export const metadata: Metadata = {
   },
   description:
     "Open-source code knowledge graph for LLM agents. Index once, query compact JSON — blast radius, GQL, semantic search, migration planning.",
-  metadataBase: new URL("https://sshaaf.github.io/rBuilder"),
+  metadataBase: new URL("https://shaaf.dev/rBuilder"),
   openGraph: {
     title: "rBuilder",
     description:

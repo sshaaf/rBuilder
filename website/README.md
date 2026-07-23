@@ -45,9 +45,11 @@ NEXT_PUBLIC_BASE_PATH=/rBuilder pnpm build
 
 GitHub Actions workflow: `.github/workflows/website.yml`
 
+Runs on pushes to **`main`** or **`docs`** (when `website/` or the workflow file changes), and via **workflow_dispatch** on either branch.
+
 1. Repo **Settings → Pages → Build and deployment → Source: GitHub Actions**
-2. Push changes under `website/` (or run the workflow manually)
-3. Site: `https://sshaaf.github.io/rBuilder/`
+2. Environment **github-pages** deployment branches: `main`, `docs`
+3. Site: `https://shaaf.dev/rBuilder/` (GitHub Pages + custom domain)
 
 ## Routes
 
