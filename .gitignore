@@ -61,3 +61,18 @@ graphify-out/
 
 # VHS / Playwright intermediate recordings
 docs/videos/*.raw.webm
+
+# Website (Next.js static site under website/)
+website/node_modules/
+website/.next/
+website/out/
+website/.vercel/
+website/.turbo/
+website/coverage/
+website/*.tsbuildinfo
+website/.env
+website/.env.*
+website/.pnpm-debug.log*
+website/npm-debug.log*
+website/yarn-debug.log*
+website/yarn-error.log*
