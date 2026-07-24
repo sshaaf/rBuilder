@@ -8,7 +8,7 @@
 [![User Guide](https://img.shields.io/badge/docs-User%20Guide-0A7EA4)](docs/user-guide.md)
 [![Rust](https://img.shields.io/badge/Made%20with-Rust-orange?logo=rust)](https://www.rust-lang.org/)
 
-**Try it now:** [User Guide](docs/user-guide.md) (install → index → query) · [Download latest release](https://github.com/sshaaf/rBuilder/releases/latest) · [AGENTS.md](AGENTS.md) for LLM workflows
+**Try it now:** [User Guide](docs/user-guide.md) (install → index → query) · [Download latest release](https://github.com/sshaaf/rBuilder/releases/latest) · [Agent skill](skills/rbuilder/SKILL.md) · [AGENTS.md](AGENTS.md) for LLM workflows
 
 AI coding agents default to reading files sequentially. That burns context, misses structure, and produces confident wrong answers about impact and dependencies. **rBuilder indexes the whole repository once** into a rich graph with pre-computed **reachability**, then serves **compact, deterministic query results** — so agents (and humans) get the right slice of the codebase without loading it into the prompt.
 
@@ -240,7 +240,8 @@ Quick links into **[Introduction](docs/Introduction.md)** — see [Where most to
 | **[Introduction](docs/Introduction.md)** | Concepts — graph, reachability, each feature |
 | **[User Guide](docs/user-guide.md)** | Install, ecommerce-java fixture, every CLI command |
 | **[Dashboard user guide](docs/dashboard-user-guide.md)** | Browser UI tab-by-tab |
-| **[AGENTS.md](AGENTS.md)** | **LLM agents** — discover once, query JSON |
+| **[Agent skill](skills/rbuilder/SKILL.md)** | **Canonical agent playbook** — NL routing + CLI samples |
+| **[AGENTS.md](AGENTS.md)** | Minimal agent contract (points at skill) |
 | **[Agent recipes](docs/agent-recipes.md)** | Copy-paste automation workflows |
 | **[JSON API](docs/json-api.md)** | Parse `-f json` payloads |
 | **[HTTP API](docs/http-api.md)** | `rbuilder serve` → `/api/query` and `/api/semantic/*` |

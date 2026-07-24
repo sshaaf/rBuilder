@@ -1,6 +1,10 @@
-#AI
-.cursor/
-.claude/
+#AI — ignore local agent state, but keep committed skill discovery entrypoints
+.cursor/*
+!.cursor/skills/
+!.cursor/skills/**
+.claude/*
+!.claude/skills/
+!.claude/skills/**
 .opencode/
 openspec/
 .scratch/
@@ -46,8 +50,7 @@ graph.db
 graph.json
 graphify-out/
 
-# MCP
-.claude/
+# MCP (local MCP state — skill entrypoints allowed above via !.claude/skills/)
 
 # Logs
 *.log
