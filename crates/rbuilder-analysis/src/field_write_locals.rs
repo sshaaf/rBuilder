@@ -4,7 +4,62 @@
 //! target function. No full type inference / reflection.
 
 use std::collections::HashMap;
-use tree_sitter::{Node, Parser};
+use tree_sitter::{Node, Parser, Tree};
+
+type VisitFn = fn(Node, &[u8], &str, &mut HashMap<String, String>, bool);
+
+/// Pre-parsed source for merging locals across many functions in one file.
+///
+/// Tree-sitter [`Tree`] is not shared across threads; keep one context per Rayon task.
+pub struct LocalsParseContext<'a> {
+    source: &'a str,
+    tree: Tree,
+    visit: VisitFn,
+}
+
+impl<'a> LocalsParseContext<'a> {
+    /// Parse `source` once for `language`. Returns `None` for unknown languages or parse failure.
+    pub fn try_new(language: &str, source: &'a str) -> Option<Self> {
+        let (ts_lang, visit) = language_visit(language)?;
+        let mut parser = Parser::new();
+        parser.set_language(&ts_lang).ok()?;
+        let tree = parser.parse(source, None)?;
+        Some(Self {
+            source,
+            tree,
+            visit,
+        })
+    }
+
+    /// Merge typed locals + formals for `function_name` into `env` using the cached tree.
+    pub fn merge_into(&self, function_name: &str, env: &mut HashMap<String, String>) {
+        (self.visit)(
+            self.tree.root_node(),
+            self.source.as_bytes(),
+            function_name,
+            env,
+            false,
+        );
+    }
+}
+
+fn language_visit(language: &str) -> Option<(tree_sitter::Language, VisitFn)> {
+    Some(match language {
+        "java" => (tree_sitter_java::LANGUAGE.into(), visit_java),
+        "csharp" => (tree_sitter_c_sharp::LANGUAGE.into(), visit_csharp),
+        "go" => (tree_sitter_go::LANGUAGE.into(), visit_go),
+        "rust" => (tree_sitter_rust::LANGUAGE.into(), visit_rust),
+        "python" => (tree_sitter_python::LANGUAGE.into(), visit_python),
+        "javascript" => (tree_sitter_javascript::LANGUAGE.into(), visit_javascript),
+        "typescript" => (
+            tree_sitter_typescript::LANGUAGE_TYPESCRIPT.into(),
+            visit_typescript,
+        ),
+        "c" => (tree_sitter_c::LANGUAGE.into(), visit_c_family),
+        "cpp" => (tree_sitter_cpp::LANGUAGE.into(), visit_c_family),
+        _ => return None,
+    })
+}
 
 /// Merge typed locals + formals for `function_name` into `env` (name → bare type).
 pub fn merge_local_types(
@@ -13,86 +68,9 @@ pub fn merge_local_types(
     function_name: &str,
     env: &mut HashMap<String, String>,
 ) {
-    match language {
-        "java" => merge_with_grammar(
-            &tree_sitter_java::LANGUAGE.into(),
-            source,
-            function_name,
-            env,
-            visit_java,
-        ),
-        "csharp" => merge_with_grammar(
-            &tree_sitter_c_sharp::LANGUAGE.into(),
-            source,
-            function_name,
-            env,
-            visit_csharp,
-        ),
-        "go" => merge_with_grammar(
-            &tree_sitter_go::LANGUAGE.into(),
-            source,
-            function_name,
-            env,
-            visit_go,
-        ),
-        "rust" => merge_with_grammar(
-            &tree_sitter_rust::LANGUAGE.into(),
-            source,
-            function_name,
-            env,
-            visit_rust,
-        ),
-        "python" => merge_with_grammar(
-            &tree_sitter_python::LANGUAGE.into(),
-            source,
-            function_name,
-            env,
-            visit_python,
-        ),
-        "javascript" => merge_with_grammar(
-            &tree_sitter_javascript::LANGUAGE.into(),
-            source,
-            function_name,
-            env,
-            visit_javascript,
-        ),
-        "typescript" => {
-            let lang = tree_sitter_typescript::LANGUAGE_TYPESCRIPT.into();
-            merge_with_grammar(&lang, source, function_name, env, visit_typescript)
-        }
-        "c" => merge_with_grammar(
-            &tree_sitter_c::LANGUAGE.into(),
-            source,
-            function_name,
-            env,
-            visit_c_family,
-        ),
-        "cpp" => merge_with_grammar(
-            &tree_sitter_cpp::LANGUAGE.into(),
-            source,
-            function_name,
-            env,
-            visit_c_family,
-        ),
-        _ => {}
+    if let Some(ctx) = LocalsParseContext::try_new(language, source) {
+        ctx.merge_into(function_name, env);
     }
-}
-
-fn merge_with_grammar(
-    language: &tree_sitter::Language,
-    source: &str,
-    function_name: &str,
-    env: &mut HashMap<String, String>,
-    visit: fn(Node, &[u8], &str, &mut HashMap<String, String>, bool),
-) {
-    let mut parser = Parser::new();
-    if parser.set_language(language).is_err() {
-        return;
-    }
-    let Some(tree) = parser.parse(source, None) else {
-        return;
-    };
-    visit(tree.root_node(), source.as_bytes(), function_name, env, false);
 }
 
 fn normalize_type_name(name: &str) -> String {
@@ -753,5 +731,33 @@ func Process(order *OrderDTO) {
             env.get("order").map(|s| s.contains("OrderDTO")).unwrap_or(false),
             "env={env:?}"
         );
+    }
+
+    #[test]
+    fn parse_once_resolves_two_functions_in_same_file() {
+        let source = r#"
+public class Dual {
+    public void first(OrderDTO a) {
+        OrderDTO x = a;
+        x.status = "A";
+    }
+    public void second(OrderDTO b) {
+        OrderDTO y = b;
+        y.status = "B";
+    }
+}
+"#;
+        let ctx = LocalsParseContext::try_new("java", source).expect("parse");
+        let mut env_first = HashMap::new();
+        ctx.merge_into("first", &mut env_first);
+        assert_eq!(env_first.get("a").map(String::as_str), Some("OrderDTO"));
+        assert_eq!(env_first.get("x").map(String::as_str), Some("OrderDTO"));
+        assert!(env_first.get("y").is_none(), "first must not see second locals");
+
+        let mut env_second = HashMap::new();
+        ctx.merge_into("second", &mut env_second);
+        assert_eq!(env_second.get("b").map(String::as_str), Some("OrderDTO"));
+        assert_eq!(env_second.get("y").map(String::as_str), Some("OrderDTO"));
+        assert!(env_second.get("x").is_none(), "second must not see first locals");
     }
 }

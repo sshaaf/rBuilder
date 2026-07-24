@@ -541,7 +541,7 @@ pub(crate) fn run_full_analysis(
             Ok(None) => {}
             Err(err) => warn!(error = %err, "Failed to open CFG/PDG archive for field writes"),
         }
-        let _ = fw_start;
+        profile.field_write.secs = secs(fw_start.elapsed());
 
         if with_ast_skeleton {
             use crate::analysis::{

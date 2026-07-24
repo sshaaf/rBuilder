@@ -27,6 +27,7 @@ pub struct DiscoverStageReport {
     pub cfg_pdg: StageTiming,
     pub cfg_taint: StageTiming,
     pub cfg_archive: StageTiming,
+    pub field_write: StageTiming,
     pub blast_build: StageTiming,
     pub blast_query: StageTiming,
     pub blast_snapshot: StageTiming,
@@ -57,6 +58,7 @@ impl DiscoverStageReport {
             + self.security.secs
             + self.cfg_total.secs
             + self.cfg_archive.secs
+            + self.field_write.secs
             + self.blast_build.secs
             + self.blast_query.secs
             + self.blast_snapshot.secs
@@ -78,6 +80,7 @@ impl DiscoverStageReport {
             ("security", self.security.secs),
             ("cfg_total", self.cfg_total.secs),
             ("cfg_archive", self.cfg_archive.secs),
+            ("field_write", self.field_write.secs),
             ("blast_build", self.blast_build.secs),
             ("blast_query", self.blast_query.secs),
             ("blast_snapshot", self.blast_snapshot.secs),
