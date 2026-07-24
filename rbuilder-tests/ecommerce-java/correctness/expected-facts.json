@@ -30,26 +30,26 @@
         "must_call": ["correctnessMid"],
         "statements_contain": [
           "int value = correctnessMid();",
-          "if (flag)"
+          "flag"
         ],
-        "statement_kinds_any": ["Expression", "Branch", "Return"]
+        "statement_kinds_any": ["Declaration", "Branch", "Return"]
       },
       "cfg": {
-        "exact_block_count": 5,
-        "exact_edge_count": 5,
-        "exact_edge_kinds": ["iffalse", "iftrue", "next", "next", "return"],
+        "exact_block_count": 7,
+        "exact_edge_count": 6,
+        "exact_edge_kinds": ["iffalse", "iftrue", "next", "next", "return", "return"],
         "statements_contain": ["correctnessMid()"]
       },
       "pdg": {
-        "exact_data_deps": 1,
-        "exact_control_deps": 0,
-        "exact_node_count": 3,
-        "exact_node_kinds": ["Branch", "Expression", "Return"],
+        "exact_data_deps": 2,
+        "exact_control_deps": 1,
+        "exact_node_count": 4,
+        "exact_node_kinds": ["Branch", "Declaration", "Return", "Return"],
         "data_edges": [{ "variable": "value" }],
         "node_labels_contain": ["correctnessMid()", "value * 2"]
       },
       "dom": {
-        "exact_block_count": 5,
+        "exact_block_count": 7,
         "idom_contains": [
           { "block": 4, "immediate_dominator": 3 },
           { "block": 3, "immediate_dominator": 3 }

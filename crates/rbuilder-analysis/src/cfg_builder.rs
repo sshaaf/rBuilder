@@ -160,6 +160,12 @@ struct CfgBuilder<'a> {
     pending_breakable_label: Option<String>,
     /// Function-scoped `defer` stack (static approx; LIFO on return/panic).
     defer_stack: Vec<DeferredCall>,
+    /// Enclosing `finally` bodies (Java/C#-style), LIFO on return/throw.
+    finally_stack: Vec<Vec<DeferredCall>>,
+    /// Catch entry blocks for enclosing tries (Exception edges from throw sites).
+    try_catch_stack: Vec<Vec<BlockId>>,
+    /// When true, leaving a switch case falls into the next case (Java classic switch).
+    switch_implicit_fallthrough: bool,
 }
 
 struct BreakableContext {
@@ -190,6 +196,9 @@ impl<'a> CfgBuilder<'a> {
             pending_fallthrough: false,
             pending_breakable_label: None,
             defer_stack: Vec::new(),
+            finally_stack: Vec::new(),
+            try_catch_stack: Vec::new(),
+            switch_implicit_fallthrough: false,
         }
     }
 
@@ -242,6 +251,7 @@ impl<'a> CfgBuilder<'a> {
     }
 
     fn add_statement_to_current(&mut self, stmt: Statement) {
+        let kind = stmt.kind;
         let block = self
             .cfg
             .blocks
@@ -254,6 +264,26 @@ impl<'a> CfgBuilder<'a> {
             block.end_line = stmt.line;
         }
         block.statements.push(stmt);
+        // Conservative: any non-terminal stmt in a try may throw → catch.
+        if !matches!(kind, StatementKind::Return | StatementKind::Jump) {
+            self.wire_try_exception_from_current();
+        }
+    }
+
+    fn wire_try_exception_from_current(&mut self) {
+        let from = self.current_block;
+        let Some(handlers) = self.try_catch_stack.last() else {
+            return;
+        };
+        let handlers = handlers.clone();
+        for h in handlers {
+            let already = self.cfg.edges.iter().any(|e| {
+                e.from == from && e.to == h && e.edge_type == CfgEdgeType::Exception
+            });
+            if !already {
+                self.cfg.add_edge(from, h, CfgEdgeType::Exception);
+            }
+        }
     }
 
     fn visit_block(&mut self, node: Node, source: &[u8]) -> Result<BlockId> {
@@ -281,10 +311,13 @@ impl<'a> CfgBuilder<'a> {
             "do_statement" => self.visit_do(node, source),
             "for_statement" | "for_expression" | "for_in_expression" | "foreach_statement"
             | "for_range_loop" => self.visit_for(node, source),
+            "enhanced_for_statement" => self.visit_enhanced_for(node, source),
             "loop_expression" => self.visit_loop(node, source),
 
             // Returns
             "return_statement" | "return_expression" => self.visit_return(node, source),
+            "yield_statement" => self.visit_return(node, source),
+            "throw_statement" => self.visit_throw(node, source),
 
             // Jumps
             "break_expression" | "break_statement" => self.visit_break(node, source),
@@ -305,6 +338,7 @@ impl<'a> CfgBuilder<'a> {
             | "const_declaration"
             | "variable_declaration"
             | "local_declaration_statement"
+            | "local_variable_declaration"
             | "declaration" => {
                 self.add_statement(node, source, StatementKind::Declaration)?;
                 Ok(())
@@ -318,7 +352,7 @@ impl<'a> CfgBuilder<'a> {
                 self.add_statement(node, source, StatementKind::Assignment)?;
                 Ok(())
             }
-            "inc_statement" | "dec_statement" | "send_statement" => {
+            "inc_statement" | "dec_statement" | "send_statement" | "update_expression" => {
                 self.add_statement(node, source, StatementKind::Expression)?;
                 Ok(())
             }
@@ -329,10 +363,11 @@ impl<'a> CfgBuilder<'a> {
             // Rust match
             "match_expression" => self.visit_match(node, source),
 
-            // Go / shared switch & select
-            "switch_statement" | "type_switch_statement" | "expression_switch_statement" => {
-                self.visit_switch(node, source)
-            }
+            // Switch (Go + Java `switch_expression`)
+            "switch_statement"
+            | "type_switch_statement"
+            | "expression_switch_statement"
+            | "switch_expression" => self.visit_switch(node, source),
             "select_statement" => self.visit_select(node, source),
 
             // Go concurrency helpers
@@ -342,8 +377,12 @@ impl<'a> CfgBuilder<'a> {
                 Ok(())
             }
 
-            // Python try/except (simplified)
-            "try_statement" => self.visit_try(node, source),
+            // try / try-with-resources
+            "try_statement" | "try_with_resources_statement" => self.visit_try(node, source),
+            "assert_statement" => {
+                self.add_statement(node, source, StatementKind::Branch)?;
+                Ok(())
+            }
 
             // Block / body wrapper
             k if is_block_like(k) => {
@@ -554,34 +593,30 @@ impl<'a> CfgBuilder<'a> {
     }
 
     fn visit_for(&mut self, node: Node, source: &[u8]) -> Result<()> {
-        // Language-specific loop header pieces (Go for_clause / range_clause, C-like initializer).
+        // Go: for_clause / range_clause. Java/C-like: fields init/condition/update.
         let mut for_clause = None;
         let mut range_clause = None;
-        let mut while_cond = None;
         let mut cursor = node.walk();
         for child in node.children(&mut cursor) {
             match child.kind() {
                 "for_clause" => for_clause = Some(child),
                 "range_clause" => range_clause = Some(child),
-                k if while_cond.is_none()
-                    && child.is_named()
-                    && k != "block"
-                    && !is_block_like(k)
-                    && k != "for_clause"
-                    && k != "range_clause" =>
-                {
-                    // while-style `for cond { }` — bare condition expression child
-                    while_cond = Some(child);
-                }
                 _ => {}
             }
         }
 
+        // Init
         if let Some(clause) = for_clause {
-            if let Some(init) = clause.child_by_field_name("initializer") {
+            if let Some(init) = clause
+                .child_by_field_name("initializer")
+                .or_else(|| clause.child_by_field_name("init"))
+            {
                 self.visit_statement(init, source)?;
             }
-        } else if let Some(init) = node.child_by_field_name("initializer") {
+        } else if let Some(init) = node
+            .child_by_field_name("init")
+            .or_else(|| node.child_by_field_name("initializer"))
+        {
             self.visit_statement(init, source)?;
         } else if let Some(range) = range_clause {
             self.add_statement(range, source, StatementKind::Expression)?;
@@ -595,10 +630,37 @@ impl<'a> CfgBuilder<'a> {
         let body = self.new_block();
         let exit = self.new_block();
 
+        // Condition — prefer explicit fields; Go while-style bare expr only if no init/update fields.
         let cond_node = for_clause
             .and_then(|c| c.child_by_field_name("condition"))
-            .or(while_cond)
-            .or_else(|| node.child_by_field_name("condition"));
+            .or_else(|| node.child_by_field_name("condition"))
+            .or_else(|| {
+                // Go `for cond {}` — single expression child, not a declaration/update.
+                if for_clause.is_some() || range_clause.is_some() {
+                    return None;
+                }
+                if node.child_by_field_name("init").is_some()
+                    || node.child_by_field_name("update").is_some()
+                {
+                    return None;
+                }
+                let mut c = node.walk();
+                for child in node.children(&mut c) {
+                    if child.is_named()
+                        && child.kind() != "block"
+                        && !is_block_like(child.kind())
+                        && !matches!(
+                            child.kind(),
+                            "local_variable_declaration"
+                                | "update_expression"
+                                | "assignment_expression"
+                        )
+                    {
+                        return Some(child);
+                    }
+                }
+                None
+            });
 
         if let Some(cond) = cond_node {
             self.wire_condition(cond, source, body, exit)?;
@@ -623,16 +685,29 @@ impl<'a> CfgBuilder<'a> {
             self.cfg.add_edge(header, exit, CfgEdgeType::IfFalse);
         }
 
-        let update_block = if let Some(clause) = for_clause {
-            clause.child_by_field_name("update").map(|update_node| {
-                let update_block = self.new_block();
-                (update_block, update_node)
-            })
+        // Updates (Go for_clause.update or Java field "update" — possibly multiple).
+        let mut update_nodes: Vec<Node> = Vec::new();
+        if let Some(clause) = for_clause {
+            if let Some(u) = clause.child_by_field_name("update") {
+                update_nodes.push(u);
+            }
         } else {
-            None
-        };
+            let mut c = node.walk();
+            let mut idx = 0u32;
+            for child in node.children(&mut c) {
+                if node.field_name_for_child(idx) == Some("update") {
+                    update_nodes.push(child);
+                }
+                idx += 1;
+            }
+        }
 
-        let continue_target = update_block.map(|(id, _)| id).unwrap_or(header);
+        let update_block = if update_nodes.is_empty() {
+            None
+        } else {
+            Some(self.new_block())
+        };
+        let continue_target = update_block.unwrap_or(header);
         self.breakable_stack.push(BreakableContext {
             exit,
             continue_target: Some(continue_target),
@@ -649,16 +724,62 @@ impl<'a> CfgBuilder<'a> {
                 .add_edge(self.current_block, continue_target, CfgEdgeType::Jump);
         }
 
-        if let Some((update_id, update_node)) = update_block {
+        if let Some(update_id) = update_block {
             self.flow_active = true;
             self.current_block = update_id;
-            self.visit_statement(update_node, source)?;
+            for u in update_nodes {
+                self.visit_statement(u, source)?;
+            }
             if self.flow_active {
                 self.cfg
                     .add_edge(self.current_block, header, CfgEdgeType::Next);
             }
         }
 
+        self.breakable_stack.pop();
+        self.flow_active = true;
+        self.current_block = exit;
+        Ok(())
+    }
+
+    fn visit_enhanced_for(&mut self, node: Node, source: &[u8]) -> Result<()> {
+        if let Some(value) = node.child_by_field_name("value") {
+            self.add_statement(value, source, StatementKind::Expression)?;
+        }
+        let header = self.new_block();
+        self.cfg
+            .add_edge(self.current_block, header, CfgEdgeType::Next);
+        self.current_block = header;
+        let header_text = node
+            .child_by_field_name("value")
+            .and_then(|v| v.utf8_text(source).ok())
+            .map(|s| format!("for-each {s}"))
+            .unwrap_or_else(|| "for-each".to_string());
+        self.add_statement_to_current(Statement {
+            kind: StatementKind::Branch,
+            line: node.start_position().row + 1,
+            text: header_text,
+            defined_vars: HashSet::new(),
+            used_vars: HashSet::new(),
+        });
+        let body = self.new_block();
+        let exit = self.new_block();
+        self.cfg.add_edge(header, body, CfgEdgeType::IfTrue);
+        self.cfg.add_edge(header, exit, CfgEdgeType::IfFalse);
+        self.breakable_stack.push(BreakableContext {
+            exit,
+            continue_target: Some(header),
+            label: self.pending_breakable_label.take(),
+        });
+        self.flow_active = true;
+        self.current_block = body;
+        if let Some(body_node) = node.child_by_field_name("body") {
+            self.visit_block(body_node, source)?;
+        }
+        if self.flow_active {
+            self.cfg
+                .add_edge(self.current_block, header, CfgEdgeType::Jump);
+        }
         self.breakable_stack.pop();
         self.flow_active = true;
         self.current_block = exit;
@@ -693,8 +814,76 @@ impl<'a> CfgBuilder<'a> {
     }
 
     fn visit_return(&mut self, node: Node, source: &[u8]) -> Result<()> {
+        // Java: `return switch (...) { ... };` — lower the switch CFG, then exit.
+        if let Some(sw) = {
+            let mut found = None;
+            let mut c = node.walk();
+            for ch in node.children(&mut c) {
+                if ch.kind() == "switch_expression" {
+                    found = Some(ch);
+                    break;
+                }
+            }
+            found
+        } {
+            self.visit_switch(sw, source)?;
+            if !self.flow_active {
+                return Ok(());
+            }
+            self.add_statement_to_current(Statement {
+                kind: StatementKind::Return,
+                line: node.start_position().row + 1,
+                text: "return".to_string(),
+                defined_vars: HashSet::new(),
+                used_vars: HashSet::new(),
+            });
+            self.unwind_finallies(source)?;
+            self.unwind_defers_to_exit(CfgEdgeType::Return);
+            return Ok(());
+        }
+
         self.add_statement(node, source, StatementKind::Return)?;
+        self.unwind_finallies(source)?;
         self.unwind_defers_to_exit(CfgEdgeType::Return);
+        Ok(())
+    }
+
+    fn visit_throw(&mut self, node: Node, source: &[u8]) -> Result<()> {
+        self.add_statement(node, source, StatementKind::Jump)?;
+        // Inside try: route to catch entries (finally runs when leaving via catch/completion).
+        if let Some(handlers) = self.try_catch_stack.last() {
+            let handlers = handlers.clone();
+            for h in handlers {
+                self.cfg
+                    .add_edge(self.current_block, h, CfgEdgeType::Exception);
+            }
+            self.flow_active = false;
+            self.current_block = self.new_block();
+            return Ok(());
+        }
+        self.unwind_finallies(source)?;
+        self.unwind_defers_to_exit(CfgEdgeType::Exception);
+        Ok(())
+    }
+
+    /// Emit enclosing `finally` bodies (outermost last) before a terminal exit.
+    fn unwind_finallies(&mut self, _source: &[u8]) -> Result<()> {
+        let frames: Vec<Vec<DeferredCall>> = self.finally_stack.iter().rev().cloned().collect();
+        for stmts in frames {
+            for d in stmts {
+                let b = self.new_block();
+                self.cfg
+                    .add_edge(self.current_block, b, CfgEdgeType::Next);
+                self.current_block = b;
+                self.add_statement_to_current(Statement {
+                    kind: StatementKind::Expression,
+                    line: d.line,
+                    text: d.text,
+                    defined_vars: HashSet::new(),
+                    used_vars: HashSet::new(),
+                });
+            }
+        }
         Ok(())
     }
 
@@ -844,6 +1033,12 @@ impl<'a> CfgBuilder<'a> {
     fn visit_labeled_statement(&mut self, node: Node, source: &[u8]) -> Result<()> {
         let label = node
             .child_by_field_name("label")
+            .or_else(|| {
+                // Java: `identifier ':' statement` (no label field).
+                node.named_child(0).filter(|n| {
+                    matches!(n.kind(), "identifier" | "label_name")
+                })
+            })
             .and_then(|n| n.utf8_text(source).ok())
             .unwrap_or("")
             .trim()
@@ -859,7 +1054,6 @@ impl<'a> CfgBuilder<'a> {
         self.current_block = label_block;
         self.flow_active = true;
 
-        // `label: stmt` — visit the statement after the label (skip label_name).
         let mut cursor = node.walk();
         for child in node.children(&mut cursor) {
             if !child.is_named() {
@@ -871,10 +1065,19 @@ impl<'a> CfgBuilder<'a> {
             if node.child_by_field_name("label").is_some_and(|l| l.id() == child.id()) {
                 continue;
             }
+            // Java label identifier is the first named child — skip it.
+            if child.kind() == "identifier" {
+                if let Ok(t) = child.utf8_text(source) {
+                    if t.trim() == label {
+                        continue;
+                    }
+                }
+            }
             let attach_label = matches!(
                 child.kind(),
                 "for_statement"
                     | "for_expression"
+                    | "enhanced_for_statement"
                     | "while_statement"
                     | "while_expression"
                     | "do_statement"
@@ -882,6 +1085,7 @@ impl<'a> CfgBuilder<'a> {
                     | "switch_statement"
                     | "type_switch_statement"
                     | "expression_switch_statement"
+                    | "switch_expression"
                     | "select_statement"
             );
             if attach_label {
@@ -903,6 +1107,19 @@ impl<'a> CfgBuilder<'a> {
         true_dest: BlockId,
         false_dest: BlockId,
     ) -> Result<()> {
+        // Unwrap Java/C-style `(expr)`.
+        let cond = {
+            let mut c = cond;
+            while c.kind() == "parenthesized_expression" {
+                if let Some(inner) = c.named_child(0) {
+                    c = inner;
+                } else {
+                    break;
+                }
+            }
+            c
+        };
+
         if let Some(op) = logical_operator(cond, source) {
             let left = cond
                 .child_by_field_name("left")
@@ -1069,11 +1286,11 @@ impl<'a> CfgBuilder<'a> {
         let mut has_default = false;
         let mut any_reaches_merge = false;
         let mut fallthrough_from: Option<BlockId> = None;
-        for case in cases {
-            let is_default = matches!(
-                case.kind(),
-                "default_case" | "default_statement" | "switch_default"
-            );
+        let prev_implicit = self.switch_implicit_fallthrough;
+        for case in &cases {
+            // Java classic groups fall through by default; arrow rules / Go cases do not.
+            self.switch_implicit_fallthrough = matches!(case.kind(), "switch_block_statement_group");
+            let is_default = is_switch_default_case(*case, source);
             if is_default {
                 has_default = true;
             }
@@ -1091,8 +1308,10 @@ impl<'a> CfgBuilder<'a> {
             self.flow_active = true;
             self.pending_fallthrough = false;
             self.current_block = case_block;
-            self.visit_case_body(case, source)?;
-            if self.pending_fallthrough {
+            self.visit_case_body(*case, source)?;
+
+            let implicit = self.switch_implicit_fallthrough && self.flow_active;
+            if self.pending_fallthrough || implicit {
                 fallthrough_from = Some(self.current_block);
                 self.pending_fallthrough = false;
             } else if self.flow_active {
@@ -1100,6 +1319,13 @@ impl<'a> CfgBuilder<'a> {
                     .add_edge(self.current_block, merge, CfgEdgeType::Next);
                 any_reaches_merge = true;
             }
+        }
+        self.switch_implicit_fallthrough = prev_implicit;
+
+        // Trailing fallthrough with no next case → merge.
+        if let Some(src) = fallthrough_from {
+            self.cfg.add_edge(src, merge, CfgEdgeType::Next);
+            any_reaches_merge = true;
         }
 
         if !has_default {
@@ -1116,16 +1342,45 @@ impl<'a> CfgBuilder<'a> {
         Ok(())
     }
 
-    /// Lower switch/select case bodies (Go uses `statement_list`, others may use `body`).
+    /// Lower switch/select case bodies.
     fn visit_case_body(&mut self, case: Node, source: &[u8]) -> Result<()> {
         if let Some(body) = case.child_by_field_name("body") {
             self.visit_block(body, source)?;
             return Ok(());
         }
-        let mut cursor = case.walk();
-        for child in case.children(&mut cursor) {
-            if child.kind() == "statement_list" || is_block_like(child.kind()) {
-                self.visit_block(child, source)?;
+        match case.kind() {
+            "switch_block_statement_group" => {
+                let mut c = case.walk();
+                for child in case.children(&mut c) {
+                    if !child.is_named() {
+                        continue;
+                    }
+                    // Skip labels (`case 1:` / `default:`).
+                    if child.kind() == "switch_label" {
+                        continue;
+                    }
+                    self.visit_statement(child, source)?;
+                }
+            }
+            "switch_rule" => {
+                let mut c = case.walk();
+                for child in case.children(&mut c) {
+                    if !child.is_named() {
+                        continue;
+                    }
+                    if child.kind() == "switch_label" {
+                        continue;
+                    }
+                    self.visit_statement(child, source)?;
+                }
+            }
+            _ => {
+                let mut cursor = case.walk();
+                for child in case.children(&mut cursor) {
+                    if child.kind() == "statement_list" || is_block_like(child.kind()) {
+                        self.visit_block(child, source)?;
+                    }
+                }
             }
         }
         Ok(())
@@ -1136,50 +1391,228 @@ impl<'a> CfgBuilder<'a> {
     }
 
     fn visit_try(&mut self, node: Node, source: &[u8]) -> Result<()> {
+        // Snapshot finally + resource closes before body so return/throw can unwind them.
+        let mut finally_snapshot: Option<Vec<DeferredCall>> = None;
+        let mut catch_nodes: Vec<Node> = Vec::new();
+        let mut cursor = node.walk();
+        for child in node.children(&mut cursor) {
+            match child.kind() {
+                "finally_clause" => {
+                    finally_snapshot = Some(snapshot_block_stmts(child, source));
+                }
+                "except_clause" | "except_handler" | "catch_clause" => {
+                    catch_nodes.push(child);
+                }
+                _ => {}
+            }
+        }
+        let resource_closes = snapshot_resource_closes(node, source);
+
+        // Push order: user finally first, then resource closes → LIFO runs closes then finally.
+        let pushed_finally = finally_snapshot.is_some();
+        let pushed_closes = !resource_closes.is_empty();
+        if let Some(ref snap) = finally_snapshot {
+            self.finally_stack.push(snap.clone());
+        }
+        if pushed_closes {
+            self.finally_stack.push(resource_closes.clone());
+        }
+
+        // Pre-create catch entries so body statements can Exception-edge to them.
+        let catch_entries: Vec<BlockId> = catch_nodes.iter().map(|_| self.new_block()).collect();
+        if !catch_entries.is_empty() {
+            self.try_catch_stack.push(catch_entries.clone());
+        }
+
+        // Resource declarations run before the try body.
+        if let Some(resources) = node.child_by_field_name("resources") {
+            let mut c = resources.walk();
+            for child in resources.children(&mut c) {
+                if child.kind() == "resource" {
+                    self.add_statement(child, source, StatementKind::Declaration)?;
+                }
+            }
+        }
+
         let try_block = self.new_block();
         self.cfg
             .add_edge(self.current_block, try_block, CfgEdgeType::Next);
         self.current_block = try_block;
+        // Always link try entry → catch (covers return-only / empty bodies).
+        for &h in &catch_entries {
+            self.cfg.add_edge(try_block, h, CfgEdgeType::Exception);
+        }
         if let Some(body) = node.child_by_field_name("body") {
             self.visit_block(body, source)?;
         }
+        if !catch_entries.is_empty() {
+            self.try_catch_stack.pop();
+        }
+        let try_reached_end = self.flow_active;
         let mut try_end = self.current_block;
         let merge = self.new_block();
 
-        let mut cursor = node.walk();
-        for child in node.children(&mut cursor) {
-            if child.kind() == "except_clause"
-                || child.kind() == "except_handler"
-                || child.kind() == "catch_clause"
-            {
-                let handler = self.new_block();
-                self.cfg
-                    .add_edge(try_block, handler, CfgEdgeType::Exception);
-                self.current_block = handler;
-                if let Some(block) = child.child_by_field_name("body") {
-                    self.visit_block(block, source)?;
-                } else if child.kind() == "catch_clause" {
-                    if let Some(block) = find_child_kind(child, "block") {
-                        self.visit_block(block, source)?;
-                    }
-                }
-                self.cfg
-                    .add_edge(self.current_block, merge, CfgEdgeType::Next);
-            } else if child.kind() == "finally_clause" {
-                let finally = self.new_block();
-                self.cfg.add_edge(try_end, finally, CfgEdgeType::Next);
-                self.current_block = finally;
-                if let Some(block) = find_child_kind(child, "block") {
+        for (i, catch_node) in catch_nodes.iter().enumerate() {
+            let handler = catch_entries[i];
+            self.flow_active = true;
+            self.current_block = handler;
+            if let Some(block) = catch_node.child_by_field_name("body") {
+                self.visit_block(block, source)?;
+            } else if catch_node.kind() == "catch_clause" {
+                if let Some(block) = find_child_kind(*catch_node, "block") {
                     self.visit_block(block, source)?;
                 }
-                try_end = self.current_block;
+            }
+            if self.flow_active {
+                self.unwind_finallies(source)?;
+                if self.flow_active {
+                    self.cfg
+                        .add_edge(self.current_block, merge, CfgEdgeType::Next);
+                }
             }
         }
 
-        self.cfg.add_edge(try_end, merge, CfgEdgeType::Next);
+        if try_reached_end {
+            self.flow_active = true;
+            self.current_block = try_end;
+            // Same order as unwind_finallies: reverse stack = closes then user finally.
+            if pushed_closes {
+                for d in &resource_closes {
+                    let b = self.new_block();
+                    self.cfg
+                        .add_edge(self.current_block, b, CfgEdgeType::Next);
+                    self.current_block = b;
+                    self.add_statement_to_current(Statement {
+                        kind: StatementKind::Expression,
+                        line: d.line,
+                        text: d.text.clone(),
+                        defined_vars: HashSet::new(),
+                        used_vars: HashSet::new(),
+                    });
+                }
+            }
+            if let Some(ref stmts) = finally_snapshot {
+                for d in stmts {
+                    let b = self.new_block();
+                    self.cfg
+                        .add_edge(self.current_block, b, CfgEdgeType::Next);
+                    self.current_block = b;
+                    self.add_statement_to_current(Statement {
+                        kind: StatementKind::Expression,
+                        line: d.line,
+                        text: d.text.clone(),
+                        defined_vars: HashSet::new(),
+                        used_vars: HashSet::new(),
+                    });
+                }
+            }
+            try_end = self.current_block;
+            self.cfg.add_edge(try_end, merge, CfgEdgeType::Next);
+        }
+
+        if pushed_closes {
+            self.finally_stack.pop();
+        }
+        if pushed_finally {
+            self.finally_stack.pop();
+        }
+
+        self.flow_active = true;
         self.current_block = merge;
         Ok(())
     }
+}
+
+fn snapshot_resource_closes(node: Node, source: &[u8]) -> Vec<DeferredCall> {
+    let Some(resources) = node.child_by_field_name("resources") else {
+        return Vec::new();
+    };
+    let mut names: Vec<(String, usize)> = Vec::new();
+    let mut c = resources.walk();
+    for child in resources.children(&mut c) {
+        if child.kind() != "resource" {
+            continue;
+        }
+        let line = child.start_position().row + 1;
+        let name = child
+            .child_by_field_name("name")
+            .and_then(|n| n.utf8_text(source).ok())
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty() && s != "_")
+            .or_else(|| {
+                // `try (alreadyOpen)` / `try (obj.field)` — no `name` field.
+                if child.child_by_field_name("type").is_some() {
+                    return None;
+                }
+                child
+                    .named_child(0)
+                    .and_then(|n| n.utf8_text(source).ok())
+                    .map(|s| s.trim().to_string())
+                    .filter(|s| !s.is_empty())
+            });
+        if let Some(name) = name {
+            names.push((name, line));
+        }
+    }
+    // Close in reverse declaration order (JLS).
+    names
+        .into_iter()
+        .rev()
+        .map(|(name, line)| DeferredCall {
+            text: format!("{name}.close()"),
+            line,
+        })
+        .collect()
+}
+
+fn snapshot_block_stmts(node: Node, source: &[u8]) -> Vec<DeferredCall> {
+    let mut out = Vec::new();
+    let block = find_child_kind(node, "block").unwrap_or(node);
+    let mut stack = vec![block];
+    while let Some(n) = stack.pop() {
+        if matches!(
+            n.kind(),
+            "expression_statement"
+                | "method_invocation"
+                | "return_statement"
+                | "local_variable_declaration"
+                | "throw_statement"
+        ) {
+            if let Ok(t) = n.utf8_text(source) {
+                out.push(DeferredCall {
+                    text: t.trim().to_string(),
+                    line: n.start_position().row + 1,
+                });
+            }
+            continue;
+        }
+        let mut c = n.walk();
+        let children: Vec<_> = n.children(&mut c).filter(|ch| ch.is_named()).collect();
+        for ch in children.into_iter().rev() {
+            stack.push(ch);
+        }
+    }
+    out
+}
+
+fn is_switch_default_case(case: Node, source: &[u8]) -> bool {
+    if matches!(
+        case.kind(),
+        "default_case" | "default_statement" | "switch_default"
+    ) {
+        return true;
+    }
+    let mut c = case.walk();
+    for child in case.children(&mut c) {
+        if child.kind() == "switch_label" {
+            if let Ok(t) = child.utf8_text(source) {
+                if t.trim().starts_with("default") {
+                    return true;
+                }
+            }
+        }
+    }
+    false
 }
 
 fn find_child_kind<'a>(node: Node<'a>, kind: &str) -> Option<Node<'a>> {
@@ -1199,7 +1632,7 @@ fn collect_switch_cases<'a>(node: Node<'a>, cases: &mut Vec<Node<'a>>) {
     match node.kind() {
         "expression_case" | "type_case" | "case_clause" | "default_case" | "default_statement"
         | "case_statement" | "communication_case" | "switch_section" | "switch_case"
-        | "switch_default" => cases.push(node),
+        | "switch_default" | "switch_block_statement_group" | "switch_rule" => cases.push(node),
         _ => {
             let mut cursor = node.walk();
             for child in node.children(&mut cursor) {
@@ -2083,4 +2516,523 @@ function classify(v) {
         let result = build_cfg_for_function("rust", code, "missing");
         assert!(matches!(result, Err(Error::NotFound(_))));
     }
+
+    fn java_texts(cfg: &ControlFlowGraph) -> Vec<String> {
+        cfg.blocks
+            .values()
+            .flat_map(|b| b.statements.iter().map(|s| s.text.clone()))
+            .collect()
+    }
+
+    fn java_kinds(cfg: &ControlFlowGraph) -> Vec<StatementKind> {
+        cfg.blocks
+            .values()
+            .flat_map(|b| b.statements.iter().map(|s| s.kind))
+            .collect()
+    }
+
+    fn java_block_ids(cfg: &ControlFlowGraph, needle: &str) -> Vec<uuid::Uuid> {
+        cfg.blocks
+            .values()
+            .filter(|b| b.statements.iter().any(|s| s.text.contains(needle)))
+            .map(|b| b.id)
+            .collect()
+    }
+
+    #[test]
+    fn test_java_if_else_cfg() {
+        let code = r#"
+public class Demo {
+    public int abs(int x) {
+        if (x > 0) {
+            return x;
+        }
+        return -x;
+    }
 }
+"#;
+        let cfg = build_cfg_for_function("java", code, "abs").unwrap();
+        assert!(cfg.blocks.len() >= 4);
+        assert!(cfg
+            .edges
+            .iter()
+            .any(|e| e.edge_type == CfgEdgeType::IfTrue));
+        assert!(
+            java_kinds(&cfg)
+                .iter()
+                .filter(|k| **k == StatementKind::Return)
+                .count()
+                >= 2
+        );
+    }
+
+    #[test]
+    fn test_java_short_circuit_and() {
+        let code = r#"
+public class Demo {
+    public int sc(boolean a, boolean b) {
+        if (a && b) {
+            return 1;
+        }
+        return 0;
+    }
+}
+"#;
+        let cfg = build_cfg_for_function("java", code, "sc").unwrap();
+        let texts = java_texts(&cfg);
+        assert!(
+            texts.iter().any(|t| t.trim() == "a" || t == "a"),
+            "&& left must be its own branch, got {texts:?}"
+        );
+        assert!(
+            texts.iter().any(|t| t.trim() == "b" || t == "b"),
+            "&& right must be its own branch, got {texts:?}"
+        );
+        assert!(
+            !texts.iter().any(|t| t.contains("a && b")),
+            "must not keep (a && b) as one blob, got {texts:?}"
+        );
+    }
+
+    #[test]
+    fn test_java_for_clause_init_cond_update() {
+        let code = r#"
+public class Demo {
+    public int sum(int n) {
+        int total = 0;
+        for (int i = 0; i < n; i++) {
+            if (i == 1) {
+                continue;
+            }
+            total += i;
+        }
+        return total;
+    }
+}
+"#;
+        let cfg = build_cfg_for_function("java", code, "sum").unwrap();
+        let texts = java_texts(&cfg);
+        assert!(
+            texts.iter().any(|t| t.contains("i = 0") || t.contains("i=0")),
+            "for init, got {texts:?}"
+        );
+        assert!(
+            texts.iter().any(|t| t.contains("i < n") || t.contains("i<n")),
+            "for condition, got {texts:?}"
+        );
+        assert!(
+            texts.iter().any(|t| t.contains("i++")),
+            "for update, got {texts:?}"
+        );
+        assert!(cfg.has_cycle());
+        let cont = java_block_ids(&cfg, "continue");
+        let updates = java_block_ids(&cfg, "i++");
+        assert!(
+            cont.iter().any(|c| {
+                cfg.edges
+                    .iter()
+                    .any(|e| e.from == *c && updates.contains(&e.to) && e.edge_type == CfgEdgeType::Jump)
+            }),
+            "continue must Jump to i++"
+        );
+    }
+
+    #[test]
+    fn test_java_enhanced_for_has_cycle() {
+        let code = r#"
+public class Demo {
+    public int sum(int[] a) {
+        int t = 0;
+        for (int v : a) {
+            t += v;
+        }
+        return t;
+    }
+}
+"#;
+        let cfg = build_cfg_for_function("java", code, "sum").unwrap();
+        assert!(cfg.has_cycle(), "enhanced for must cycle");
+        assert!(
+            !java_texts(&cfg)
+                .iter()
+                .any(|t| t.trim_start().starts_with("for (int v")),
+            "enhanced for must not remain opaque blob, got {:?}",
+            java_texts(&cfg)
+        );
+        assert!(
+            java_texts(&cfg).iter().any(|t| t.contains("t += v") || t.contains("t+=v")),
+            "body must be lowered"
+        );
+    }
+
+    #[test]
+    fn test_java_switch_cases_emit_returns() {
+        let code = r#"
+public class Demo {
+    public int pick(int x) {
+        switch (x) {
+            case 1:
+                return 10;
+            case 2:
+                return 20;
+            default:
+                return 0;
+        }
+    }
+}
+"#;
+        let cfg = build_cfg_for_function("java", code, "pick").unwrap();
+        assert!(
+            java_kinds(&cfg)
+                .iter()
+                .filter(|k| **k == StatementKind::Return)
+                .count()
+                >= 3,
+            "case returns must lower, kinds={:?}",
+            java_kinds(&cfg)
+        );
+        assert!(
+            !java_texts(&cfg)
+                .iter()
+                .any(|t| t.trim_start().starts_with("switch")),
+            "switch must not be opaque blob"
+        );
+        let returns = cfg
+            .edges
+            .iter()
+            .filter(|e| e.edge_type == CfgEdgeType::Return)
+            .count();
+        assert!(returns >= 3, "Return edges from cases, got {returns}");
+    }
+
+    #[test]
+    fn test_java_switch_arrow_rules() {
+        let code = r#"
+public class Demo {
+    public int pick(int x) {
+        return switch (x) {
+            case 1 -> 10;
+            case 2 -> 20;
+            default -> 0;
+        };
+    }
+}
+"#;
+        let cfg = build_cfg_for_function("java", code, "pick").unwrap();
+        // Arrow arms should appear as distinct branch targets (expressions or returns).
+        assert!(
+            cfg.edges
+                .iter()
+                .filter(|e| e.edge_type == CfgEdgeType::IfTrue)
+                .count()
+                >= 2,
+            "arrow switch needs arm fan-out"
+        );
+        assert!(
+            !java_texts(&cfg)
+                .iter()
+                .any(|t| t.contains("case 1 ->") && t.contains("default")),
+            "arrow switch must not stay one blob, got {:?}",
+            java_texts(&cfg)
+        );
+    }
+
+    #[test]
+    fn test_java_labeled_break_continue() {
+        let code = r#"
+public class Demo {
+    public int nested() {
+        int n = 0;
+        outer:
+        for (int i = 0; i < 3; i++) {
+            for (int j = 0; j < 3; j++) {
+                if (j == 1) {
+                    continue outer;
+                }
+                if (j == 2) {
+                    break outer;
+                }
+                n++;
+            }
+        }
+        return n;
+    }
+}
+"#;
+        let cfg = build_cfg_for_function("java", code, "nested").unwrap();
+        let cont = java_block_ids(&cfg, "continue outer");
+        let brk = java_block_ids(&cfg, "break outer");
+        let updates = java_block_ids(&cfg, "i++");
+        assert!(!cont.is_empty() && !brk.is_empty() && !updates.is_empty());
+        assert!(
+            cont.iter().any(|c| {
+                cfg.edges.iter().any(|e| {
+                    e.from == *c && updates.contains(&e.to) && e.edge_type == CfgEdgeType::Jump
+                })
+            }),
+            "continue outer must Jump to outer i++"
+        );
+        assert!(
+            brk.iter().any(|b| {
+                cfg.edges.iter().any(|e| {
+                    e.from == *b
+                        && e.edge_type == CfgEdgeType::Jump
+                        && updates.iter().all(|u| e.to != *u)
+                })
+            }),
+            "break outer must Jump to outer exit, not i++"
+        );
+    }
+
+    #[test]
+    fn test_java_try_catch_exception_edge() {
+        let code = r#"
+public class Demo {
+    public int twc() {
+        try {
+            return 1;
+        } catch (Exception e) {
+            return 0;
+        }
+    }
+}
+"#;
+        let cfg = build_cfg_for_function("java", code, "twc").unwrap();
+        assert!(
+            cfg.edges
+                .iter()
+                .any(|e| e.edge_type == CfgEdgeType::Exception),
+            "try/catch needs Exception edge"
+        );
+        assert!(
+            java_kinds(&cfg)
+                .iter()
+                .filter(|k| **k == StatementKind::Return)
+                .count()
+                >= 2
+        );
+    }
+
+    #[test]
+    fn test_java_try_with_resources() {
+        let code = r#"
+public class Demo {
+    public int twr() throws Exception {
+        try (java.io.StringReader r = new java.io.StringReader("")) {
+            return 1;
+        } catch (Exception e) {
+            return 0;
+        }
+    }
+}
+"#;
+        let cfg = build_cfg_for_function("java", code, "twr").unwrap();
+        assert!(
+            !java_texts(&cfg)
+                .iter()
+                .any(|t| t.trim_start().starts_with("try (")),
+            "try-with-resources must not be opaque, got {:?}",
+            java_texts(&cfg)
+        );
+        assert!(
+            cfg.edges
+                .iter()
+                .any(|e| e.edge_type == CfgEdgeType::Exception)
+                || java_kinds(&cfg)
+                    .iter()
+                    .any(|k| *k == StatementKind::Return),
+            "twr should lower body/catch"
+        );
+    }
+
+    #[test]
+    fn test_java_try_with_resources_close_on_return() {
+        let code = r#"
+public class Demo {
+    public int twr() throws Exception {
+        try (java.io.StringReader r = new java.io.StringReader("");
+             java.io.StringReader s = new java.io.StringReader("")) {
+            return 1;
+        } finally {
+            System.out.println("userFinally");
+        }
+    }
+}
+"#;
+        let cfg = build_cfg_for_function("java", code, "twr").unwrap();
+        let texts = java_texts(&cfg);
+        assert!(
+            texts.iter().any(|t| t.contains("s.close()")),
+            "later resource must close first (LIFO), got {texts:?}"
+        );
+        assert!(
+            texts.iter().any(|t| t.contains("r.close()")),
+            "earlier resource must close, got {texts:?}"
+        );
+        assert!(
+            texts
+                .iter()
+                .any(|t| t.contains("userFinally") || t.contains("println")),
+            "user finally must still run, got {texts:?}"
+        );
+        let ret = java_block_ids(&cfg, "return 1");
+        let close_s = java_block_ids(&cfg, "s.close()");
+        assert!(!ret.is_empty() && !close_s.is_empty());
+        assert!(
+            ret.iter().any(|r| {
+                close_s.iter().any(|c| {
+                    cfg.edges.iter().any(|e| e.from == *r && e.to == *c)
+                        || {
+                            use std::collections::{HashSet, VecDeque};
+                            let mut seen = HashSet::new();
+                            let mut q = VecDeque::from([*r]);
+                            while let Some(n) = q.pop_front() {
+                                if n == *c {
+                                    return true;
+                                }
+                                if !seen.insert(n) {
+                                    continue;
+                                }
+                                for e in &cfg.edges {
+                                    if e.from == n {
+                                        q.push_back(e.to);
+                                    }
+                                }
+                            }
+                            false
+                        }
+                })
+            }),
+            "return must reach resource close before exit"
+        );
+    }
+
+    #[test]
+    fn test_java_try_exception_from_body_statement() {
+        let code = r#"
+public class Demo {
+    public int twc() {
+        try {
+            System.out.println("mayThrow");
+            return 1;
+        } catch (Exception e) {
+            return 0;
+        }
+    }
+}
+"#;
+        let cfg = build_cfg_for_function("java", code, "twc").unwrap();
+        let throw_sites = java_block_ids(&cfg, "mayThrow");
+        let catch_rets = java_block_ids(&cfg, "return 0");
+        assert!(!throw_sites.is_empty(), "body call must lower");
+        assert!(!catch_rets.is_empty(), "catch return must lower");
+        assert!(
+            throw_sites.iter().any(|from| {
+                cfg.edges.iter().any(|e| {
+                    e.from == *from
+                        && e.edge_type == CfgEdgeType::Exception
+                        && {
+                            // Exception target can reach catch return
+                            use std::collections::{HashSet, VecDeque};
+                            let mut seen = HashSet::new();
+                            let mut q = VecDeque::from([e.to]);
+                            while let Some(n) = q.pop_front() {
+                                if catch_rets.contains(&n) {
+                                    return true;
+                                }
+                                if !seen.insert(n) {
+                                    continue;
+                                }
+                                for edge in &cfg.edges {
+                                    if edge.from == n {
+                                        q.push_back(edge.to);
+                                    }
+                                }
+                            }
+                            false
+                        }
+                })
+            }),
+            "Exception edge must leave the body statement block, not only try entry"
+        );
+    }
+
+    #[test]
+    fn test_java_finally_on_return() {
+        let code = r#"
+public class Demo {
+    public int withFinally() {
+        try {
+            return 1;
+        } finally {
+            System.out.println("cleanup");
+        }
+    }
+}
+"#;
+        let cfg = build_cfg_for_function("java", code, "withFinally").unwrap();
+        let texts = java_texts(&cfg);
+        assert!(
+            texts.iter().any(|t| t.contains("cleanup") || t.contains("println")),
+            "finally body must run on return path, got {texts:?}"
+        );
+        let ret = java_block_ids(&cfg, "return 1");
+        let cleanup = java_block_ids(&cfg, "cleanup");
+        let cleanup2 = java_block_ids(&cfg, "println");
+        let cleans: Vec<_> = cleanup.into_iter().chain(cleanup2).collect();
+        assert!(!ret.is_empty() && !cleans.is_empty());
+        assert!(
+            ret.iter().any(|r| {
+                cleans.iter().any(|c| {
+                    cfg.edges.iter().any(|e| e.from == *r && e.to == *c)
+                        || {
+                            use std::collections::{HashSet, VecDeque};
+                            let mut seen = HashSet::new();
+                            let mut q = VecDeque::from([*r]);
+                            while let Some(n) = q.pop_front() {
+                                if n == *c {
+                                    return true;
+                                }
+                                if !seen.insert(n) {
+                                    continue;
+                                }
+                                for e in &cfg.edges {
+                                    if e.from == n {
+                                        q.push_back(e.to);
+                                    }
+                                }
+                            }
+                            false
+                        }
+                })
+            }),
+            "return must reach finally cleanup"
+        );
+    }
+
+    #[test]
+    fn test_java_throw_exits() {
+        let code = r#"
+public class Demo {
+    public void boom() {
+        throw new RuntimeException("x");
+    }
+}
+"#;
+        let cfg = build_cfg_for_function("java", code, "boom").unwrap();
+        assert!(
+            java_texts(&cfg).iter().any(|t| t.contains("throw")),
+            "throw must appear"
+        );
+        assert!(
+            cfg.edges.iter().any(|e| {
+                matches!(
+                    e.edge_type,
+                    CfgEdgeType::Exception | CfgEdgeType::Return | CfgEdgeType::Jump
+                )
+            }),
+            "throw must terminate with Exception/Return/Jump edge"
+        );
+    }
+}
+
