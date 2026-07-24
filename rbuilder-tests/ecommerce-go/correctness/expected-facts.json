@@ -111,7 +111,7 @@
       "identity": {
         "file_suffix": "methods.go"
       },
-      "notes": "LF-18 NewT constructor — FQN asserted in go_langfeatures (blast short-name is <init>)"
+      "notes": "LF-18 NewT constructor \u2014 FQN asserted in go_langfeatures (blast short-name is <init>)"
     },
     "lf_mark_processed": {
       "match": {
@@ -378,6 +378,47 @@
       },
       "dom": {
         "exact_block_count": 2
+      }
+    },
+    "lf_short_circuit": {
+      "match": {
+        "name": "LfShortCircuit",
+        "class": "cfg_features.go"
+      },
+      "severity": "required",
+      "unique": true,
+      "identity": {
+        "exact_name": "LfShortCircuit",
+        "file_suffix": "cfg_features.go",
+        "language": "go",
+        "canonical_fqn": "LfShortCircuit"
+      },
+      "cfg": {
+        "min_blocks": 6,
+        "statements_contain": [
+          "a",
+          "b"
+        ]
+      }
+    },
+    "lf_for_continue": {
+      "match": {
+        "name": "LfForContinue",
+        "class": "cfg_features.go"
+      },
+      "severity": "required",
+      "unique": true,
+      "identity": {
+        "exact_name": "LfForContinue",
+        "file_suffix": "cfg_features.go",
+        "language": "go",
+        "canonical_fqn": "LfForContinue"
+      },
+      "cfg": {
+        "min_blocks": 8,
+        "statements_contain": [
+          "continue"
+        ]
       }
     }
   },

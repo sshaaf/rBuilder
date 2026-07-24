@@ -396,6 +396,11 @@ impl<'a> CfgBuilder<'a> {
                     }
                     return Ok(());
                 }
+                // Lower await / ?? /?. inside initializers before recording the decl.
+                self.visit_declaration_initializers(node, source)?;
+                if !self.flow_active {
+                    return Ok(());
+                }
                 self.add_statement(node, source, StatementKind::Declaration)?;
                 Ok(())
             }
@@ -1722,15 +1727,60 @@ impl<'a> CfgBuilder<'a> {
         Ok(())
     }
 
-    /// C# `using var r = ...;` — Dispose at end of enclosing block / on return.
+    /// Walk declarator initializers for nested control-flow (`await`, `??`, `?.`, …).
+    fn visit_declaration_initializers(&mut self, node: Node, source: &[u8]) -> Result<()> {
+        let mut stack = vec![node];
+        while let Some(n) = stack.pop() {
+            if n.kind() == "variable_declarator" {
+                if let Some(value) = n.child_by_field_name("value") {
+                    self.visit_expr_for_control_flow(value, source)?;
+                } else {
+                    // C#: initializer is an unfielded named child after `name`.
+                    let name = n.child_by_field_name("name");
+                    let mut c = n.walk();
+                    for ch in n.children(&mut c) {
+                        if !ch.is_named() {
+                            continue;
+                        }
+                        if name.is_some_and(|nm| nm.id() == ch.id()) {
+                            continue;
+                        }
+                        self.visit_expr_for_control_flow(ch, source)?;
+                        if !self.flow_active {
+                            return Ok(());
+                        }
+                    }
+                }
+                if !self.flow_active {
+                    return Ok(());
+                }
+                continue;
+            }
+            let mut c = n.walk();
+            for ch in n.children(&mut c) {
+                if ch.is_named() {
+                    stack.push(ch);
+                }
+            }
+        }
+        Ok(())
+    }
+
     fn visit_using_declaration(&mut self, node: Node, source: &[u8]) -> Result<()> {
+        self.visit_declaration_initializers(node, source)?;
+        if !self.flow_active {
+            return Ok(());
+        }
         self.add_statement(node, source, StatementKind::Declaration)?;
         let mut resource_name = "resource".to_string();
         let line = node.start_position().row + 1;
         if let Some(decl) = find_child_kind(node, "variable_declaration")
             .or_else(|| find_child_kind(node, "variable_declarator"))
         {
-            if let Some(id) = find_child_kind(decl, "identifier") {
+            if let Some(id) = decl
+                .child_by_field_name("name")
+                .or_else(|| find_child_kind(decl, "identifier"))
+            {
                 if let Ok(t) = id.utf8_text(source) {
                     resource_name = t.trim().to_string();
                 }
@@ -4945,6 +4995,34 @@ public class Demo {
                 })
             }),
             "await must split resume (IfTrue) vs suspend (IfFalse/Return)"
+        );
+    }
+
+    #[test]
+    fn test_csharp_await_in_var_declaration() {
+        let code = r#"
+public class Demo {
+    public async System.Threading.Tasks.Task<int> Aw() {
+        var t = await System.Threading.Tasks.Task.FromResult(1);
+        return t;
+    }
+}
+"#;
+        let cfg = build_cfg_for_function("csharp", code, "Aw").unwrap();
+        assert!(
+            cs_texts(&cfg).iter().any(|t| t.contains("await")),
+            "await in var init must appear, got {:?}",
+            cs_texts(&cfg)
+        );
+        assert!(
+            cfg.edges
+                .iter()
+                .any(|e| e.edge_type == CfgEdgeType::IfTrue)
+                && cfg
+                    .edges
+                    .iter()
+                    .any(|e| e.edge_type == CfgEdgeType::IfFalse),
+            "var await must suspend/resume split"
         );
     }
 
