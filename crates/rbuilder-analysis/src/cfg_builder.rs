@@ -168,6 +168,10 @@ struct CfgBuilder<'a> {
     switch_implicit_fallthrough: bool,
     /// C `setjmp` sites in this function (approx targets for `longjmp`).
     setjmp_sites: Vec<BlockId>,
+    /// Innermost-first C# `switch` case labels for `goto case` / `goto default`.
+    switch_case_labels: Vec<HashMap<String, BlockId>>,
+    /// Exit blocks for nested local-function / lambda sub-CFGs (not function exits).
+    nested_exits: Vec<BlockId>,
 }
 
 struct BreakableContext {
@@ -202,6 +206,8 @@ impl<'a> CfgBuilder<'a> {
             try_catch_stack: Vec::new(),
             switch_implicit_fallthrough: false,
             setjmp_sites: Vec::new(),
+            switch_case_labels: Vec::new(),
+            nested_exits: Vec::new(),
         }
     }
 
@@ -290,16 +296,27 @@ impl<'a> CfgBuilder<'a> {
     }
 
     fn visit_block(&mut self, node: Node, source: &[u8]) -> Result<BlockId> {
+        let mut using_decls = 0usize;
         if is_block_like(node.kind()) {
             let mut cursor = node.walk();
             for child in node.children(&mut cursor) {
-                if child.is_named() {
+                if !child.is_named() {
+                    continue;
+                }
+                if is_csharp_using_declaration(child, source) {
+                    self.visit_using_declaration(child, source)?;
+                    using_decls += 1;
+                } else {
                     self.visit_statement(child, source)?;
                 }
             }
+        } else if is_csharp_using_declaration(node, source) {
+            self.visit_using_declaration(node, source)?;
+            using_decls += 1;
         } else {
             self.visit_statement(node, source)?;
         }
+        self.close_using_declarations(using_decls)?;
         Ok(self.current_block)
     }
 
@@ -317,15 +334,30 @@ impl<'a> CfgBuilder<'a> {
             "enhanced_for_statement" => self.visit_enhanced_for(node, source),
             "loop_expression" => self.visit_loop(node, source),
 
-            // Returns / coroutine returns
+            // Returns / coroutine / iterator yields
             "return_statement" | "return_expression" | "co_return_statement" => {
                 self.visit_return(node, source)
             }
-            "yield_statement" | "co_yield_statement" | "co_yield_expression" => {
-                self.visit_co_yield(node, source)
-            }
+            "co_yield_statement" | "co_yield_expression" => self.visit_co_yield(node, source),
+            "yield_statement" => self.visit_yield_statement(node, source),
             "throw_statement" | "throw_expression" => self.visit_throw(node, source),
             "co_await_expression" => self.visit_co_await(node, source),
+            "await_expression" => self.visit_await_expression(node, source),
+
+            // C# local functions / lambdas → disconnected sub-CFGs
+            "local_function_statement" => self.visit_nested_subcfg(node, source),
+            "lambda_expression" | "anonymous_method_expression" => {
+                self.visit_nested_subcfg(node, source)
+            }
+
+            // C# resource / sync sugar → finally-style cleanup
+            "using_statement" => self.visit_using_statement(node, source),
+            "lock_statement" => self.visit_lock_statement(node, source),
+
+            // Null-conditional / coalescing (also visited from expr walk)
+            "conditional_access_expression" => {
+                self.visit_conditional_access(node, source)
+            }
 
             // Jumps
             "break_expression" | "break_statement" => self.visit_break(node, source),
@@ -352,6 +384,9 @@ impl<'a> CfgBuilder<'a> {
             | "local_variable_declaration"
             | "declaration"
             | "init_statement" => {
+                if is_csharp_using_declaration(node, source) {
+                    return self.visit_using_declaration(node, source);
+                }
                 if node.kind() == "init_statement" {
                     let mut c = node.walk();
                     for child in node.children(&mut c) {
@@ -373,7 +408,8 @@ impl<'a> CfgBuilder<'a> {
                 self.add_statement(node, source, StatementKind::Assignment)?;
                 Ok(())
             }
-            "inc_statement" | "dec_statement" | "send_statement" | "update_expression" => {
+            "inc_statement" | "dec_statement" | "send_statement" | "update_expression"
+            | "postfix_unary_expression" | "prefix_unary_expression" => {
                 self.add_statement(node, source, StatementKind::Expression)?;
                 Ok(())
             }
@@ -387,11 +423,11 @@ impl<'a> CfgBuilder<'a> {
             // Rust match
             "match_expression" => self.visit_match(node, source),
 
-            // Switch (Go + Java `switch_expression`)
+            // Switch (Go + Java/C# `switch_expression`)
             "switch_statement"
             | "type_switch_statement"
-            | "expression_switch_statement"
-            | "switch_expression" => self.visit_switch(node, source),
+            | "expression_switch_statement" => self.visit_switch(node, source),
+            "switch_expression" => self.visit_switch_expression(node, source),
             "select_statement" => self.visit_select(node, source),
 
             // Go concurrency helpers
@@ -408,9 +444,8 @@ impl<'a> CfgBuilder<'a> {
                 Ok(())
             }
 
-            // Rust `expr?` and `.await`
+            // Rust `expr?` (await already matched above)
             "try_expression" => self.visit_try_expression(node, source),
-            "await_expression" => self.visit_await_expression(node, source),
             "macro_invocation" => self.visit_macro_invocation(node, source),
 
             // Block / body wrapper
@@ -442,10 +477,16 @@ impl<'a> CfgBuilder<'a> {
             "if_statement" | "if_expression" | "while_statement" | "while_expression"
             | "for_statement" | "for_expression" | "for_in_expression" | "loop_expression"
             | "match_expression" | "return_statement" | "return_expression"
-            |             "try_expression" | "await_expression" | "break_expression" | "continue_expression"
+            | "try_expression" | "await_expression" | "break_expression" | "continue_expression"
             | "macro_invocation" | "conditional_expression" | "co_await_expression"
             | "throw_statement" | "throw_expression" | "co_yield_statement"
-            | "co_return_statement" => self.visit_statement(inner, source),
+            | "co_return_statement" | "switch_expression"
+            | "conditional_access_expression"
+            | "lambda_expression"
+            | "anonymous_method_expression" => self.visit_statement(inner, source),
+            "binary_expression" if null_coalesce_operator(inner, source) => {
+                self.visit_null_coalesce(inner, source)
+            }
             _ => {
                 self.visit_expr_for_control_flow(inner, source)?;
                 if !self.flow_active {
@@ -476,6 +517,14 @@ impl<'a> CfgBuilder<'a> {
         match node.kind() {
             "try_expression" => self.visit_try_expression(node, source),
             "await_expression" => self.visit_await_expression(node, source),
+            "conditional_access_expression" => self.visit_conditional_access(node, source),
+            "switch_expression" => self.visit_switch_expression(node, source),
+            "lambda_expression" | "anonymous_method_expression" => {
+                self.visit_nested_subcfg(node, source)
+            }
+            "binary_expression" if null_coalesce_operator(node, source) => {
+                self.visit_null_coalesce(node, source)
+            }
             "if_expression" | "if_statement" | "match_expression" | "loop_expression"
             | "while_expression" | "while_statement" | "for_expression" | "for_statement"
             | "return_expression" | "return_statement" | "break_expression"
@@ -651,10 +700,26 @@ impl<'a> CfgBuilder<'a> {
             defined_vars: HashSet::new(),
             used_vars: HashSet::new(),
         });
-        // Yield / resume split.
+        let from = self.current_block;
         let resume = self.new_block();
-        self.cfg
-            .add_edge(self.current_block, resume, CfgEdgeType::Next);
+        // Async state machine: completed → resume; incomplete → suspend/yield to caller.
+        if matches!(
+            self.language.to_lowercase().as_str(),
+            "csharp" | "cs" | "c#"
+        ) {
+            self.cfg.add_edge(from, resume, CfgEdgeType::IfTrue);
+            let suspend = self.new_block();
+            self.cfg.add_edge(from, suspend, CfgEdgeType::IfFalse);
+            if let Some(&nested) = self.nested_exits.last() {
+                self.cfg
+                    .add_edge(suspend, nested, CfgEdgeType::Return);
+            } else {
+                self.cfg.exits.push(suspend);
+            }
+        } else {
+            self.cfg.add_edge(from, resume, CfgEdgeType::Next);
+        }
+        self.flow_active = true;
         self.current_block = resume;
         Ok(())
     }
@@ -691,6 +756,201 @@ impl<'a> CfgBuilder<'a> {
         self.cfg
             .add_edge(self.current_block, resume, CfgEdgeType::Next);
         self.current_block = resume;
+        Ok(())
+    }
+
+    /// C# `yield return` (suspend) / `yield break` (exit).
+    fn visit_yield_statement(&mut self, node: Node, source: &[u8]) -> Result<()> {
+        let text = node.utf8_text(source).unwrap_or("yield").trim().to_string();
+        if text.contains("break") {
+            self.add_statement(node, source, StatementKind::Jump)?;
+            self.unwind_finallies(source)?;
+            self.unwind_defers_to_exit(CfgEdgeType::Return);
+            return Ok(());
+        }
+        self.add_statement(node, source, StatementKind::Branch)?;
+        let resume = self.new_block();
+        self.cfg
+            .add_edge(self.current_block, resume, CfgEdgeType::Next);
+        self.current_block = resume;
+        Ok(())
+    }
+
+    /// C# `using (var r = ...) { }` → finally-style `r.Dispose()`.
+    fn visit_using_statement(&mut self, node: Node, source: &[u8]) -> Result<()> {
+        let mut resource_name = "resource".to_string();
+        let mut resource_line = node.start_position().row + 1;
+        let mut c = node.walk();
+        for child in node.children(&mut c) {
+            if child.kind() == "variable_declaration" || child.kind() == "declaration" {
+                self.add_statement(child, source, StatementKind::Declaration)?;
+                resource_line = child.start_position().row + 1;
+                // Best-effort: first identifier in the declaration.
+                if let Some(id) = find_child_kind(child, "identifier") {
+                    if let Ok(t) = id.utf8_text(source) {
+                        resource_name = t.trim().to_string();
+                    }
+                }
+            }
+        }
+        let dispose = vec![DeferredCall {
+            text: format!("{resource_name}.Dispose()"),
+            line: resource_line,
+        }];
+        self.finally_stack.push(dispose.clone());
+
+        if let Some(body) = node.child_by_field_name("body") {
+            self.visit_block(body, source)?;
+        } else if let Some(block) = find_child_kind(node, "block") {
+            self.visit_block(block, source)?;
+        }
+
+        if self.flow_active {
+            for d in &dispose {
+                let b = self.new_block();
+                self.cfg
+                    .add_edge(self.current_block, b, CfgEdgeType::Next);
+                self.current_block = b;
+                self.add_statement_to_current(Statement {
+                    kind: StatementKind::Expression,
+                    line: d.line,
+                    text: d.text.clone(),
+                    defined_vars: HashSet::new(),
+                    used_vars: HashSet::new(),
+                });
+            }
+        }
+        self.finally_stack.pop();
+        Ok(())
+    }
+
+    /// C# `lock (obj) { }` → finally-style `Monitor.Exit(obj)`.
+    fn visit_lock_statement(&mut self, node: Node, source: &[u8]) -> Result<()> {
+        let mut obj = "obj".to_string();
+        let line = node.start_position().row + 1;
+        if let Some(id) = node.named_child(0) {
+            if let Ok(t) = id.utf8_text(source) {
+                obj = t.trim().to_string();
+            }
+        }
+        let exit_call = vec![DeferredCall {
+            text: format!("Monitor.Exit({obj})"),
+            line,
+        }];
+        self.finally_stack.push(exit_call.clone());
+
+        if let Some(body) = node.child_by_field_name("body") {
+            self.visit_block(body, source)?;
+        } else if let Some(block) = find_child_kind(node, "block") {
+            self.visit_block(block, source)?;
+        }
+
+        if self.flow_active {
+            for d in &exit_call {
+                let b = self.new_block();
+                self.cfg
+                    .add_edge(self.current_block, b, CfgEdgeType::Next);
+                self.current_block = b;
+                self.add_statement_to_current(Statement {
+                    kind: StatementKind::Expression,
+                    line: d.line,
+                    text: d.text.clone(),
+                    defined_vars: HashSet::new(),
+                    used_vars: HashSet::new(),
+                });
+            }
+        }
+        self.finally_stack.pop();
+        Ok(())
+    }
+
+    /// C# `obj?.Member` — null short-circuit.
+    fn visit_conditional_access(&mut self, node: Node, source: &[u8]) -> Result<()> {
+        let obj = node
+            .child_by_field_name("condition")
+            .or_else(|| node.named_child(0))
+            .unwrap_or(node);
+        let text = obj.utf8_text(source).unwrap_or("obj").trim().to_string();
+        self.add_statement_to_current(Statement {
+            kind: StatementKind::Branch,
+            line: node.start_position().row + 1,
+            text: format!("{text}?."),
+            defined_vars: HashSet::new(),
+            used_vars: HashSet::new(),
+        });
+        let non_null = self.new_block();
+        let null_path = self.new_block();
+        let merge = self.new_block();
+        let from = self.current_block;
+        self.cfg.add_edge(from, non_null, CfgEdgeType::IfTrue);
+        self.cfg.add_edge(from, null_path, CfgEdgeType::IfFalse);
+        // Non-null: continue access (opaque remainder).
+        self.flow_active = true;
+        self.current_block = non_null;
+        self.add_statement(node, source, StatementKind::Expression)?;
+        if self.flow_active {
+            self.cfg
+                .add_edge(self.current_block, merge, CfgEdgeType::Next);
+        }
+        self.flow_active = true;
+        self.current_block = null_path;
+        self.cfg
+            .add_edge(self.current_block, merge, CfgEdgeType::Next);
+        self.flow_active = true;
+        self.current_block = merge;
+        Ok(())
+    }
+
+    /// C# `a ?? b` — evaluate `b` only if `a` is null.
+    fn visit_null_coalesce(&mut self, node: Node, source: &[u8]) -> Result<()> {
+        let left = node
+            .child_by_field_name("left")
+            .ok_or_else(|| Error::ParseError {
+                file: "source".into(),
+                line: node.start_position().row + 1,
+                message: "?? missing left".into(),
+            })?;
+        let right = node
+            .child_by_field_name("right")
+            .ok_or_else(|| Error::ParseError {
+                file: "source".into(),
+                line: node.start_position().row + 1,
+                message: "?? missing right".into(),
+            })?;
+        self.visit_expr_for_control_flow(left, source)?;
+        if !self.flow_active {
+            return Ok(());
+        }
+        let left_text = left.utf8_text(source).unwrap_or("left").trim().to_string();
+        self.add_statement_to_current(Statement {
+            kind: StatementKind::Branch,
+            line: node.start_position().row + 1,
+            text: format!("{left_text} ??"),
+            defined_vars: HashSet::new(),
+            used_vars: HashSet::new(),
+        });
+        let non_null = self.new_block();
+        let null_path = self.new_block();
+        let merge = self.new_block();
+        let from = self.current_block;
+        self.cfg.add_edge(from, non_null, CfgEdgeType::IfTrue);
+        self.cfg.add_edge(from, null_path, CfgEdgeType::IfFalse);
+        self.flow_active = true;
+        self.current_block = non_null;
+        self.cfg
+            .add_edge(self.current_block, merge, CfgEdgeType::Next);
+        self.flow_active = true;
+        self.current_block = null_path;
+        self.visit_expr_for_control_flow(right, source)?;
+        if self.flow_active {
+            self.add_statement(right, source, StatementKind::Expression)?;
+            if self.flow_active {
+                self.cfg
+                    .add_edge(self.current_block, merge, CfgEdgeType::Next);
+            }
+        }
+        self.flow_active = true;
+        self.current_block = merge;
         Ok(())
     }
 
@@ -920,7 +1180,10 @@ impl<'a> CfgBuilder<'a> {
     fn visit_for(&mut self, node: Node, source: &[u8]) -> Result<()> {
         self.capture_embedded_loop_label(node, source);
 
-        // C++ range-for: `for (T v : range)`
+        // C# foreach / C++ range-for
+        if node.kind() == "foreach_statement" {
+            return self.visit_foreach(node, source);
+        }
         if node.kind() == "for_range_loop" {
             return self.visit_for_range(node, source);
         }
@@ -1076,6 +1339,60 @@ impl<'a> CfgBuilder<'a> {
             }
         }
 
+        self.breakable_stack.pop();
+        self.flow_active = true;
+        self.current_block = exit;
+        Ok(())
+    }
+
+    /// C# `foreach (var v in xs)`
+    fn visit_foreach(&mut self, node: Node, source: &[u8]) -> Result<()> {
+        if let Some(right) = node.child_by_field_name("right") {
+            self.add_statement(right, source, StatementKind::Expression)?;
+        }
+        let header = self.new_block();
+        self.cfg
+            .add_edge(self.current_block, header, CfgEdgeType::Next);
+        self.current_block = header;
+        let header_text = {
+            let left = node
+                .child_by_field_name("left")
+                .and_then(|l| l.utf8_text(source).ok())
+                .unwrap_or("v")
+                .trim();
+            let right = node
+                .child_by_field_name("right")
+                .and_then(|r| r.utf8_text(source).ok())
+                .unwrap_or("xs")
+                .trim();
+            // Avoid opaque `foreach ...` blobs; tests treat those as unlowered.
+            format!("for-each {left} in {right}")
+        };
+        self.add_statement_to_current(Statement {
+            kind: StatementKind::Branch,
+            line: node.start_position().row + 1,
+            text: header_text,
+            defined_vars: HashSet::new(),
+            used_vars: HashSet::new(),
+        });
+        let body = self.new_block();
+        let exit = self.new_block();
+        self.cfg.add_edge(header, body, CfgEdgeType::IfTrue);
+        self.cfg.add_edge(header, exit, CfgEdgeType::IfFalse);
+        self.breakable_stack.push(BreakableContext {
+            exit,
+            continue_target: Some(header),
+            label: self.pending_breakable_label.take(),
+        });
+        self.flow_active = true;
+        self.current_block = body;
+        if let Some(body_node) = node.child_by_field_name("body") {
+            self.visit_block(body_node, source)?;
+        }
+        if self.flow_active {
+            self.cfg
+                .add_edge(self.current_block, header, CfgEdgeType::Jump);
+        }
         self.breakable_stack.pop();
         self.flow_active = true;
         self.current_block = exit;
@@ -1274,7 +1591,7 @@ impl<'a> CfgBuilder<'a> {
             }
             found
         } {
-            self.visit_switch(sw, source)?;
+            self.visit_switch_expression(sw, source)?;
             if !self.flow_active {
                 return Ok(());
             }
@@ -1316,6 +1633,26 @@ impl<'a> CfgBuilder<'a> {
             self.unwind_finallies(source)?;
             self.unwind_defers_to_exit(CfgEdgeType::Return);
             return Ok(());
+        }
+
+        // C#: `return a ?? b;` / `return d?.M();` / nested await — lower CF first.
+        {
+            let mut c = node.walk();
+            for ch in node.children(&mut c) {
+                if !ch.is_named() {
+                    continue;
+                }
+                if matches!(
+                    ch.kind(),
+                    "switch_expression" | "conditional_expression"
+                ) {
+                    continue;
+                }
+                self.visit_expr_for_control_flow(ch, source)?;
+                if !self.flow_active {
+                    return Ok(());
+                }
+            }
         }
 
         self.add_statement(node, source, StatementKind::Return)?;
@@ -1385,6 +1722,181 @@ impl<'a> CfgBuilder<'a> {
         Ok(())
     }
 
+    /// C# `using var r = ...;` — Dispose at end of enclosing block / on return.
+    fn visit_using_declaration(&mut self, node: Node, source: &[u8]) -> Result<()> {
+        self.add_statement(node, source, StatementKind::Declaration)?;
+        let mut resource_name = "resource".to_string();
+        let line = node.start_position().row + 1;
+        if let Some(decl) = find_child_kind(node, "variable_declaration")
+            .or_else(|| find_child_kind(node, "variable_declarator"))
+        {
+            if let Some(id) = find_child_kind(decl, "identifier") {
+                if let Ok(t) = id.utf8_text(source) {
+                    resource_name = t.trim().to_string();
+                }
+            }
+        } else if let Some(id) = find_child_kind(node, "identifier") {
+            if let Ok(t) = id.utf8_text(source) {
+                resource_name = t.trim().to_string();
+            }
+        }
+        self.finally_stack.push(vec![DeferredCall {
+            text: format!("{resource_name}.Dispose()"),
+            line,
+        }]);
+        Ok(())
+    }
+
+    fn close_using_declarations(&mut self, count: usize) -> Result<()> {
+        for _ in 0..count {
+            let Some(dispose) = self.finally_stack.pop() else {
+                break;
+            };
+            if self.flow_active {
+                for d in &dispose {
+                    let b = self.new_block();
+                    self.cfg
+                        .add_edge(self.current_block, b, CfgEdgeType::Next);
+                    self.current_block = b;
+                    self.add_statement_to_current(Statement {
+                        kind: StatementKind::Expression,
+                        line: d.line,
+                        text: d.text.clone(),
+                        defined_vars: HashSet::new(),
+                        used_vars: HashSet::new(),
+                    });
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// Local function / lambda / anonymous method as a disconnected sub-CFG.
+    fn visit_nested_subcfg(&mut self, node: Node, source: &[u8]) -> Result<()> {
+        let kind = if node.kind() == "local_function_statement" {
+            StatementKind::Declaration
+        } else {
+            StatementKind::Expression
+        };
+        // Parent records the definition only — body is not sequential parent flow.
+        let parent_text = match node.kind() {
+            "local_function_statement" => {
+                let name = node
+                    .child_by_field_name("name")
+                    .and_then(|n| n.utf8_text(source).ok())
+                    .unwrap_or("local")
+                    .trim();
+                format!("local function {name}")
+            }
+            "anonymous_method_expression" => "anonymous method".to_string(),
+            _ => "lambda".to_string(),
+        };
+        self.add_statement_to_current(Statement {
+            kind,
+            line: node.start_position().row + 1,
+            text: parent_text,
+            defined_vars: HashSet::new(),
+            used_vars: HashSet::new(),
+        });
+
+        let body = node
+            .child_by_field_name("body")
+            .or_else(|| find_child_kind(node, "block"))
+            .or_else(|| {
+                // Expression-bodied local function / lambda.
+                node.child_by_field_name("value")
+                    .or_else(|| {
+                        let mut last = None;
+                        let mut c = node.walk();
+                        for ch in node.children(&mut c) {
+                            if ch.is_named()
+                                && !matches!(
+                                    ch.kind(),
+                                    "parameter_list"
+                                        | "implicit_parameter"
+                                        | "identifier"
+                                        | "predefined_type"
+                                        | "generic_name"
+                                        | "modifier"
+                                        | "attribute_list"
+                                )
+                            {
+                                last = Some(ch);
+                            }
+                        }
+                        last
+                    })
+            });
+
+        let Some(body) = body else {
+            return Ok(());
+        };
+
+        // Split so the definition block ends before parent continuation; Jump keeps
+        // the sub-CFG reachable for pruning without making it sequential parent flow.
+        let def_block = self.current_block;
+        let continue_block = self.new_block();
+        if self.flow_active {
+            self.cfg
+                .add_edge(def_block, continue_block, CfgEdgeType::Next);
+        }
+
+        let parent_flow = self.flow_active;
+        let parent_breakable = std::mem::take(&mut self.breakable_stack);
+        let parent_pending_label = self.pending_breakable_label.take();
+        let parent_labels = std::mem::take(&mut self.label_blocks);
+        let parent_fallthrough = self.pending_fallthrough;
+        let parent_switch_ft = self.switch_implicit_fallthrough;
+        let parent_defer = std::mem::take(&mut self.defer_stack);
+        let parent_finally = std::mem::take(&mut self.finally_stack);
+        let parent_try = std::mem::take(&mut self.try_catch_stack);
+        let parent_switch_cases = std::mem::take(&mut self.switch_case_labels);
+        let parent_setjmp = std::mem::take(&mut self.setjmp_sites);
+
+        let sub_entry = self.new_block();
+        let sub_exit = self.new_block();
+        self.cfg
+            .add_edge(def_block, sub_entry, CfgEdgeType::Jump);
+        self.nested_exits.push(sub_exit);
+        self.current_block = sub_entry;
+        self.flow_active = true;
+        self.pending_fallthrough = false;
+        self.switch_implicit_fallthrough = false;
+
+        if is_block_like(body.kind()) {
+            self.visit_block(body, source)?;
+        } else {
+            self.visit_expr_for_control_flow(body, source)?;
+            if self.flow_active {
+                self.add_statement(body, source, StatementKind::Expression)?;
+            }
+            if self.flow_active {
+                self.cfg
+                    .add_edge(self.current_block, sub_exit, CfgEdgeType::Return);
+                self.flow_active = false;
+            }
+        }
+        if self.flow_active {
+            self.cfg
+                .add_edge(self.current_block, sub_exit, CfgEdgeType::Next);
+        }
+        self.nested_exits.pop();
+
+        self.current_block = continue_block;
+        self.flow_active = parent_flow;
+        self.breakable_stack = parent_breakable;
+        self.pending_breakable_label = parent_pending_label;
+        self.label_blocks = parent_labels;
+        self.pending_fallthrough = parent_fallthrough;
+        self.switch_implicit_fallthrough = parent_switch_ft;
+        self.defer_stack = parent_defer;
+        self.finally_stack = parent_finally;
+        self.try_catch_stack = parent_try;
+        self.switch_case_labels = parent_switch_cases;
+        self.setjmp_sites = parent_setjmp;
+        Ok(())
+    }
+
     /// Route current block through deferred calls (LIFO) then a terminal exit edge.
     fn unwind_defers_to_exit(&mut self, terminal: CfgEdgeType) {
         let deferred: Vec<_> = self.defer_stack.iter().rev().cloned().collect();
@@ -1401,6 +1913,11 @@ impl<'a> CfgBuilder<'a> {
                 used_vars: HashSet::new(),
             });
             prev = b;
+        }
+        if let Some(&nested_exit) = self.nested_exits.last() {
+            self.cfg.add_edge(prev, nested_exit, terminal);
+            self.flow_active = false;
+            return;
         }
         let exit = self.new_block();
         self.cfg.add_edge(prev, exit, terminal);
@@ -1500,6 +2017,37 @@ impl<'a> CfgBuilder<'a> {
 
     fn visit_goto(&mut self, node: Node, source: &[u8]) -> Result<()> {
         self.add_statement(node, source, StatementKind::Jump)?;
+        let text = node.utf8_text(source).unwrap_or("").trim().to_string();
+
+        // C# `goto case X;` / `goto default;`
+        if text.starts_with("goto default") {
+            if let Some(target) = self
+                .switch_case_labels
+                .last()
+                .and_then(|m| m.get("default").copied())
+            {
+                self.cfg
+                    .add_edge(self.current_block, target, CfgEdgeType::Jump);
+            }
+            self.flow_active = false;
+            self.current_block = self.new_block();
+            return Ok(());
+        }
+        if text.starts_with("goto case") {
+            let key = goto_case_key(node, source);
+            if let Some(target) = key.and_then(|k| {
+                self.switch_case_labels
+                    .last()
+                    .and_then(|m| m.get(&k).copied())
+            }) {
+                self.cfg
+                    .add_edge(self.current_block, target, CfgEdgeType::Jump);
+            }
+            self.flow_active = false;
+            self.current_block = self.new_block();
+            return Ok(());
+        }
+
         let label = node
             .child_by_field_name("label")
             .or_else(|| node.named_child(0))
@@ -1896,28 +2444,40 @@ impl<'a> CfgBuilder<'a> {
             return Ok(());
         }
 
+        // Pre-create case blocks so `goto case` / `goto default` can resolve forward.
+        self.switch_case_labels.push(HashMap::new());
+        let mut case_blocks: Vec<BlockId> = Vec::with_capacity(cases.len());
         let mut has_default = false;
-        let mut any_reaches_merge = false;
-        let mut fallthrough_from: Option<BlockId> = None;
-        let prev_implicit = self.switch_implicit_fallthrough;
         for case in &cases {
-            // Java classic groups and C `case_statement` fall through by default.
-            self.switch_implicit_fallthrough = matches!(
-                case.kind(),
-                "switch_block_statement_group" | "case_statement" | "default_statement"
-            );
+            let case_block = self.new_block();
+            case_blocks.push(case_block);
             let is_default = is_switch_default_case(*case, source);
             if is_default {
                 has_default = true;
             }
-
-            let case_block = self.new_block();
+            if let Some(map) = self.switch_case_labels.last_mut() {
+                for key in switch_case_keys(*case, source) {
+                    map.insert(key, case_block);
+                }
+            }
             let edge = if is_default {
                 CfgEdgeType::IfFalse
             } else {
                 CfgEdgeType::IfTrue
             };
             self.cfg.add_edge(cond_block, case_block, edge);
+        }
+
+        let mut any_reaches_merge = false;
+        let mut fallthrough_from: Option<BlockId> = None;
+        let prev_implicit = self.switch_implicit_fallthrough;
+        for (case, case_block) in cases.iter().zip(case_blocks.iter().copied()) {
+            // Java classic groups and C `case_statement` fall through by default.
+            self.switch_implicit_fallthrough = matches!(
+                case.kind(),
+                "switch_block_statement_group" | "case_statement" | "default_statement"
+            );
+
             if let Some(src) = fallthrough_from.take() {
                 self.cfg.add_edge(src, case_block, CfgEdgeType::Jump);
             }
@@ -1946,14 +2506,121 @@ impl<'a> CfgBuilder<'a> {
 
         if !has_default {
             let default_block = self.new_block();
+            if let Some(map) = self.switch_case_labels.last_mut() {
+                map.insert("default".to_string(), default_block);
+            }
             self.cfg
                 .add_edge(cond_block, default_block, CfgEdgeType::IfFalse);
             self.cfg.add_edge(default_block, merge, CfgEdgeType::Next);
             any_reaches_merge = true;
         }
 
+        self.switch_case_labels.pop();
         self.breakable_stack.pop();
         self.flow_active = any_reaches_merge;
+        self.current_block = merge;
+        Ok(())
+    }
+
+    /// C# `x switch { pat => val, _ => other }` — multi-way value branch (no fallthrough).
+    /// Java `switch` expressions reuse `switch_expression` but use statement groups/rules —
+    /// those fall through to [`Self::visit_switch`].
+    fn visit_switch_expression(&mut self, node: Node, source: &[u8]) -> Result<()> {
+        let mut arms = Vec::new();
+        let mut cursor = node.walk();
+        for child in node.children(&mut cursor) {
+            if child.kind() == "switch_expression_arm" {
+                arms.push(child);
+            }
+        }
+        if arms.is_empty() {
+            return self.visit_switch(node, source);
+        }
+
+        let subject = node
+            .child_by_field_name("value")
+            .or_else(|| node.named_child(0))
+            .and_then(|n| n.utf8_text(source).ok())
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .unwrap_or_else(|| "switch".to_string());
+        self.add_statement_to_current(Statement {
+            kind: StatementKind::Branch,
+            line: node.start_position().row + 1,
+            text: subject,
+            defined_vars: HashSet::new(),
+            used_vars: HashSet::new(),
+        });
+        let cond_block = self.current_block;
+        let merge = self.new_block();
+
+        let mut pending_fail: Option<BlockId> = None;
+        for arm in arms {
+            let test = self.new_block();
+            if let Some(fail) = pending_fail.take() {
+                self.cfg.add_edge(fail, test, CfgEdgeType::Next);
+            } else {
+                self.cfg
+                    .add_edge(cond_block, test, CfgEdgeType::IfTrue);
+            }
+            self.flow_active = true;
+            self.current_block = test;
+
+            let body = self.new_block();
+            let fail = self.new_block();
+
+            // Optional `when` guard on the arm.
+            let when = find_child_kind(arm, "when_clause");
+            let pat_text = arm
+                .child_by_field_name("pattern")
+                .or_else(|| arm.named_child(0))
+                .and_then(|p| p.utf8_text(source).ok())
+                .map(|s| s.trim().to_string())
+                .unwrap_or_else(|| "arm".to_string());
+            self.add_statement_to_current(Statement {
+                kind: StatementKind::Branch,
+                line: arm.start_position().row + 1,
+                text: pat_text,
+                defined_vars: HashSet::new(),
+                used_vars: HashSet::new(),
+            });
+            if let Some(w) = when {
+                let mid = self.new_block();
+                self.cfg.add_edge(test, mid, CfgEdgeType::IfTrue);
+                self.cfg.add_edge(test, fail, CfgEdgeType::IfFalse);
+                self.flow_active = true;
+                self.current_block = mid;
+                let cond = w
+                    .child_by_field_name("condition")
+                    .or_else(|| w.child_by_field_name("value"))
+                    .or_else(|| w.named_child(0))
+                    .unwrap_or(w);
+                self.wire_condition(cond, source, body, fail)?;
+            } else {
+                self.cfg.add_edge(test, body, CfgEdgeType::IfTrue);
+                self.cfg.add_edge(test, fail, CfgEdgeType::IfFalse);
+            }
+            pending_fail = Some(fail);
+
+            self.flow_active = true;
+            self.current_block = body;
+            if let Some(value) = arm.child_by_field_name("value") {
+                self.visit_expr_for_control_flow(value, source)?;
+                if self.flow_active {
+                    self.add_statement(value, source, StatementKind::Expression)?;
+                }
+            }
+            if self.flow_active {
+                self.cfg
+                    .add_edge(self.current_block, merge, CfgEdgeType::Next);
+            }
+        }
+
+        if let Some(fail) = pending_fail {
+            self.cfg.add_edge(fail, merge, CfgEdgeType::Next);
+        }
+
+        self.flow_active = true;
         self.current_block = merge;
         Ok(())
     }
@@ -1965,6 +2632,56 @@ impl<'a> CfgBuilder<'a> {
             return Ok(());
         }
         match case.kind() {
+            "switch_section" => {
+                let mut when: Option<Node> = None;
+                let mut stmts: Vec<Node> = Vec::new();
+                let mut c = case.walk();
+                for child in case.children(&mut c) {
+                    if !child.is_named() {
+                        // Skip `case` / `default` / `:` tokens.
+                        continue;
+                    }
+                    match child.kind() {
+                        "case_switch_label"
+                        | "case_pattern_switch_label"
+                        | "default_switch_label"
+                        | "switch_label"
+                        | "constant_pattern"
+                        | "declaration_pattern"
+                        | "relational_pattern"
+                        | "var_pattern"
+                        | "recursive_pattern"
+                        | "list_pattern"
+                        | "type_pattern" => {
+                            // `when` may be nested under the pattern label.
+                            if when.is_none() {
+                                when = find_child_kind(child, "when_clause");
+                            }
+                        }
+                        "when_clause" => when = Some(child),
+                        _ => stmts.push(child),
+                    }
+                }
+                if let Some(w) = when {
+                    let body = self.new_block();
+                    let fail = self
+                        .breakable_stack
+                        .last()
+                        .map(|b| b.exit)
+                        .unwrap_or_else(|| self.new_block());
+                    let cond = w
+                        .child_by_field_name("condition")
+                        .or_else(|| w.child_by_field_name("value"))
+                        .or_else(|| w.named_child(0))
+                        .unwrap_or(w);
+                    self.wire_condition(cond, source, body, fail)?;
+                    self.flow_active = true;
+                    self.current_block = body;
+                }
+                for stmt in stmts {
+                    self.visit_statement(stmt, source)?;
+                }
+            }
             "switch_block_statement_group" | "switch_rule" => {
                 let mut c = case.walk();
                 for child in case.children(&mut c) {
@@ -2074,6 +2791,29 @@ impl<'a> CfgBuilder<'a> {
             let handler = catch_entries[i];
             self.flow_active = true;
             self.current_block = handler;
+
+            // C# `catch (E e) when (cond)` — filter before catch body.
+            if let Some(filter) = find_child_kind(*catch_node, "catch_filter_clause")
+                .or_else(|| find_child_kind(*catch_node, "when_clause"))
+            {
+                let body = self.new_block();
+                let fail = self.new_block();
+                let cond = filter
+                    .child_by_field_name("filter")
+                    .or_else(|| filter.child_by_field_name("condition"))
+                    .or_else(|| filter.child_by_field_name("value"))
+                    .or_else(|| filter.named_child(0))
+                    .unwrap_or(filter);
+                self.wire_condition(cond, source, body, fail)?;
+                // Filter fail → rethrow through finallies.
+                self.flow_active = true;
+                self.current_block = fail;
+                self.unwind_finallies(source)?;
+                self.unwind_defers_to_exit(CfgEdgeType::Exception);
+                self.flow_active = true;
+                self.current_block = body;
+            }
+
             if let Some(block) = catch_node.child_by_field_name("body") {
                 self.visit_block(block, source)?;
             } else if catch_node.kind() == "catch_clause" {
@@ -2253,7 +2993,14 @@ fn is_switch_default_case(case: Node, source: &[u8]) -> bool {
     }
     let mut c = case.walk();
     for child in case.children(&mut c) {
-        if child.kind() == "switch_label" {
+        // C# `switch_section`: bare `default` token (unnamed) or label nodes.
+        if child.kind() == "default" || child.kind() == "default_switch_label" {
+            return true;
+        }
+        if matches!(
+            child.kind(),
+            "switch_label" | "default_label"
+        ) {
             if let Ok(t) = child.utf8_text(source) {
                 if t.trim().starts_with("default") {
                     return true;
@@ -2397,6 +3144,153 @@ fn logical_operator<'a>(node: Node<'a>, source: &'a [u8]) -> Option<&'a str> {
         Some(text)
     } else {
         None
+    }
+}
+
+fn null_coalesce_operator(node: Node, source: &[u8]) -> bool {
+    if node.kind() != "binary_expression" {
+        return false;
+    }
+    node.child_by_field_name("operator")
+        .and_then(|op| op.utf8_text(source).ok())
+        .is_some_and(|t| t == "??")
+}
+
+fn is_csharp_using_declaration(node: Node, source: &[u8]) -> bool {
+    if node.kind() != "local_declaration_statement" {
+        return false;
+    }
+    let mut c = node.walk();
+    for ch in node.children(&mut c) {
+        if ch.kind() == "using" {
+            return true;
+        }
+    }
+    node.utf8_text(source)
+        .ok()
+        .is_some_and(|t| t.trim_start().starts_with("using "))
+}
+
+fn goto_case_key(node: Node, source: &[u8]) -> Option<String> {
+    let mut c = node.walk();
+    for ch in node.children(&mut c) {
+        if !ch.is_named() {
+            continue;
+        }
+        if matches!(
+            ch.kind(),
+            "integer_literal"
+                | "real_literal"
+                | "string_literal"
+                | "character_literal"
+                | "boolean_literal"
+                | "null_literal"
+                | "identifier"
+                | "prefix_unary_expression"
+        ) {
+            return ch.utf8_text(source).ok().map(|s| s.trim().to_string());
+        }
+    }
+    // Fallback: parse `goto case 2;`
+    let text = node.utf8_text(source).ok()?.trim();
+    let rest = text.strip_prefix("goto case")?.trim();
+    let key = rest.trim_end_matches(';').trim();
+    if key.is_empty() {
+        None
+    } else {
+        Some(key.to_string())
+    }
+}
+
+fn switch_case_keys(case: Node, source: &[u8]) -> Vec<String> {
+    if is_switch_default_case(case, source) {
+        return vec!["default".to_string()];
+    }
+    let mut keys = Vec::new();
+    let mut c = case.walk();
+    for child in case.children(&mut c) {
+        match child.kind() {
+            // C# modern grammar: `case 1:` → `case` + `constant_pattern` + `:`
+            "constant_pattern" => {
+                if let Ok(t) = child.utf8_text(source) {
+                    let t = t.trim();
+                    if !t.is_empty() {
+                        keys.push(t.to_string());
+                    }
+                }
+            }
+            "case_switch_label" | "switch_label" | "case_pattern_switch_label" => {
+                if let Some(k) = case_label_constant(child, source) {
+                    keys.push(k);
+                }
+            }
+            "case_statement" => {
+                if let Some(v) = child.child_by_field_name("value") {
+                    if let Ok(t) = v.utf8_text(source) {
+                        keys.push(t.trim().to_string());
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    if keys.is_empty() {
+        if let Some(v) = case.child_by_field_name("value") {
+            if let Ok(t) = v.utf8_text(source) {
+                keys.push(t.trim().to_string());
+            }
+        }
+    }
+    keys
+}
+
+fn case_label_constant(label: Node, source: &[u8]) -> Option<String> {
+    let mut c = label.walk();
+    for ch in label.children(&mut c) {
+        if !ch.is_named() {
+            continue;
+        }
+        if matches!(
+            ch.kind(),
+            "integer_literal"
+                | "real_literal"
+                | "string_literal"
+                | "character_literal"
+                | "boolean_literal"
+                | "null_literal"
+                | "identifier"
+                | "prefix_unary_expression"
+                | "constant_pattern"
+        ) {
+            return ch.utf8_text(source).ok().map(|s| s.trim().to_string());
+        }
+        // `constant_pattern` wraps the literal.
+        if let Some(inner) = ch.named_child(0) {
+            if matches!(
+                inner.kind(),
+                "integer_literal"
+                    | "real_literal"
+                    | "string_literal"
+                    | "character_literal"
+                    | "boolean_literal"
+                    | "null_literal"
+                    | "identifier"
+            ) {
+                return inner.utf8_text(source).ok().map(|s| s.trim().to_string());
+            }
+        }
+    }
+    // `case 1:` text fallback
+    let text = label.utf8_text(source).ok()?.trim();
+    let rest = text
+        .strip_prefix("case")?
+        .trim()
+        .trim_end_matches(':')
+        .trim();
+    if rest.is_empty() || rest.starts_with("var") || rest.contains(' ') {
+        None
+    } else {
+        Some(rest.to_string())
     }
 }
 
@@ -3418,6 +4312,10 @@ public class Demo {
 "#;
         let cfg = build_cfg_for_function("csharp", code, "Abs").unwrap();
         assert!(cfg.blocks.len() >= 4);
+        assert!(cfg
+            .edges
+            .iter()
+            .any(|e| e.edge_type == CfgEdgeType::IfTrue));
     }
 
     #[test]
@@ -3435,6 +4333,619 @@ public class Demo {
 "#;
         let cfg = build_cfg_for_function("csharp", code, "Sum").unwrap();
         assert!(cfg.has_cycle());
+    }
+
+    fn cs_texts(cfg: &ControlFlowGraph) -> Vec<String> {
+        cfg.blocks
+            .values()
+            .flat_map(|b| b.statements.iter().map(|s| s.text.clone()))
+            .collect()
+    }
+
+    fn cs_kinds(cfg: &ControlFlowGraph) -> Vec<StatementKind> {
+        cfg.blocks
+            .values()
+            .flat_map(|b| b.statements.iter().map(|s| s.kind))
+            .collect()
+    }
+
+    fn cs_block_ids(cfg: &ControlFlowGraph, needle: &str) -> Vec<uuid::Uuid> {
+        cfg.blocks
+            .values()
+            .filter(|b| b.statements.iter().any(|s| s.text.contains(needle)))
+            .map(|b| b.id)
+            .collect()
+    }
+
+    #[test]
+    fn test_csharp_short_circuit_and() {
+        let code = r#"
+public class Demo {
+    public int Sc(bool a, bool b) {
+        if (a && b) { return 1; }
+        return 0;
+    }
+}
+"#;
+        let cfg = build_cfg_for_function("csharp", code, "Sc").unwrap();
+        let texts = cs_texts(&cfg);
+        assert!(texts.iter().any(|t| t.trim() == "a"), "got {texts:?}");
+        assert!(texts.iter().any(|t| t.trim() == "b"), "got {texts:?}");
+    }
+
+    #[test]
+    fn test_csharp_for_continue_to_update() {
+        let code = r#"
+public class Demo {
+    public int Sum(int n) {
+        int total = 0;
+        for (int i = 0; i < n; i++) {
+            if (i == 1) { continue; }
+            total += i;
+        }
+        return total;
+    }
+}
+"#;
+        let cfg = build_cfg_for_function("csharp", code, "Sum").unwrap();
+        let cont = cs_block_ids(&cfg, "continue");
+        let updates = cs_block_ids(&cfg, "i++");
+        assert!(
+            cont.iter().any(|c| {
+                cfg.edges.iter().any(|e| {
+                    e.from == *c && updates.contains(&e.to) && e.edge_type == CfgEdgeType::Jump
+                })
+            }),
+            "continue must Jump to i++"
+        );
+    }
+
+    #[test]
+    fn test_csharp_foreach_cycle() {
+        let code = r#"
+public class Demo {
+    public int Fe(int[] a) {
+        int t = 0;
+        foreach (var v in a) {
+            t += v;
+        }
+        return t;
+    }
+}
+"#;
+        let cfg = build_cfg_for_function("csharp", code, "Fe").unwrap();
+        assert!(cfg.has_cycle(), "foreach must cycle");
+        assert!(
+            cs_texts(&cfg).iter().any(|t| t.contains("t += v") || t.contains("t+=v")),
+            "body must lower, got {:?}",
+            cs_texts(&cfg)
+        );
+        assert!(
+            !cs_texts(&cfg)
+                .iter()
+                .any(|t| t.trim_start().starts_with("foreach")),
+            "foreach must not stay opaque, got {:?}",
+            cs_texts(&cfg)
+        );
+    }
+
+    #[test]
+    fn test_csharp_switch_sections_and_when() {
+        let code = r#"
+public class Demo {
+    public int Sw(int x) {
+        switch (x) {
+            case 1:
+                return 10;
+            case int i when i > 0:
+                return i;
+            default:
+                return 0;
+        }
+    }
+}
+"#;
+        let cfg = build_cfg_for_function("csharp", code, "Sw").unwrap();
+        assert!(
+            cs_kinds(&cfg)
+                .iter()
+                .filter(|k| **k == StatementKind::Return)
+                .count()
+                >= 3,
+            "section returns must lower, kinds={:?}",
+            cs_kinds(&cfg)
+        );
+        assert!(
+            cs_texts(&cfg)
+                .iter()
+                .any(|t| t.contains("i > 0") || t.trim() == "i > 0"),
+            "when guard must lower, got {:?}",
+            cs_texts(&cfg)
+        );
+    }
+
+    #[test]
+    fn test_csharp_switch_expression_arms() {
+        let code = r#"
+public class Demo {
+    public string Se(int x) {
+        return x switch {
+            > 0 => "pos",
+            _ => "neg"
+        };
+    }
+}
+"#;
+        let cfg = build_cfg_for_function("csharp", code, "Se").unwrap();
+        assert!(
+            cfg.edges
+                .iter()
+                .filter(|e| e.edge_type == CfgEdgeType::IfTrue)
+                .count()
+                >= 1,
+            "switch expression needs arm fan-out"
+        );
+        assert!(
+            !cs_texts(&cfg)
+                .iter()
+                .any(|t| t.contains("> 0 =>") && t.contains("_ =>")),
+            "must not stay one blob, got {:?}",
+            cs_texts(&cfg)
+        );
+    }
+
+    #[test]
+    fn test_csharp_null_coalescing() {
+        let code = r#"
+public class Demo {
+    public string Nc(string a, string b) {
+        return a ?? b;
+    }
+}
+"#;
+        let cfg = build_cfg_for_function("csharp", code, "Nc").unwrap();
+        assert!(
+            cfg.edges
+                .iter()
+                .any(|e| e.edge_type == CfgEdgeType::IfTrue)
+                && cfg
+                    .edges
+                    .iter()
+                    .any(|e| e.edge_type == CfgEdgeType::IfFalse),
+            "?? must split"
+        );
+        assert!(
+            cs_texts(&cfg).iter().any(|t| t.contains("a") || t.contains("??")),
+            "?? operands must appear, got {:?}",
+            cs_texts(&cfg)
+        );
+    }
+
+    #[test]
+    fn test_csharp_null_conditional() {
+        let code = r#"
+public class Demo {
+    public int Na(Demo d) {
+        return d?.GetHashCode() ?? 0;
+    }
+}
+"#;
+        let cfg = build_cfg_for_function("csharp", code, "Na").unwrap();
+        assert!(
+            cfg.edges
+                .iter()
+                .any(|e| e.edge_type == CfgEdgeType::IfTrue)
+                && cfg
+                    .edges
+                    .iter()
+                    .any(|e| e.edge_type == CfgEdgeType::IfFalse),
+            "?. must split"
+        );
+    }
+
+    #[test]
+    fn test_csharp_try_catch_when_finally() {
+        let code = r#"
+public class Demo {
+    public int Tw() {
+        try {
+            throw new System.Exception();
+        } catch (System.Exception e) when (e != null) {
+            return 1;
+        } finally {
+            System.Console.WriteLine("cleanup");
+        }
+    }
+}
+"#;
+        let cfg = build_cfg_for_function("csharp", code, "Tw").unwrap();
+        assert!(
+            cfg.edges
+                .iter()
+                .any(|e| e.edge_type == CfgEdgeType::Exception),
+            "try/catch Exception edge"
+        );
+        assert!(
+            cs_texts(&cfg)
+                .iter()
+                .any(|t| t.contains("cleanup") || t.contains("WriteLine")),
+            "finally must appear on throw/return path, got {:?}",
+            cs_texts(&cfg)
+        );
+        assert!(
+            cs_texts(&cfg)
+                .iter()
+                .any(|t| t.contains("e != null") || t.contains("e!=null")),
+            "catch when filter must lower, got {:?}",
+            cs_texts(&cfg)
+        );
+    }
+
+    #[test]
+    fn test_csharp_using_dispose_on_return() {
+        let code = r#"
+public class Demo {
+    public int Us() {
+        using (var r = new System.IO.StringReader("")) {
+            return 1;
+        }
+    }
+}
+"#;
+        let cfg = build_cfg_for_function("csharp", code, "Us").unwrap();
+        assert!(
+            cs_texts(&cfg)
+                .iter()
+                .any(|t| t.contains("Dispose") || t.contains("r.Dispose")),
+            "using must emit Dispose on exit, got {:?}",
+            cs_texts(&cfg)
+        );
+        let ret = cs_block_ids(&cfg, "return 1");
+        let disp = cs_block_ids(&cfg, "Dispose");
+        assert!(!ret.is_empty() && !disp.is_empty());
+        assert!(
+            ret.iter().any(|r| {
+                disp.iter().any(|d| {
+                    use std::collections::{HashSet, VecDeque};
+                    let mut seen = HashSet::new();
+                    let mut q = VecDeque::from([*r]);
+                    while let Some(n) = q.pop_front() {
+                        if n == *d {
+                            return true;
+                        }
+                        if !seen.insert(n) {
+                            continue;
+                        }
+                        for e in &cfg.edges {
+                            if e.from == n {
+                                q.push_back(e.to);
+                            }
+                        }
+                    }
+                    false
+                })
+            }),
+            "return must reach Dispose"
+        );
+    }
+
+    #[test]
+    fn test_csharp_lock_exit_on_return() {
+        let code = r#"
+public class Demo {
+    public int Lk(object o) {
+        lock (o) {
+            return 1;
+        }
+    }
+}
+"#;
+        let cfg = build_cfg_for_function("csharp", code, "Lk").unwrap();
+        assert!(
+            cs_texts(&cfg)
+                .iter()
+                .any(|t| t.contains("Monitor.Exit") || t.contains("Exit")),
+            "lock must emit Monitor.Exit, got {:?}",
+            cs_texts(&cfg)
+        );
+    }
+
+    #[test]
+    fn test_csharp_await_splits_block() {
+        let code = r#"
+public class Demo {
+    public async System.Threading.Tasks.Task<int> Aw() {
+        await System.Threading.Tasks.Task.Delay(1);
+        return 1;
+    }
+}
+"#;
+        let cfg = build_cfg_for_function("csharp", code, "Aw").unwrap();
+        assert!(
+            cs_texts(&cfg).iter().any(|t| t.contains("await")),
+            "await must appear, got {:?}",
+            cs_texts(&cfg)
+        );
+        assert!(cfg.blocks.len() >= 3, "await should split blocks");
+    }
+
+    #[test]
+    fn test_csharp_yield_return_and_break() {
+        let code = r#"
+public class Demo {
+    public System.Collections.Generic.IEnumerable<int> Y() {
+        yield return 1;
+        yield break;
+    }
+}
+"#;
+        let cfg = build_cfg_for_function("csharp", code, "Y").unwrap();
+        assert!(
+            cs_texts(&cfg).iter().any(|t| t.contains("yield return")),
+            "yield return must appear, got {:?}",
+            cs_texts(&cfg)
+        );
+        assert!(
+            cfg.edges.iter().any(|e| {
+                matches!(
+                    e.edge_type,
+                    CfgEdgeType::Return | CfgEdgeType::Exception | CfgEdgeType::Jump
+                )
+            }),
+            "yield break must terminate"
+        );
+    }
+
+    #[test]
+    fn test_csharp_goto_and_label() {
+        let code = r#"
+public class Demo {
+    public int G(int x) {
+        if (x < 0) { goto done; }
+        x++;
+        done:
+        return x;
+    }
+}
+"#;
+        let cfg = build_cfg_for_function("csharp", code, "G").unwrap();
+        let froms = cs_block_ids(&cfg, "goto done");
+        assert!(!froms.is_empty());
+        assert!(
+            cfg.edges
+                .iter()
+                .any(|e| froms.contains(&e.from) && e.edge_type == CfgEdgeType::Jump),
+            "goto must Jump"
+        );
+    }
+
+    #[test]
+    fn test_csharp_using_declaration_dispose() {
+        let code = r#"
+public class Demo {
+    public int Ud() {
+        using var r = new System.IO.StringReader("");
+        return 1;
+    }
+}
+"#;
+        let cfg = build_cfg_for_function("csharp", code, "Ud").unwrap();
+        assert!(
+            cs_texts(&cfg)
+                .iter()
+                .any(|t| t.contains("Dispose") || t.contains("r.Dispose")),
+            "using declaration must Dispose on exit, got {:?}",
+            cs_texts(&cfg)
+        );
+        let ret = cs_block_ids(&cfg, "return 1");
+        let disp = cs_block_ids(&cfg, "Dispose");
+        assert!(!ret.is_empty() && !disp.is_empty());
+        assert!(
+            ret.iter().any(|r| {
+                disp.iter().any(|d| {
+                    use std::collections::{HashSet, VecDeque};
+                    let mut seen = HashSet::new();
+                    let mut q = VecDeque::from([*r]);
+                    while let Some(n) = q.pop_front() {
+                        if n == *d {
+                            return true;
+                        }
+                        if !seen.insert(n) {
+                            continue;
+                        }
+                        for e in &cfg.edges {
+                            if e.from == n {
+                                q.push_back(e.to);
+                            }
+                        }
+                    }
+                    false
+                })
+            }),
+            "return must reach Dispose"
+        );
+    }
+
+    #[test]
+    fn test_csharp_goto_case_and_default() {
+        let code = r#"
+public class Demo {
+    public int Gc(int x) {
+        switch (x) {
+            case 1:
+                goto case 2;
+            case 2:
+                goto default;
+            default:
+                return 0;
+        }
+    }
+}
+"#;
+        let cfg = build_cfg_for_function("csharp", code, "Gc").unwrap();
+        let goto_case = cs_block_ids(&cfg, "goto case 2");
+        let goto_def = cs_block_ids(&cfg, "goto default");
+        let case2 = cs_block_ids(&cfg, "goto default");
+        let ret0 = cs_block_ids(&cfg, "return 0");
+        assert!(!goto_case.is_empty() && !goto_def.is_empty());
+        assert!(
+            goto_case.iter().any(|g| {
+                cfg.edges.iter().any(|e| {
+                    e.from == *g
+                        && e.edge_type == CfgEdgeType::Jump
+                        && case2.contains(&e.to)
+                })
+            }),
+            "goto case 2 must Jump into case 2 block"
+        );
+        assert!(
+            goto_def.iter().any(|g| {
+                ret0.iter().any(|r| {
+                    cfg.edges.iter().any(|e| {
+                        e.from == *g && e.to == *r && e.edge_type == CfgEdgeType::Jump
+                    }) || {
+                        use std::collections::{HashSet, VecDeque};
+                        let mut seen = HashSet::new();
+                        let mut q = VecDeque::from([*g]);
+                        while let Some(n) = q.pop_front() {
+                            if n == *r {
+                                return true;
+                            }
+                            if !seen.insert(n) {
+                                continue;
+                            }
+                            for e in &cfg.edges {
+                                if e.from == n && e.edge_type == CfgEdgeType::Jump {
+                                    q.push_back(e.to);
+                                }
+                            }
+                        }
+                        false
+                    }
+                })
+            }),
+            "goto default must reach default body"
+        );
+    }
+
+    #[test]
+    fn test_csharp_local_function_is_subcfg() {
+        let code = r#"
+public class Demo {
+    public int Lf() {
+        int Inner(int y) {
+            return y + 1;
+        }
+        return Inner(1);
+    }
+}
+"#;
+        let cfg = build_cfg_for_function("csharp", code, "Lf").unwrap();
+        assert!(
+            cs_texts(&cfg)
+                .iter()
+                .any(|t| t.contains("Inner") && t.contains("y + 1") || t.contains("return y + 1")),
+            "local function body must be lowered, got {:?}",
+            cs_texts(&cfg)
+        );
+        let parent_ret = cs_block_ids(&cfg, "return Inner(1)");
+        let inner_ret = cs_block_ids(&cfg, "return y + 1");
+        assert!(!parent_ret.is_empty() && !inner_ret.is_empty());
+        // Parent sequential flow must not enter Inner's body before calling it.
+        assert!(
+            !parent_ret.iter().any(|p| {
+                inner_ret.iter().any(|i| {
+                    cfg.edges.iter().any(|e| e.from == *p && e.to == *i)
+                })
+            }),
+            "parent return must not fall into Inner body"
+        );
+        // Inner body should not be reachable from entry via Next-only path through parent return.
+        let entry = cfg.entry;
+        assert!(
+            !inner_ret.iter().any(|i| {
+                use std::collections::{HashSet, VecDeque};
+                let mut seen = HashSet::new();
+                let mut q = VecDeque::from([entry]);
+                while let Some(n) = q.pop_front() {
+                    if n == *i {
+                        return true;
+                    }
+                    if !seen.insert(n) {
+                        continue;
+                    }
+                    for e in &cfg.edges {
+                        if e.from == n
+                            && matches!(
+                                e.edge_type,
+                                CfgEdgeType::Next | CfgEdgeType::IfTrue | CfgEdgeType::IfFalse
+                            )
+                        {
+                            q.push_back(e.to);
+                        }
+                    }
+                }
+                false
+            }),
+            "Inner body must be a disconnected sub-CFG (not on parent Next path)"
+        );
+    }
+
+    #[test]
+    fn test_csharp_lambda_is_subcfg() {
+        let code = r#"
+public class Demo {
+    public System.Func<int,int> Lam() {
+        return x => {
+            if (x > 0) { return x; }
+            return -x;
+        };
+    }
+}
+"#;
+        let cfg = build_cfg_for_function("csharp", code, "Lam").unwrap();
+        assert!(
+            cfg.edges
+                .iter()
+                .any(|e| e.edge_type == CfgEdgeType::IfTrue),
+            "lambda body if must lower, edges={:?}",
+            cfg.edges.iter().map(|e| e.edge_type).collect::<Vec<_>>()
+        );
+        assert!(
+            cs_kinds(&cfg)
+                .iter()
+                .filter(|k| **k == StatementKind::Return)
+                .count()
+                >= 2,
+            "lambda returns must lower, kinds={:?}",
+            cs_kinds(&cfg)
+        );
+    }
+
+    #[test]
+    fn test_csharp_await_suspend_and_resume() {
+        let code = r#"
+public class Demo {
+    public async System.Threading.Tasks.Task<int> Aw() {
+        await System.Threading.Tasks.Task.Delay(1);
+        return 1;
+    }
+}
+"#;
+        let cfg = build_cfg_for_function("csharp", code, "Aw").unwrap();
+        let await_blocks = cs_block_ids(&cfg, "await");
+        assert!(!await_blocks.is_empty());
+        assert!(
+            await_blocks.iter().any(|a| {
+                cfg.edges.iter().any(|e| {
+                    e.from == *a && e.edge_type == CfgEdgeType::IfTrue
+                }) && cfg.edges.iter().any(|e| {
+                    e.from == *a
+                        && matches!(e.edge_type, CfgEdgeType::IfFalse | CfgEdgeType::Return)
+                })
+            }),
+            "await must split resume (IfTrue) vs suspend (IfFalse/Return)"
+        );
     }
 
     #[test]

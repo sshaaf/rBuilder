@@ -165,6 +165,26 @@ Honesty left: computed `goto *ptr` not modeled; `longjmp` across functions is no
 
 Honesty left: RAII destructor cleanup blocks not inserted; overloaded `&&`/`||` still short-circuit (no type info); `lambda_expression` is not a separate sub-CFG.
 
+### C#-specific notes
+
+| Surface | Lowering |
+|---------|----------|
+| `if` / `&&` `\|\|` | Short-circuit via `wire_condition` (same as Java/C) |
+| `for` | Init / condition / update; `continue` → update |
+| `foreach` | Collection expr + `for-each` header cycle (`MoveNext`-style) |
+| `switch_statement` / `switch_section` | Case fan-out; **no** implicit fallthrough; `when` guards before body |
+| `switch_expression` / `switch_expression_arm` | Sequential pattern arms (C#); Java `switch_expression` falls back to statement lowering |
+| `??` / `?.` | Null-coalesce and null-conditional branch splits |
+| `try` / `catch` / `when` / `finally` | Exception edges; catch filter before body; finally on exit |
+| `using` / `lock` | Finally-style `Dispose()` / `Monitor.Exit` on all exits (statement **and** `using var` declaration) |
+| `await` | Async state-machine split: `IfTrue` resume / `IfFalse` suspend exit |
+| `yield return` / `yield break` | Suspend split / terminal exit through finallies |
+| `goto` / labels | Unconditional jump within method |
+| `goto case` / `goto default` | Resolve to pre-created switch section entry blocks |
+| Lambdas / local functions | Disconnected sub-CFG (`Jump` from definition); body returns use nested exit |
+
+Honesty left: full async state-machine (multiple awaits / `MoveNext` resume table) is still a per-await bifurcate, not a global state enum; expression-bodied members and iterators beyond `yield` are not specialized further.
+
 ---
 
 ## 8. Related docs
