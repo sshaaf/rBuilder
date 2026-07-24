@@ -97,7 +97,7 @@ rbuilder -f json inspect MyClass#myMethod cfg -o /tmp/cfg.json
 
 | Layer | Location |
 |-------|----------|
-| CFG unit tests | `crates/rbuilder-analysis/src/cfg.rs`, `cfg_builder.rs` (`test_go_*`, `test_java_*`, `test_rust_*`, `test_c_*`) |
+| CFG unit tests | `crates/rbuilder-analysis/src/cfg.rs`, `cfg_builder.rs` (`test_go_*`, `test_java_*`, `test_rust_*`, `test_c_*`, `test_cpp_*`) |
 | Dashboard harness | `tests/dashboard_harness.rs` (`cfg_index.json`) |
 | Playwright | `dashboard/scripts/test-graph-tabs.mjs` |
 
@@ -151,6 +151,19 @@ Honesty left: implicit `Drop` cleanup blocks are not inserted; `async_block` / `
 | `setjmp` / `longjmp` | Record setjmp sites; longjmp `Jump` back (intra-procedural approx) |
 
 Honesty left: computed `goto *ptr` not modeled; `longjmp` across functions is not inter-procedural; Duff’s-device case nesting relies on recursive case collection.
+
+### C++-specific notes
+
+| Surface | Lowering |
+|---------|----------|
+| C++17 `if` / `switch` init | `condition_clause.initializer` before `value` condition |
+| `condition_clause` | Unwrap to `value` for short-circuit / branch text |
+| `for_range_loop` | Range expr + begin/end-style header cycle |
+| `try` / `catch` / `throw` | Exception edges; throw → catch or function exit |
+| Ternary / `goto` / fallthrough | Same as C |
+| Coroutines | `co_await` / `co_yield` suspend split; `co_return` as return |
+
+Honesty left: RAII destructor cleanup blocks not inserted; overloaded `&&`/`||` still short-circuit (no type info); `lambda_expression` is not a separate sub-CFG.
 
 ---
 
