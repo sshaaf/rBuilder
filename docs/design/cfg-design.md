@@ -97,15 +97,20 @@ rbuilder -f json inspect MyClass#myMethod cfg -o /tmp/cfg.json
 
 | Layer | Location |
 |-------|----------|
-| CFG unit tests | `crates/rbuilder-analysis/src/cfg.rs` |
+| CFG unit tests | `crates/rbuilder-analysis/src/cfg.rs`, `cfg_builder.rs` (`test_go_*` for Go if-init / for_clause / switch cases) |
 | Dashboard harness | `tests/dashboard_harness.rs` (`cfg_index.json`) |
 | Playwright | `dashboard/scripts/test-graph-tabs.mjs` |
 
 Screenshots: `capture-design-screenshots.mjs` → `docs/images/design/cfg/`.
+
+### Go-specific notes
+
+See [go-language-coverage.md](./go-language-coverage.md#go-cfg-lowering-tree-sitter) for the Tree-sitter Go checklist vs current lowering. Remaining honesty: `go` does not fork a parallel CFG; defer multiplicity inside loops is static-once.
 
 ---
 
 ## 8. Related docs
 
 - [PDG design](pdg-design.md) · [Dominance design](dominance-design.md)
+- [Go language coverage](go-language-coverage.md) — LF-11…LF-15 CFG expectations
 - [Dashboard design](../dashboard-design.md) — Phase 4 CFG export

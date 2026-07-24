@@ -200,7 +200,7 @@
         ],
         "statements_contain": [
           "value := CorrectnessMid()",
-          "if flag"
+          "flag"
         ],
         "statement_kinds_any": [
           "Declaration",
@@ -209,13 +209,14 @@
         ]
       },
       "cfg": {
-        "exact_block_count": 5,
-        "exact_edge_count": 5,
+        "exact_block_count": 7,
+        "exact_edge_count": 6,
         "exact_edge_kinds": [
           "iffalse",
           "iftrue",
           "next",
           "next",
+          "return",
           "return"
         ],
         "statements_contain": [
@@ -224,11 +225,12 @@
       },
       "pdg": {
         "exact_data_deps": 2,
-        "exact_control_deps": 0,
-        "exact_node_count": 3,
+        "exact_control_deps": 1,
+        "exact_node_count": 4,
         "exact_node_kinds": [
           "Branch",
           "Declaration",
+          "Return",
           "Return"
         ],
         "data_edges": [
@@ -242,7 +244,7 @@
         ]
       },
       "dom": {
-        "exact_block_count": 5,
+        "exact_block_count": 7,
         "idom_contains": [
           {
             "block": 3,
