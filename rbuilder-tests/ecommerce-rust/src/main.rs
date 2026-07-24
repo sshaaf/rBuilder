@@ -1,5 +1,6 @@
 mod config;
 mod coolstore;
+mod cfg_features;
 mod correctness;
 mod db;
 mod dto;

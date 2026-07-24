@@ -5,13 +5,16 @@
 //! from function parameters + language-specific locals.
 
 use crate::cfg::ControlFlowGraph;
-use crate::cfg_pdg_archive::CfgPdgArchive;
+use crate::cfg_pdg_archive::{CfgPdgArchive, CfgPdgRecord};
+use crate::field_write_locals::LocalsParseContext;
 use rbuilder_error::{Error, Result};
 use rbuilder_graph::schema::Node;
+use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use uuid::Uuid;
 
 /// On-disk filename under `.rbuilder/analysis/`.
@@ -89,6 +92,9 @@ impl FieldWriteIndex {
     }
 
     /// Build from a CFG/PDG archive and L_repo function nodes.
+    ///
+    /// Groups work by source file so each file is loaded and parsed once, then
+    /// processes files in parallel with Rayon.
     pub fn build_from_archive(
         archive: &CfgPdgArchive,
         functions: &[Node],
@@ -96,7 +102,8 @@ impl FieldWriteIndex {
         repo_root: Option<&Path>,
     ) -> Self {
         let by_id: HashMap<Uuid, &Node> = functions.iter().map(|n| (n.id, n)).collect();
-        let mut writes = Vec::new();
+
+        let mut by_file: HashMap<String, Vec<&CfgPdgRecord>> = HashMap::new();
         for record in archive.records.values() {
             let func = by_id.get(&record.function_id).copied();
             let file = record
@@ -104,35 +111,68 @@ impl FieldWriteIndex {
                 .clone()
                 .or_else(|| func.and_then(|n| n.file_path.clone()))
                 .unwrap_or_default();
-            let function_name = if record.function_name.is_empty() {
-                func.map(|n| n.name.clone())
-                    .unwrap_or_else(|| "unknown".into())
-            } else {
-                record.function_name.clone()
-            };
-            let is_constructor = func.map(is_constructor_node).unwrap_or(false)
-                || function_name_looks_like_ctor(&function_name, func);
-            let mut type_env = type_env_from_node(func);
-            if let Some(node) = func {
-                if let Some(enclosing) = enclosing_type_name(node) {
-                    type_env.insert("this".into(), enclosing.clone());
-                    type_env.insert("self".into(), enclosing);
-                }
-            }
-            if let Some(src) = load_source(&file, repo_root) {
-                let lang = language_from_path(&file);
-                merge_local_types(&lang, &src, &function_name, &mut type_env);
-            }
-            extract_writes_from_cfg(
-                &record.cfg,
-                record.function_id,
-                &function_name,
-                is_constructor,
-                &file,
-                &type_env,
-                &mut writes,
-            );
+            by_file.entry(file).or_default().push(record);
         }
+
+        let repo_root = repo_root.map(Path::to_path_buf);
+        let mut writes: Vec<FieldWrite> = by_file
+            .into_par_iter()
+            .flat_map(|(file, records)| {
+                let source = if file.is_empty() {
+                    None
+                } else {
+                    load_source(&file, repo_root.as_deref()).map(Arc::new)
+                };
+                let lang = language_from_path(&file);
+                let locals_ctx = source
+                    .as_ref()
+                    .and_then(|src| LocalsParseContext::try_new(&lang, src.as_str()));
+
+                let mut file_writes = Vec::new();
+                for record in records {
+                    let func = by_id.get(&record.function_id).copied();
+                    let function_name = if record.function_name.is_empty() {
+                        func.map(|n| n.name.clone())
+                            .unwrap_or_else(|| "unknown".into())
+                    } else {
+                        record.function_name.clone()
+                    };
+                    let is_constructor = func.map(is_constructor_node).unwrap_or(false)
+                        || function_name_looks_like_ctor(&function_name, func);
+                    let mut type_env = type_env_from_node(func);
+                    if let Some(node) = func {
+                        if let Some(enclosing) = enclosing_type_name(node) {
+                            type_env.insert("this".into(), enclosing.clone());
+                            type_env.insert("self".into(), enclosing);
+                        }
+                    }
+                    if let Some(ctx) = &locals_ctx {
+                        ctx.merge_into(&function_name, &mut type_env);
+                    }
+                    extract_writes_from_cfg(
+                        &record.cfg,
+                        record.function_id,
+                        &function_name,
+                        is_constructor,
+                        &file,
+                        &type_env,
+                        &mut file_writes,
+                    );
+                }
+                file_writes
+            })
+            .collect();
+
+        writes.sort_by(|a, b| {
+            (&a.file, a.line, &a.function_id, &a.member, &a.code_snippet).cmp(&(
+                &b.file,
+                b.line,
+                &b.function_id,
+                &b.member,
+                &b.code_snippet,
+            ))
+        });
+
         Self {
             version: FIELD_WRITE_INDEX_VERSION,
             graph_digest,
@@ -324,15 +364,6 @@ fn language_from_path(path: &str) -> String {
         })
         .unwrap_or("unknown")
         .to_string()
-}
-
-fn merge_local_types(
-    language: &str,
-    source: &str,
-    function_name: &str,
-    env: &mut HashMap<String, String>,
-) {
-    crate::field_write_locals::merge_local_types(language, source, function_name, env);
 }
 
 fn extract_writes_from_cfg(
@@ -592,6 +623,83 @@ public class OrderProcessor {
         assert_eq!(hits.len(), 1, "hits={hits:?}");
         assert!(hits[0].code_snippet.contains("order.status"));
         assert!(!hits[0].is_constructor);
+    }
+
+    #[test]
+    fn same_file_two_functions_parse_once_resolves_locals() {
+        use crate::cfg_builder::build_cfg_for_function;
+        use crate::cfg_pdg_archive::{CfgPdgArchive, CfgPdgRecord};
+        use crate::pdg::ProgramDependenceGraph;
+        use rbuilder_graph::schema::{Node, NodeType};
+        use std::sync::Arc;
+        use tempfile::TempDir;
+
+        let source = r#"
+public class Dual {
+    public void first(OrderDTO a) {
+        OrderDTO x = a;
+        x.status = "A";
+    }
+    public void second(OrderDTO b) {
+        OrderDTO y = b;
+        y.status = "B";
+    }
+}
+"#;
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("Dual.java");
+        std::fs::write(&path, source).unwrap();
+        let file = path.to_string_lossy().to_string();
+
+        let cfg_first = build_cfg_for_function("java", source, "first").expect("first cfg");
+        let cfg_second = build_cfg_for_function("java", source, "second").expect("second cfg");
+
+        let mut first_fn = Node::new(NodeType::Function, "first".into());
+        first_fn.file_path = Some(file.clone());
+        let mut second_fn = Node::new(NodeType::Function, "second".into());
+        second_fn.file_path = Some(file.clone());
+
+        let id_first = first_fn.id;
+        let id_second = second_fn.id;
+        let pdg_first = ProgramDependenceGraph::build(&cfg_first, source.as_bytes()).unwrap();
+        let pdg_second = ProgramDependenceGraph::build(&cfg_second, source.as_bytes()).unwrap();
+
+        let mut archive = CfgPdgArchive::default();
+        archive.insert(CfgPdgRecord {
+            function_id: id_first,
+            code_hash: "1".into(),
+            function_name: "first".into(),
+            file_path: Some(file.clone()),
+            cfg: cfg_first,
+            pdg: Arc::new(pdg_first),
+        });
+        archive.insert(CfgPdgRecord {
+            function_id: id_second,
+            code_hash: "2".into(),
+            function_name: "second".into(),
+            file_path: Some(file.clone()),
+            cfg: cfg_second,
+            pdg: Arc::new(pdg_second),
+        });
+
+        let index = FieldWriteIndex::build_from_archive(
+            &archive,
+            &[first_fn, second_fn],
+            None,
+            Some(dir.path()),
+        );
+        let hits = index.query(&MutationQuery {
+            type_name: "OrderDTO".into(),
+            exclude_ctors: false,
+            member: Some("status".into()),
+            include_unresolved: false,
+        });
+        assert_eq!(hits.len(), 2, "hits={hits:?}");
+        assert!(hits.iter().any(|h| h.function_name == "first"));
+        assert!(hits.iter().any(|h| h.function_name == "second"));
+        assert!(hits.iter().all(|h| h.receiver_type.as_deref() == Some("OrderDTO")));
+        // Stable sort: same file, earlier line first
+        assert!(hits[0].line <= hits[1].line);
     }
 
     #[test]

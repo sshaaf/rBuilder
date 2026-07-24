@@ -4,12 +4,181 @@
   "project": "ecommerce-go",
   "graph": {
     "severity": "required",
-    "min_functions": 10,
-    "min_calls_edges": 1
+    "min_functions": 40,
+    "min_calls_edges": 5
   },
   "symbols": {
+    "lf_pkg_caller": {
+      "match": {
+        "name": "LfPkgCaller",
+        "class": "langfeatures"
+      },
+      "severity": "required",
+      "unique": true,
+      "identity": {
+        "exact_name": "LfPkgCaller",
+        "file_suffix": "calls_basic.go"
+      },
+      "exact_callees": [
+        "LfPkgCallee"
+      ],
+      "exact_callers": []
+    },
+    "lf_checkout": {
+      "match": {
+        "name": "Checkout",
+        "class": "methods.go"
+      },
+      "severity": "required",
+      "unique": true,
+      "identity": {
+        "exact_name": "Checkout",
+        "file_suffix": "methods.go"
+      },
+      "exact_callees": [
+        "validate"
+      ],
+      "notes": "LF-02 same-type method CALLS + receiver FQN"
+    },
+    "lf_orchestrator_run": {
+      "match": {
+        "name": "Run",
+        "class": "methods.go"
+      },
+      "severity": "required",
+      "unique": true,
+      "identity": {
+        "exact_name": "Run",
+        "file_suffix": "methods.go"
+      },
+      "exact_callees": [
+        "ListItems"
+      ],
+      "notes": "LF-03: must resolve to LfBetaStore.ListItems (see tests/go_langfeatures.rs)"
+    },
+    "lf_runtime_start": {
+      "match": {
+        "name": "Start",
+        "class": "interfaces.go"
+      },
+      "severity": "required",
+      "unique": true,
+      "identity": {
+        "exact_name": "Start",
+        "file_suffix": "interfaces.go"
+      },
+      "exact_callees": [
+        "RunSandbox"
+      ],
+      "notes": "LF-04 interface method CALLS"
+    },
+    "lf_use_base": {
+      "match": {
+        "name": "UseBase",
+        "class": "embedding.go"
+      },
+      "severity": "required",
+      "unique": true,
+      "identity": {
+        "exact_name": "UseBase",
+        "file_suffix": "embedding.go"
+      },
+      "exact_callees": [
+        "BaseMethod"
+      ],
+      "notes": "LF-07 promoted/embed method CALLS"
+    },
+    "lf_var_flow": {
+      "match": {
+        "name": "LfVarFlow",
+        "class": "vars.go"
+      },
+      "severity": "required",
+      "unique": true,
+      "identity": {
+        "exact_name": "LfVarFlow",
+        "file_suffix": "vars.go"
+      },
+      "notes": "LF-08 var def-use \u2014 PDG must see var-declared locals (checked in go_langfeatures)"
+    },
+    "lf_new_cart": {
+      "match": {
+        "name": "NewLfCart",
+        "class": "methods.go"
+      },
+      "severity": "required",
+      "unique": true,
+      "identity": {
+        "file_suffix": "methods.go"
+      },
+      "notes": "LF-18 NewT constructor \u2014 FQN asserted in go_langfeatures (blast short-name is <init>)"
+    },
+    "lf_mark_processed": {
+      "match": {
+        "name": "MarkProcessed",
+        "class": "fieldwrite.go"
+      },
+      "severity": "required",
+      "unique": true,
+      "identity": {
+        "exact_name": "MarkProcessed",
+        "file_suffix": "fieldwrite.go"
+      },
+      "notes": "LF-19 receiver field write"
+    },
+    "lf_use_generic": {
+      "match": {
+        "name": "LfUseGeneric",
+        "class": "generics.go"
+      },
+      "severity": "required",
+      "unique": true,
+      "identity": {
+        "exact_name": "LfUseGeneric",
+        "file_suffix": "generics.go"
+      },
+      "exact_callees": [
+        "LfIdentity"
+      ],
+      "notes": "LF-16 generic call by name"
+    },
+    "lf_imports_probe": {
+      "match": {
+        "name": "LfImportsProbe",
+        "class": "imports_probe.go"
+      },
+      "severity": "required",
+      "unique": true,
+      "identity": {
+        "exact_name": "LfImportsProbe",
+        "file_suffix": "imports_probe.go"
+      },
+      "exact_callees": [
+        "NowISO"
+      ],
+      "notes": "LF-17: NowISO via internal import; Import/const/IMPLEMENTS asserted in go_langfeatures"
+    },
+    "lf_spawn": {
+      "match": {
+        "name": "LfSpawn",
+        "class": "control.go"
+      },
+      "severity": "required",
+      "unique": true,
+      "identity": {
+        "exact_name": "LfSpawn",
+        "file_suffix": "control.go"
+      },
+      "exact_callees": [
+        "lfSpawnedWork"
+      ],
+      "notes": "LF-15 go statement call edge"
+    },
     "correctnessRoot": {
-      "match": { "name": "CorrectnessRoot", "class": "correctness" },
+      "match": {
+        "name": "CorrectnessRoot",
+        "class": "correctness"
+      },
       "severity": "required",
       "unique": true,
       "identity": {
@@ -17,41 +186,82 @@
         "canonical_fqn": "CorrectnessRoot",
         "file_suffix": "harness.go"
       },
-      "exact_callees": ["CorrectnessMid"],
+      "exact_callees": [
+        "CorrectnessMid"
+      ],
       "exact_callers": [],
       "blast": {
         "exact_direct_callers": [],
         "exact_impact_zone": []
       },
       "ast": {
-        "must_call": ["CorrectnessMid"],
-        "statements_contain": ["value := CorrectnessMid()", "if flag"],
-        "statement_kinds_any": ["Declaration", "Branch", "Return"]
+        "must_call": [
+          "CorrectnessMid"
+        ],
+        "statements_contain": [
+          "value := CorrectnessMid()",
+          "flag"
+        ],
+        "statement_kinds_any": [
+          "Declaration",
+          "Branch",
+          "Return"
+        ]
       },
       "cfg": {
-        "exact_block_count": 5,
-        "exact_edge_count": 5,
-        "exact_edge_kinds": ["iffalse", "iftrue", "next", "next", "return"],
-        "statements_contain": ["CorrectnessMid()"]
+        "exact_block_count": 7,
+        "exact_edge_count": 6,
+        "exact_edge_kinds": [
+          "iffalse",
+          "iftrue",
+          "next",
+          "next",
+          "return",
+          "return"
+        ],
+        "statements_contain": [
+          "CorrectnessMid()"
+        ]
       },
       "pdg": {
         "exact_data_deps": 2,
-        "exact_control_deps": 0,
-        "exact_node_count": 3,
-        "exact_node_kinds": ["Branch", "Declaration", "Return"],
-        "data_edges": [{ "variable": "value" }],
-        "node_labels_contain": ["CorrectnessMid()", "value * 2"]
+        "exact_control_deps": 1,
+        "exact_node_count": 4,
+        "exact_node_kinds": [
+          "Branch",
+          "Declaration",
+          "Return",
+          "Return"
+        ],
+        "data_edges": [
+          {
+            "variable": "value"
+          }
+        ],
+        "node_labels_contain": [
+          "CorrectnessMid()",
+          "value * 2"
+        ]
       },
       "dom": {
-        "exact_block_count": 5,
+        "exact_block_count": 7,
         "idom_contains": [
-          { "block": 3, "immediate_dominator": 3 },
-          { "block": 4, "immediate_dominator": 3 }
+          {
+            "block": 3,
+            "immediate_dominator": 3
+          },
+          {
+            "block": 4,
+            "immediate_dominator": 3
+          }
         ]
       }
     },
     "correctnessMid": {
-      "match": { "name": "CorrectnessMid", "class": "correctness" },
+      "match": {
+        "name": "CorrectnessMid",
+        "class": "correctness"
+      },
       "severity": "required",
       "unique": true,
       "identity": {
@@ -59,40 +269,69 @@
         "canonical_fqn": "CorrectnessMid",
         "file_suffix": "harness.go"
       },
-      "exact_callees": ["CorrectnessLeaf"],
-      "exact_callers": ["CorrectnessRoot"],
+      "exact_callees": [
+        "CorrectnessLeaf"
+      ],
+      "exact_callers": [
+        "CorrectnessRoot"
+      ],
       "blast": {
-        "exact_direct_callers": ["CorrectnessRoot"],
-        "exact_impact_zone": ["CorrectnessRoot"],
+        "exact_direct_callers": [
+          "CorrectnessRoot"
+        ],
+        "exact_impact_zone": [
+          "CorrectnessRoot"
+        ],
         "min_score": 0.1
       },
       "ast": {
-        "must_call": ["CorrectnessLeaf"],
-        "statements_contain": ["return CorrectnessLeaf() + 1"],
-        "exact_statement_kinds": ["Return"]
+        "must_call": [
+          "CorrectnessLeaf"
+        ],
+        "statements_contain": [
+          "return CorrectnessLeaf() + 1"
+        ],
+        "exact_statement_kinds": [
+          "Return"
+        ]
       },
       "cfg": {
         "exact_block_count": 2,
         "exact_edge_count": 1,
-        "exact_edge_kinds": ["return"]
+        "exact_edge_kinds": [
+          "return"
+        ]
       },
       "pdg": {
         "exact_data_deps": 0,
         "exact_control_deps": 0,
         "exact_node_count": 1,
-        "exact_node_kinds": ["Return"],
-        "node_labels_contain": ["CorrectnessLeaf()"]
+        "exact_node_kinds": [
+          "Return"
+        ],
+        "node_labels_contain": [
+          "CorrectnessLeaf()"
+        ]
       },
       "dom": {
         "exact_block_count": 2,
         "exact_idom": [
-          { "block": 0, "immediate_dominator": 1 },
-          { "block": 1, "immediate_dominator": 1 }
+          {
+            "block": 0,
+            "immediate_dominator": 1
+          },
+          {
+            "block": 1,
+            "immediate_dominator": 1
+          }
         ]
       }
     },
     "correctnessLeaf": {
-      "match": { "name": "CorrectnessLeaf", "class": "correctness" },
+      "match": {
+        "name": "CorrectnessLeaf",
+        "class": "correctness"
+      },
       "severity": "required",
       "unique": true,
       "identity": {
@@ -101,61 +340,144 @@
         "file_suffix": "harness.go"
       },
       "exact_callees": [],
-      "exact_callers": ["CorrectnessMid"],
+      "exact_callers": [
+        "CorrectnessMid"
+      ],
       "blast": {
-        "exact_direct_callers": ["CorrectnessMid"],
-        "exact_impact_zone": ["CorrectnessMid", "CorrectnessRoot"],
+        "exact_direct_callers": [
+          "CorrectnessMid"
+        ],
+        "exact_impact_zone": [
+          "CorrectnessMid",
+          "CorrectnessRoot"
+        ],
         "min_score": 0.1
       },
       "ast": {
-        "statements_contain": ["return 42"],
-        "exact_statement_kinds": ["Return"]
+        "statements_contain": [
+          "return 42"
+        ],
+        "exact_statement_kinds": [
+          "Return"
+        ]
       },
       "cfg": {
         "exact_block_count": 2,
         "exact_edge_count": 1,
-        "exact_edge_kinds": ["return"]
+        "exact_edge_kinds": [
+          "return"
+        ]
       },
       "pdg": {
         "exact_data_deps": 0,
         "exact_control_deps": 0,
         "exact_node_count": 1,
-        "exact_node_kinds": ["Return"]
+        "exact_node_kinds": [
+          "Return"
+        ]
       },
-      "dom": { "exact_block_count": 2 }
+      "dom": {
+        "exact_block_count": 2
+      }
+    },
+    "lf_short_circuit": {
+      "match": {
+        "name": "LfShortCircuit",
+        "class": "cfg_features.go"
+      },
+      "severity": "required",
+      "unique": true,
+      "identity": {
+        "exact_name": "LfShortCircuit",
+        "file_suffix": "cfg_features.go",
+        "language": "go",
+        "canonical_fqn": "LfShortCircuit"
+      },
+      "cfg": {
+        "min_blocks": 6,
+        "statements_contain": [
+          "a",
+          "b"
+        ]
+      }
+    },
+    "lf_for_continue": {
+      "match": {
+        "name": "LfForContinue",
+        "class": "cfg_features.go"
+      },
+      "severity": "required",
+      "unique": true,
+      "identity": {
+        "exact_name": "LfForContinue",
+        "file_suffix": "cfg_features.go",
+        "language": "go",
+        "canonical_fqn": "LfForContinue"
+      },
+      "cfg": {
+        "min_blocks": 8,
+        "statements_contain": [
+          "continue"
+        ]
+      }
     }
   },
   "invariants": {
     "B1_blast_vs_calls": {
       "enabled": true,
       "severity": "required",
-      "symbols": ["correctnessLeaf", "correctnessMid"]
+      "symbols": [
+        "correctnessLeaf",
+        "correctnessMid"
+      ]
     },
-    "B2_gql_calls_nonzero": { "enabled": true, "severity": "required" },
+    "B2_gql_calls_nonzero": {
+      "enabled": true,
+      "severity": "required"
+    },
     "B5_inspect_cfg_present": {
       "enabled": true,
       "severity": "required",
-      "symbols": ["correctnessRoot", "correctnessMid", "correctnessLeaf"]
+      "symbols": [
+        "correctnessRoot",
+        "correctnessMid",
+        "correctnessLeaf"
+      ]
     },
     "B6_cfg_calls_subset_of_calls_edges": {
       "enabled": true,
       "severity": "required",
-      "symbols": ["correctnessRoot", "correctnessMid"]
+      "symbols": [
+        "correctnessRoot",
+        "correctnessMid"
+      ]
     },
     "B7_pdg_lines_subset_cfg": {
       "enabled": true,
       "severity": "required",
-      "symbols": ["correctnessRoot", "correctnessMid", "correctnessLeaf"]
+      "symbols": [
+        "correctnessRoot",
+        "correctnessMid",
+        "correctnessLeaf"
+      ]
     },
     "B8_dom_blocks_match_cfg": {
       "enabled": true,
       "severity": "required",
-      "symbols": ["correctnessRoot", "correctnessMid", "correctnessLeaf"]
+      "symbols": [
+        "correctnessRoot",
+        "correctnessMid",
+        "correctnessLeaf"
+      ]
     },
     "B9_blast_target_name": {
       "enabled": true,
       "severity": "required",
-      "symbols": ["correctnessRoot", "correctnessMid", "correctnessLeaf"]
+      "symbols": [
+        "correctnessRoot",
+        "correctnessMid",
+        "correctnessLeaf"
+      ]
     }
   }
 }

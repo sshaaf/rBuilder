@@ -3,14 +3,14 @@
 use rbuilder::analysis::{
     build_cfg_for_function, cfg_language_id_from_path, ProgramDependenceGraph,
 };
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
-const CSHARP_REPO: &str = "/Users/sshaaf/git/rust/rbuilder-tests/ecommerce-csharp";
-
-fn csharp_repo() -> std::path::PathBuf {
+fn csharp_repo() -> PathBuf {
     std::env::var("RBUILDER_CSHARP_REPO")
-        .map(std::path::PathBuf::from)
-        .unwrap_or_else(|_| std::path::PathBuf::from(CSHARP_REPO))
+        .map(PathBuf::from)
+        .unwrap_or_else(|_| {
+            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("rbuilder-tests/ecommerce-csharp")
+        })
 }
 
 #[test]

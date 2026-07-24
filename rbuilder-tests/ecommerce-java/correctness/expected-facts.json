@@ -9,7 +9,10 @@
   },
   "symbols": {
     "correctnessRoot": {
-      "match": { "name": "correctnessRoot", "class": "CorrectnessHarness" },
+      "match": {
+        "name": "correctnessRoot",
+        "class": "CorrectnessHarness"
+      },
       "severity": "required",
       "unique": true,
       "identity": {
@@ -19,7 +22,9 @@
         "file_suffix": "CorrectnessHarness.java",
         "language": "java"
       },
-      "exact_callees": ["correctnessMid"],
+      "exact_callees": [
+        "correctnessMid"
+      ],
       "exact_callers": [],
       "blast": {
         "exact_direct_callers": [],
@@ -27,37 +32,73 @@
         "min_score": 0.0
       },
       "ast": {
-        "must_call": ["correctnessMid"],
+        "must_call": [
+          "correctnessMid"
+        ],
         "statements_contain": [
           "int value = correctnessMid();",
-          "if (flag)"
+          "flag"
         ],
-        "statement_kinds_any": ["Expression", "Branch", "Return"]
+        "statement_kinds_any": [
+          "Declaration",
+          "Branch",
+          "Return"
+        ]
       },
       "cfg": {
-        "exact_block_count": 5,
-        "exact_edge_count": 5,
-        "exact_edge_kinds": ["iffalse", "iftrue", "next", "next", "return"],
-        "statements_contain": ["correctnessMid()"]
+        "exact_block_count": 7,
+        "exact_edge_count": 6,
+        "exact_edge_kinds": [
+          "iffalse",
+          "iftrue",
+          "next",
+          "next",
+          "return",
+          "return"
+        ],
+        "statements_contain": [
+          "correctnessMid()"
+        ]
       },
       "pdg": {
-        "exact_data_deps": 1,
-        "exact_control_deps": 0,
-        "exact_node_count": 3,
-        "exact_node_kinds": ["Branch", "Expression", "Return"],
-        "data_edges": [{ "variable": "value" }],
-        "node_labels_contain": ["correctnessMid()", "value * 2"]
+        "exact_data_deps": 2,
+        "exact_control_deps": 1,
+        "exact_node_count": 4,
+        "exact_node_kinds": [
+          "Branch",
+          "Declaration",
+          "Return",
+          "Return"
+        ],
+        "data_edges": [
+          {
+            "variable": "value"
+          }
+        ],
+        "node_labels_contain": [
+          "correctnessMid()",
+          "value * 2"
+        ]
       },
       "dom": {
-        "exact_block_count": 5,
+        "exact_block_count": 7,
         "idom_contains": [
-          { "block": 4, "immediate_dominator": 3 },
-          { "block": 3, "immediate_dominator": 3 }
+          {
+            "block": 4,
+            "immediate_dominator": 3
+          },
+          {
+            "block": 3,
+            "immediate_dominator": 3
+          }
         ]
       }
     },
     "correctnessMid": {
-      "match": { "name": "correctnessMid", "class": "CorrectnessHarness" },
+      "match": {
+        "name": "correctnessMid",
+        "class": "CorrectnessHarness"
+      },
       "severity": "required",
       "unique": true,
       "identity": {
@@ -67,41 +108,72 @@
         "file_suffix": "CorrectnessHarness.java",
         "language": "java"
       },
-      "exact_callees": ["correctnessLeaf"],
-      "exact_callers": ["correctnessRoot"],
+      "exact_callees": [
+        "correctnessLeaf"
+      ],
+      "exact_callers": [
+        "correctnessRoot"
+      ],
       "blast": {
-        "exact_direct_callers": ["correctnessRoot"],
-        "exact_impact_zone": ["correctnessRoot"],
+        "exact_direct_callers": [
+          "correctnessRoot"
+        ],
+        "exact_impact_zone": [
+          "correctnessRoot"
+        ],
         "min_score": 0.1
       },
       "ast": {
-        "must_call": ["correctnessLeaf"],
-        "statements_contain": ["return correctnessLeaf() + 1;"],
-        "exact_statement_kinds": ["Return"]
+        "must_call": [
+          "correctnessLeaf"
+        ],
+        "statements_contain": [
+          "return correctnessLeaf() + 1;"
+        ],
+        "exact_statement_kinds": [
+          "Return"
+        ]
       },
       "cfg": {
         "exact_block_count": 2,
         "exact_edge_count": 1,
-        "exact_edge_kinds": ["return"],
-        "statements_contain": ["correctnessLeaf()"]
+        "exact_edge_kinds": [
+          "return"
+        ],
+        "statements_contain": [
+          "correctnessLeaf()"
+        ]
       },
       "pdg": {
         "exact_data_deps": 0,
         "exact_control_deps": 0,
         "exact_node_count": 1,
-        "exact_node_kinds": ["Return"],
-        "node_labels_contain": ["correctnessLeaf()"]
+        "exact_node_kinds": [
+          "Return"
+        ],
+        "node_labels_contain": [
+          "correctnessLeaf()"
+        ]
       },
       "dom": {
         "exact_block_count": 2,
         "exact_idom": [
-          { "block": 0, "immediate_dominator": 1 },
-          { "block": 1, "immediate_dominator": 1 }
+          {
+            "block": 0,
+            "immediate_dominator": 1
+          },
+          {
+            "block": 1,
+            "immediate_dominator": 1
+          }
         ]
       }
     },
     "correctnessLeaf": {
-      "match": { "name": "correctnessLeaf", "class": "CorrectnessHarness" },
+      "match": {
+        "name": "correctnessLeaf",
+        "class": "CorrectnessHarness"
+      },
       "severity": "required",
       "unique": true,
       "identity": {
@@ -112,49 +184,79 @@
         "language": "java"
       },
       "exact_callees": [],
-      "exact_callers": ["correctnessMid"],
+      "exact_callers": [
+        "correctnessMid"
+      ],
       "blast": {
-        "exact_direct_callers": ["correctnessMid"],
-        "exact_impact_zone": ["correctnessMid", "correctnessRoot"],
+        "exact_direct_callers": [
+          "correctnessMid"
+        ],
+        "exact_impact_zone": [
+          "correctnessMid",
+          "correctnessRoot"
+        ],
         "min_score": 0.1
       },
       "ast": {
-        "statements_contain": ["return 42;"],
-        "exact_statement_kinds": ["Return"]
+        "statements_contain": [
+          "return 42;"
+        ],
+        "exact_statement_kinds": [
+          "Return"
+        ]
       },
       "cfg": {
         "exact_block_count": 2,
         "exact_edge_count": 1,
-        "exact_edge_kinds": ["return"]
+        "exact_edge_kinds": [
+          "return"
+        ]
       },
       "pdg": {
         "exact_data_deps": 0,
         "exact_control_deps": 0,
         "exact_node_count": 1,
-        "exact_node_kinds": ["Return"]
+        "exact_node_kinds": [
+          "Return"
+        ]
       },
       "dom": {
         "exact_block_count": 2
       }
     },
     "orderServiceCheckout": {
-      "match": { "name": "checkout", "class": "OrderService" },
+      "match": {
+        "name": "checkout",
+        "class": "OrderService"
+      },
       "severity": "required",
-      "note": "Domain edge that currently extracts correctly (OrderService → CartService.clearCart)",
+      "note": "Domain edge that currently extracts correctly (OrderService \u2192 CartService.clearCart)",
       "direct_callees": [
-        { "name": "clearCart", "class": "CartService", "severity": "required" }
+        {
+          "name": "clearCart",
+          "class": "CartService",
+          "severity": "required"
+        }
       ]
     },
     "cartServiceClearCart": {
-      "match": { "name": "clearCart", "class": "CartService" },
+      "match": {
+        "name": "clearCart",
+        "class": "CartService"
+      },
       "severity": "required",
       "blast": {
-        "exact_direct_callers": ["checkout"],
+        "exact_direct_callers": [
+          "checkout"
+        ],
         "min_score": 0.1
       }
     },
     "correctnessShared": {
-      "match": { "name": "correctnessShared", "class": "CorrectnessHarness" },
+      "match": {
+        "name": "correctnessShared",
+        "class": "CorrectnessHarness"
+      },
       "severity": "required",
       "unique": true,
       "identity": {
@@ -165,9 +267,15 @@
         "language": "java"
       },
       "exact_callees": [],
-      "exact_callers": ["correctnessLeft", "correctnessRight"],
+      "exact_callers": [
+        "correctnessLeft",
+        "correctnessRight"
+      ],
       "blast": {
-        "exact_direct_callers": ["correctnessLeft", "correctnessRight"],
+        "exact_direct_callers": [
+          "correctnessLeft",
+          "correctnessRight"
+        ],
         "exact_impact_zone": [
           "correctnessLeft",
           "correctnessRight",
@@ -177,7 +285,10 @@
       }
     },
     "correctnessDiamond": {
-      "match": { "name": "correctnessDiamond", "class": "CorrectnessHarness" },
+      "match": {
+        "name": "correctnessDiamond",
+        "class": "CorrectnessHarness"
+      },
       "severity": "required",
       "unique": true,
       "identity": {
@@ -187,11 +298,99 @@
         "file_suffix": "CorrectnessHarness.java",
         "language": "java"
       },
-      "exact_callees": ["correctnessLeft", "correctnessRight"],
+      "exact_callees": [
+        "correctnessLeft",
+        "correctnessRight"
+      ],
       "exact_callers": [],
       "blast": {
         "exact_direct_callers": [],
         "exact_impact_zone": []
+      }
+    },
+    "cfgShortCircuit": {
+      "match": {
+        "name": "cfgShortCircuit",
+        "class": "CfgFeatures"
+      },
+      "severity": "required",
+      "unique": true,
+      "identity": {
+        "exact_name": "cfgShortCircuit",
+        "file_suffix": "CfgFeatures.java",
+        "language": "java",
+        "class_context": "CfgFeatures",
+        "canonical_fqn": "CfgFeatures::cfgShortCircuit"
+      },
+      "cfg": {
+        "min_blocks": 6,
+        "statements_contain": [
+          "a",
+          "b"
+        ]
+      }
+    },
+    "cfgEnhancedFor": {
+      "match": {
+        "name": "cfgEnhancedFor",
+        "class": "CfgFeatures"
+      },
+      "severity": "required",
+      "unique": true,
+      "identity": {
+        "exact_name": "cfgEnhancedFor",
+        "file_suffix": "CfgFeatures.java",
+        "language": "java",
+        "class_context": "CfgFeatures",
+        "canonical_fqn": "CfgFeatures::cfgEnhancedFor"
+      },
+      "cfg": {
+        "min_blocks": 4,
+        "statements_contain": [
+          "for-each"
+        ]
+      }
+    },
+    "cfgSwitchArrow": {
+      "match": {
+        "name": "cfgSwitchArrow",
+        "class": "CfgFeatures"
+      },
+      "severity": "required",
+      "unique": true,
+      "identity": {
+        "exact_name": "cfgSwitchArrow",
+        "file_suffix": "CfgFeatures.java",
+        "language": "java",
+        "class_context": "CfgFeatures",
+        "canonical_fqn": "CfgFeatures::cfgSwitchArrow"
+      },
+      "cfg": {
+        "min_blocks": 5,
+        "statements_contain": [
+          "1"
+        ]
+      }
+    },
+    "cfgTryWithResources": {
+      "match": {
+        "name": "cfgTryWithResources",
+        "class": "CfgFeatures"
+      },
+      "severity": "required",
+      "unique": true,
+      "identity": {
+        "exact_name": "cfgTryWithResources",
+        "file_suffix": "CfgFeatures.java",
+        "language": "java",
+        "class_context": "CfgFeatures",
+        "canonical_fqn": "CfgFeatures::cfgTryWithResources"
+      },
+      "cfg": {
+        "min_blocks": 3,
+        "statements_contain": [
+          "close()"
+        ]
       }
     }
   },
@@ -213,27 +412,46 @@
     "B5_inspect_cfg_present": {
       "enabled": true,
       "severity": "required",
-      "symbols": ["correctnessRoot", "correctnessMid", "correctnessLeaf"]
+      "symbols": [
+        "correctnessRoot",
+        "correctnessMid",
+        "correctnessLeaf"
+      ]
     },
     "B6_cfg_calls_subset_of_calls_edges": {
       "enabled": true,
       "severity": "required",
-      "symbols": ["correctnessRoot", "correctnessMid"]
+      "symbols": [
+        "correctnessRoot",
+        "correctnessMid"
+      ]
     },
     "B7_pdg_lines_subset_cfg": {
       "enabled": true,
       "severity": "required",
-      "symbols": ["correctnessRoot", "correctnessMid", "correctnessLeaf"]
+      "symbols": [
+        "correctnessRoot",
+        "correctnessMid",
+        "correctnessLeaf"
+      ]
     },
     "B8_dom_blocks_match_cfg": {
       "enabled": true,
       "severity": "required",
-      "symbols": ["correctnessRoot", "correctnessMid", "correctnessLeaf"]
+      "symbols": [
+        "correctnessRoot",
+        "correctnessMid",
+        "correctnessLeaf"
+      ]
     },
     "B9_blast_target_name": {
       "enabled": true,
       "severity": "required",
-      "symbols": ["correctnessRoot", "correctnessMid", "correctnessLeaf"]
+      "symbols": [
+        "correctnessRoot",
+        "correctnessMid",
+        "correctnessLeaf"
+      ]
     }
   }
 }

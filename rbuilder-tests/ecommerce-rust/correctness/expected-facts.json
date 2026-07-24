@@ -9,7 +9,9 @@
   },
   "symbols": {
     "correctnessRoot": {
-      "match": { "name": "correctness_root" },
+      "match": {
+        "name": "correctness_root"
+      },
       "severity": "required",
       "unique": true,
       "identity": {
@@ -18,39 +20,69 @@
         "file_suffix": "correctness.rs",
         "language": "rust"
       },
-      "exact_callees": ["correctness_mid"],
+      "exact_callees": [
+        "correctness_mid"
+      ],
       "exact_callers": [],
       "blast": {
         "exact_direct_callers": [],
         "exact_impact_zone": []
       },
       "ast": {
-        "must_call": ["correctness_mid"],
-        "statements_contain": ["let value = correctness_mid();", "if flag"]
+        "must_call": [
+          "correctness_mid"
+        ],
+        "statements_contain": [
+          "let value = correctness_mid();",
+          "flag"
+        ]
       },
       "cfg": {
-        "exact_block_count": 5,
-        "exact_edge_count": 5,
-        "exact_edge_kinds": ["iffalse", "iftrue", "next", "next", "next"],
-        "statements_contain": ["correctness_mid()"]
+        "exact_block_count": 6,
+        "exact_edge_count": 6,
+        "exact_edge_kinds": [
+          "iffalse",
+          "iftrue",
+          "next",
+          "next",
+          "next",
+          "next"
+        ],
+        "statements_contain": [
+          "correctness_mid()"
+        ]
       },
       "pdg": {
-        "exact_data_deps": 3,
+        "exact_data_deps": 2,
         "exact_control_deps": 2,
         "exact_node_count": 4,
-        "data_edges": [{ "variable": "value" }],
-        "node_labels_contain": ["correctness_mid()"]
+        "data_edges": [
+          {
+            "variable": "value"
+          }
+        ],
+        "node_labels_contain": [
+          "correctness_mid()"
+        ]
       },
       "dom": {
-        "exact_block_count": 5,
+        "exact_block_count": 6,
         "idom_contains": [
-          { "block": 2, "immediate_dominator": 2 },
-          { "block": 3, "immediate_dominator": 2 }
+          {
+            "block": 2,
+            "immediate_dominator": 2
+          },
+          {
+            "block": 3,
+            "immediate_dominator": 2
+          }
         ]
       }
     },
     "correctnessMid": {
-      "match": { "name": "correctness_mid" },
+      "match": {
+        "name": "correctness_mid"
+      },
       "severity": "required",
       "unique": true,
       "identity": {
@@ -59,38 +91,62 @@
         "file_suffix": "correctness.rs",
         "language": "rust"
       },
-      "exact_callees": ["correctness_leaf"],
-      "exact_callers": ["correctness_root"],
+      "exact_callees": [
+        "correctness_leaf"
+      ],
+      "exact_callers": [
+        "correctness_root"
+      ],
       "blast": {
-        "exact_direct_callers": ["correctness_root"],
-        "exact_impact_zone": ["correctness_root"],
+        "exact_direct_callers": [
+          "correctness_root"
+        ],
+        "exact_impact_zone": [
+          "correctness_root"
+        ],
         "min_score": 0.1
       },
       "ast": {
-        "must_call": ["correctness_leaf"],
-        "statements_contain": ["correctness_leaf() + 1"]
+        "must_call": [
+          "correctness_leaf"
+        ],
+        "statements_contain": [
+          "correctness_leaf() + 1"
+        ]
       },
       "cfg": {
         "exact_block_count": 2,
         "exact_edge_count": 1,
-        "exact_edge_kinds": ["next"]
+        "exact_edge_kinds": [
+          "next"
+        ]
       },
       "pdg": {
         "exact_data_deps": 0,
         "exact_control_deps": 0,
         "exact_node_count": 1,
-        "node_labels_contain": ["correctness_leaf()"]
+        "node_labels_contain": [
+          "correctness_leaf()"
+        ]
       },
       "dom": {
         "exact_block_count": 2,
         "exact_idom": [
-          { "block": 0, "immediate_dominator": 1 },
-          { "block": 1, "immediate_dominator": 1 }
+          {
+            "block": 0,
+            "immediate_dominator": 1
+          },
+          {
+            "block": 1,
+            "immediate_dominator": 1
+          }
         ]
       }
     },
     "correctnessLeaf": {
-      "match": { "name": "correctness_leaf" },
+      "match": {
+        "name": "correctness_leaf"
+      },
       "severity": "required",
       "unique": true,
       "identity": {
@@ -100,37 +156,60 @@
         "language": "rust"
       },
       "exact_callees": [],
-      "exact_callers": ["correctness_mid"],
+      "exact_callers": [
+        "correctness_mid"
+      ],
       "blast": {
-        "exact_direct_callers": ["correctness_mid"],
-        "exact_impact_zone": ["correctness_mid", "correctness_root"],
+        "exact_direct_callers": [
+          "correctness_mid"
+        ],
+        "exact_impact_zone": [
+          "correctness_mid",
+          "correctness_root"
+        ],
         "min_score": 0.1
       },
       "ast": {
-        "statements_contain": ["42"],
-        "exact_statement_kinds": ["Expression"]
+        "statements_contain": [
+          "42"
+        ],
+        "exact_statement_kinds": [
+          "Expression"
+        ]
       },
       "cfg": {
         "exact_block_count": 2,
         "exact_edge_count": 1,
-        "exact_edge_kinds": ["next"]
+        "exact_edge_kinds": [
+          "next"
+        ]
       },
       "pdg": {
         "exact_data_deps": 0,
         "exact_control_deps": 0,
         "exact_node_count": 1,
-        "exact_node_kinds": ["Expression"]
+        "exact_node_kinds": [
+          "Expression"
+        ]
       },
       "dom": {
         "exact_block_count": 2,
         "exact_idom": [
-          { "block": 0, "immediate_dominator": 1 },
-          { "block": 1, "immediate_dominator": 1 }
+          {
+            "block": 0,
+            "immediate_dominator": 1
+          },
+          {
+            "block": 1,
+            "immediate_dominator": 1
+          }
         ]
       }
     },
     "correctnessShared": {
-      "match": { "name": "correctness_shared" },
+      "match": {
+        "name": "correctness_shared"
+      },
       "severity": "required",
       "unique": true,
       "identity": {
@@ -140,9 +219,15 @@
         "language": "rust"
       },
       "exact_callees": [],
-      "exact_callers": ["correctness_left", "correctness_right"],
+      "exact_callers": [
+        "correctness_left",
+        "correctness_right"
+      ],
       "blast": {
-        "exact_direct_callers": ["correctness_left", "correctness_right"],
+        "exact_direct_callers": [
+          "correctness_left",
+          "correctness_right"
+        ],
         "exact_impact_zone": [
           "correctness_left",
           "correctness_right",
@@ -152,7 +237,9 @@
       }
     },
     "correctnessDiamond": {
-      "match": { "name": "correctness_diamond" },
+      "match": {
+        "name": "correctness_diamond"
+      },
       "severity": "required",
       "unique": true,
       "identity": {
@@ -161,11 +248,103 @@
         "file_suffix": "correctness.rs",
         "language": "rust"
       },
-      "exact_callees": ["correctness_left", "correctness_right"],
+      "exact_callees": [
+        "correctness_left",
+        "correctness_right"
+      ],
       "exact_callers": [],
       "blast": {
         "exact_direct_callers": [],
         "exact_impact_zone": []
+      }
+    },
+    "cfg_short_circuit": {
+      "match": {
+        "name": "cfg_short_circuit"
+      },
+      "severity": "required",
+      "unique": true,
+      "identity": {
+        "exact_name": "cfg_short_circuit",
+        "file_suffix": "cfg_features.rs",
+        "language": "rust"
+      },
+      "cfg": {
+        "min_blocks": 5,
+        "statements_contain": [
+          "a",
+          "b"
+        ]
+      }
+    },
+    "cfg_match_guard": {
+      "match": {
+        "name": "cfg_match_guard"
+      },
+      "severity": "required",
+      "unique": true,
+      "identity": {
+        "exact_name": "cfg_match_guard",
+        "file_suffix": "cfg_features.rs",
+        "language": "rust"
+      },
+      "cfg": {
+        "min_blocks": 6,
+        "statements_contain": [
+          "n > 0"
+        ]
+      }
+    },
+    "cfg_try_op": {
+      "match": {
+        "name": "cfg_try_op"
+      },
+      "severity": "required",
+      "unique": true,
+      "identity": {
+        "exact_name": "cfg_try_op",
+        "file_suffix": "cfg_features.rs",
+        "language": "rust"
+      },
+      "cfg": {
+        "min_blocks": 3,
+        "statements_contain": [
+          "?"
+        ]
+      }
+    },
+    "cfg_for_in": {
+      "match": {
+        "name": "cfg_for_in"
+      },
+      "severity": "required",
+      "unique": true,
+      "identity": {
+        "exact_name": "cfg_for_in",
+        "file_suffix": "cfg_features.rs",
+        "language": "rust"
+      },
+      "cfg": {
+        "min_blocks": 4,
+        "statements_contain": []
+      }
+    },
+    "cfg_await": {
+      "match": {
+        "name": "cfg_await"
+      },
+      "severity": "required",
+      "unique": true,
+      "identity": {
+        "exact_name": "cfg_await",
+        "file_suffix": "cfg_features.rs",
+        "language": "rust"
+      },
+      "cfg": {
+        "min_blocks": 2,
+        "statements_contain": [
+          "await"
+        ]
       }
     }
   },
@@ -173,33 +352,60 @@
     "B1_blast_vs_calls": {
       "enabled": true,
       "severity": "required",
-      "symbols": ["correctnessLeaf", "correctnessMid", "correctnessShared"]
+      "symbols": [
+        "correctnessLeaf",
+        "correctnessMid",
+        "correctnessShared"
+      ]
     },
-    "B2_gql_calls_nonzero": { "enabled": true, "severity": "required" },
+    "B2_gql_calls_nonzero": {
+      "enabled": true,
+      "severity": "required"
+    },
     "B5_inspect_cfg_present": {
       "enabled": true,
       "severity": "required",
-      "symbols": ["correctnessRoot", "correctnessMid", "correctnessLeaf"]
+      "symbols": [
+        "correctnessRoot",
+        "correctnessMid",
+        "correctnessLeaf"
+      ]
     },
     "B6_cfg_calls_subset_of_calls_edges": {
       "enabled": true,
       "severity": "required",
-      "symbols": ["correctnessRoot", "correctnessMid"]
+      "symbols": [
+        "correctnessRoot",
+        "correctnessMid"
+      ]
     },
     "B7_pdg_lines_subset_cfg": {
       "enabled": true,
       "severity": "required",
-      "symbols": ["correctnessRoot", "correctnessMid", "correctnessLeaf"]
+      "symbols": [
+        "correctnessRoot",
+        "correctnessMid",
+        "correctnessLeaf"
+      ]
     },
     "B8_dom_blocks_match_cfg": {
       "enabled": true,
       "severity": "required",
-      "symbols": ["correctnessRoot", "correctnessMid", "correctnessLeaf"]
+      "symbols": [
+        "correctnessRoot",
+        "correctnessMid",
+        "correctnessLeaf"
+      ]
     },
     "B9_blast_target_name": {
       "enabled": true,
       "severity": "required",
-      "symbols": ["correctnessRoot", "correctnessMid", "correctnessLeaf", "correctnessShared"]
+      "symbols": [
+        "correctnessRoot",
+        "correctnessMid",
+        "correctnessLeaf",
+        "correctnessShared"
+      ]
     }
   }
 }

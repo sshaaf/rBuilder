@@ -39,7 +39,7 @@ A language is **fully supported** when all rows are ✅ and backed by automated 
 | A3 | **Symbols:** functions/methods with name, location, signature, parameters | `extract_symbols()` |
 | A4 | **Symbols:** types (class/struct/interface/enum as appropriate) | `extract_symbols()` |
 | A5 | **Relations:** `Calls` between functions | `extract_relations()` — use `rbuilder_plugin_api::walk_calls` or language-specific walker |
-| A6 | **Relations (OOP):** `Extends` / `Implements` where the language has inheritance | Java-style plugins; optional for Go/Rust |
+| A6 | **Relations (OOP / composition):** `Extends` / `Implements` (or language equivalent: Go struct embed → `Extends`, method-set satisfaction → `Implements`; Rust trait impls when extracted) | Required for Tier 1 — not optional. Document honesty limits (no full points-to) separately. |
 | A7 | Cyclomatic / cognitive complexity for functions | `calculate_complexity()` |
 | A8 | Entry in `languages.toml` with `handler = "custom"` | Repo root |
 | A9 | Registered in `rbuilder-languages` | `crates/rbuilder-languages/src/lib.rs` |

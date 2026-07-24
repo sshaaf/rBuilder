@@ -118,6 +118,10 @@ Each `ecommerce-*` app should include a small intentional call chain:
 
 `correctnessRoot` → `correctnessMid` → `correctnessLeaf`
 
+Additionally, each language ships **CFG feature probes** (`CfgFeatures` / `cfg_features.*`) that exercise
+control-flow lowering unique to that language (short-circuit, loops, switch, try/cleanup, await, …).
+Those symbols are asserted via `cfg.min_blocks` + `cfg.statements_contain` in `expected-facts.json`.
+
 (Language-idiomatic spellings: `correctness_root`, `CorrectnessRoot`, etc.)
 
 Prefer **direct calls** with **no intermediate locals** assigned from call results **in C/C++**.

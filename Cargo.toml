@@ -327,6 +327,10 @@ name = "go_cfg_analysis"
 path = "tests/go_cfg_analysis.rs"
 
 [[test]]
+name = "go_langfeatures"
+path = "tests/go_langfeatures.rs"
+
+[[test]]
 name = "dashboard_metasfresh"
 path = "tests/dashboard_metasfresh.rs"
 
