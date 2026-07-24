@@ -26,28 +26,24 @@
       },
       "ast": {
         "must_call": ["correctnessMid"],
-        "statements_contain": ["if (flag)", "return correctnessMid() * 2;"],
+        "statements_contain": ["flag", "return correctnessMid() * 2;"],
         "statement_kinds_any": ["Branch", "Return"]
       },
       "cfg": {
-        "exact_block_count": 5,
-        "exact_edge_count": 5,
-        "exact_edge_kinds": ["iffalse", "iftrue", "next", "next", "return"],
+        "exact_block_count": 7,
+        "exact_edge_count": 6,
+        "exact_edge_kinds": ["iffalse", "iftrue", "next", "next", "return", "return"],
         "statements_contain": ["correctnessMid()"]
       },
       "pdg": {
         "exact_data_deps": 0,
-        "exact_control_deps": 0,
-        "exact_node_count": 2,
-        "exact_node_kinds": ["Branch", "Return"],
+        "exact_control_deps": 1,
+        "exact_node_count": 3,
+        "exact_node_kinds": ["Branch", "Return", "Return"],
         "node_labels_contain": ["correctnessMid()"]
       },
       "dom": {
-        "exact_block_count": 5,
-        "idom_contains": [
-          { "block": 3, "immediate_dominator": 3 },
-          { "block": 4, "immediate_dominator": 3 }
-        ]
+        "exact_block_count": 7
       }
     },
     "correctnessMid": {

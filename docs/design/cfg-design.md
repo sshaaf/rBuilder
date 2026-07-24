@@ -97,7 +97,7 @@ rbuilder -f json inspect MyClass#myMethod cfg -o /tmp/cfg.json
 
 | Layer | Location |
 |-------|----------|
-| CFG unit tests | `crates/rbuilder-analysis/src/cfg.rs`, `cfg_builder.rs` (`test_go_*`, `test_java_*`, `test_rust_*`) |
+| CFG unit tests | `crates/rbuilder-analysis/src/cfg.rs`, `cfg_builder.rs` (`test_go_*`, `test_java_*`, `test_rust_*`, `test_c_*`) |
 | Dashboard harness | `tests/dashboard_harness.rs` (`cfg_index.json`) |
 | Playwright | `dashboard/scripts/test-graph-tabs.mjs` |
 
@@ -136,6 +136,21 @@ Shared `cfg_builder` now lowers Java:
 | `.await` | Branch marker + basic-block resume split |
 
 Honesty left: implicit `Drop` cleanup blocks are not inserted; `async_block` / `closure_expression` are not separate sub-CFGs (nested control flow inside them is still walked when reachable).
+
+### C-specific notes
+
+| Surface | Lowering |
+|---------|----------|
+| `if` / `&&` `\|\|` | Unwrap `parenthesized_expression` and C++ `condition_clause`; short-circuit via `wire_condition` |
+| `for` | Fields `initializer` / `condition` / `update`; `continue` → update |
+| `do` / `while` | Body-then-condition cycle; condition on header block |
+| `switch` / `case_statement` | Implicit fallthrough between cases; `default` = case with no `value` |
+| Ternary | `conditional_expression` → IfTrue/IfFalse merge |
+| `goto` / labels | `statement_identifier` label field; eager label blocks for forward jumps |
+| `abort` / `exit` / `_Exit` | Terminal `Exception` exit |
+| `setjmp` / `longjmp` | Record setjmp sites; longjmp `Jump` back (intra-procedural approx) |
+
+Honesty left: computed `goto *ptr` not modeled; `longjmp` across functions is not inter-procedural; Duff’s-device case nesting relies on recursive case collection.
 
 ---
 

@@ -166,6 +166,8 @@ struct CfgBuilder<'a> {
     try_catch_stack: Vec<Vec<BlockId>>,
     /// When true, leaving a switch case falls into the next case (Java classic switch).
     switch_implicit_fallthrough: bool,
+    /// C `setjmp` sites in this function (approx targets for `longjmp`).
+    setjmp_sites: Vec<BlockId>,
 }
 
 struct BreakableContext {
@@ -199,6 +201,7 @@ impl<'a> CfgBuilder<'a> {
             finally_stack: Vec::new(),
             try_catch_stack: Vec::new(),
             switch_implicit_fallthrough: false,
+            setjmp_sites: Vec::new(),
         }
     }
 
@@ -363,6 +366,9 @@ impl<'a> CfgBuilder<'a> {
             // Expression statement
             "expression_statement" => self.visit_expression_stmt(node, source),
 
+            // C ternary `cond ? a : b`
+            "conditional_expression" => self.visit_conditional_expression(node, source),
+
             // Rust match
             "match_expression" => self.visit_match(node, source),
 
@@ -422,7 +428,9 @@ impl<'a> CfgBuilder<'a> {
             | "for_statement" | "for_expression" | "for_in_expression" | "loop_expression"
             | "match_expression" | "return_statement" | "return_expression"
             | "try_expression" | "await_expression" | "break_expression" | "continue_expression"
-            | "macro_invocation" => self.visit_statement(inner, source),
+            | "macro_invocation" | "conditional_expression" => {
+                self.visit_statement(inner, source)
+            }
             _ => {
                 self.visit_expr_for_control_flow(inner, source)?;
                 if !self.flow_active {
@@ -430,8 +438,15 @@ impl<'a> CfgBuilder<'a> {
                 }
                 let kind = Self::classify_expression(inner, source);
                 self.add_statement(inner, source, kind)?;
-                if is_panic_call(inner, source) || is_diverging_macro(inner, source) {
+                if is_panic_call(inner, source)
+                    || is_diverging_macro(inner, source)
+                    || is_terminating_call(inner, source)
+                {
                     self.unwind_defers_to_exit(CfgEdgeType::Exception);
+                } else if is_longjmp_call(inner, source) {
+                    self.wire_longjmp_edges();
+                } else if is_setjmp_call(inner, source) {
+                    self.setjmp_sites.push(self.current_block);
                 }
                 Ok(())
             }
@@ -449,8 +464,26 @@ impl<'a> CfgBuilder<'a> {
             "if_expression" | "if_statement" | "match_expression" | "loop_expression"
             | "while_expression" | "while_statement" | "for_expression" | "for_statement"
             | "return_expression" | "return_statement" | "break_expression"
-            | "continue_expression" | "macro_invocation" => self.visit_statement(node, source),
+            | "continue_expression" | "macro_invocation" | "conditional_expression" => {
+                self.visit_statement(node, source)
+            }
             _ => {
+                // Detect setjmp/longjmp/abort nested in larger expressions (e.g. if cond).
+                if is_setjmp_call(node, source) {
+                    self.add_statement(node, source, StatementKind::Branch)?;
+                    self.setjmp_sites.push(self.current_block);
+                    return Ok(());
+                }
+                if is_longjmp_call(node, source) {
+                    self.add_statement(node, source, StatementKind::Jump)?;
+                    self.wire_longjmp_edges();
+                    return Ok(());
+                }
+                if is_terminating_call(node, source) {
+                    self.add_statement(node, source, StatementKind::Jump)?;
+                    self.unwind_defers_to_exit(CfgEdgeType::Exception);
+                    return Ok(());
+                }
                 let mut cursor = node.walk();
                 for child in node.children(&mut cursor) {
                     if !child.is_named() {
@@ -469,13 +502,14 @@ impl<'a> CfgBuilder<'a> {
                             | "return_expression"
                             | "break_expression"
                             | "continue_expression"
+                            | "conditional_expression"
+                            | "call_expression"
                     ) {
                         self.visit_expr_for_control_flow(child, source)?;
                         if !self.flow_active {
                             return Ok(());
                         }
                     } else {
-                        // Deep search for nested `?` / await (e.g. in call args).
                         self.visit_expr_for_control_flow(child, source)?;
                         if !self.flow_active {
                             return Ok(());
@@ -485,6 +519,67 @@ impl<'a> CfgBuilder<'a> {
                 Ok(())
             }
         }
+    }
+
+    fn visit_conditional_expression(&mut self, node: Node, source: &[u8]) -> Result<()> {
+        let true_block = self.new_block();
+        let false_block = self.new_block();
+        let merge = self.new_block();
+        if let Some(cond) = node.child_by_field_name("condition") {
+            self.wire_condition(cond, source, true_block, false_block)?;
+        } else {
+            self.add_statement(node, source, StatementKind::Branch)?;
+            self.cfg
+                .add_edge(self.current_block, true_block, CfgEdgeType::IfTrue);
+            self.cfg
+                .add_edge(self.current_block, false_block, CfgEdgeType::IfFalse);
+        }
+
+        self.flow_active = true;
+        self.current_block = true_block;
+        if let Some(cons) = node.child_by_field_name("consequence") {
+            self.visit_expr_for_control_flow(cons, source)?;
+            if self.flow_active {
+                self.add_statement(cons, source, StatementKind::Expression)?;
+            }
+        }
+        let true_reaches = self.flow_active;
+        let true_end = self.current_block;
+
+        self.flow_active = true;
+        self.current_block = false_block;
+        if let Some(alt) = node.child_by_field_name("alternative") {
+            self.visit_expr_for_control_flow(alt, source)?;
+            if self.flow_active {
+                self.add_statement(alt, source, StatementKind::Expression)?;
+            }
+        }
+        let false_reaches = self.flow_active;
+        let false_end = self.current_block;
+
+        if true_reaches {
+            self.cfg.add_edge(true_end, merge, CfgEdgeType::Next);
+        }
+        if false_reaches {
+            self.cfg.add_edge(false_end, merge, CfgEdgeType::Next);
+        }
+        self.flow_active = true_reaches || false_reaches;
+        self.current_block = merge;
+        Ok(())
+    }
+
+    fn wire_longjmp_edges(&mut self) {
+        let sites = self.setjmp_sites.clone();
+        if sites.is_empty() {
+            self.unwind_defers_to_exit(CfgEdgeType::Exception);
+            return;
+        }
+        for site in sites {
+            self.cfg
+                .add_edge(self.current_block, site, CfgEdgeType::Jump);
+        }
+        self.flow_active = false;
+        self.current_block = self.new_block();
     }
 
     fn visit_try_expression(&mut self, node: Node, source: &[u8]) -> Result<()> {
@@ -732,29 +827,34 @@ impl<'a> CfgBuilder<'a> {
             label: self.pending_breakable_label.take(),
         });
 
+        self.flow_active = true;
         self.current_block = body;
         if let Some(body_node) = node.child_by_field_name("body") {
             self.visit_block(body_node, source)?;
         }
-        self.cfg
-            .add_edge(self.current_block, header, CfgEdgeType::Next);
+        if self.flow_active {
+            self.cfg
+                .add_edge(self.current_block, header, CfgEdgeType::Next);
+        }
 
-        self.add_statement_to_current(Statement {
-            kind: StatementKind::Branch,
-            line: node.start_position().row + 1,
-            text: node
-                .child_by_field_name("condition")
-                .and_then(|c| c.utf8_text(source).ok())
-                .unwrap_or("do")
-                .trim()
-                .to_string(),
-            defined_vars: HashSet::new(),
-            used_vars: HashSet::new(),
-        });
-        self.cfg.add_edge(header, body, CfgEdgeType::IfTrue);
-        self.cfg.add_edge(header, exit, CfgEdgeType::IfFalse);
+        self.flow_active = true;
+        self.current_block = header;
+        if let Some(cond) = node.child_by_field_name("condition") {
+            self.wire_condition(cond, source, body, exit)?;
+        } else {
+            self.add_statement_to_current(Statement {
+                kind: StatementKind::Branch,
+                line: node.start_position().row + 1,
+                text: "do".to_string(),
+                defined_vars: HashSet::new(),
+                used_vars: HashSet::new(),
+            });
+            self.cfg.add_edge(header, body, CfgEdgeType::IfTrue);
+            self.cfg.add_edge(header, exit, CfgEdgeType::IfFalse);
+        }
         self.breakable_stack.pop();
 
+        self.flow_active = true;
         self.current_block = exit;
         Ok(())
     }
@@ -1074,6 +1174,34 @@ impl<'a> CfgBuilder<'a> {
             return Ok(());
         }
 
+        // C/C++: `return cond ? a : b;`
+        if let Some(tern) = {
+            let mut found = None;
+            let mut c = node.walk();
+            for ch in node.children(&mut c) {
+                if ch.kind() == "conditional_expression" {
+                    found = Some(ch);
+                    break;
+                }
+            }
+            found
+        } {
+            self.visit_conditional_expression(tern, source)?;
+            if !self.flow_active {
+                return Ok(());
+            }
+            self.add_statement_to_current(Statement {
+                kind: StatementKind::Return,
+                line: node.start_position().row + 1,
+                text: "return".to_string(),
+                defined_vars: HashSet::new(),
+                used_vars: HashSet::new(),
+            });
+            self.unwind_finallies(source)?;
+            self.unwind_defers_to_exit(CfgEdgeType::Return);
+            return Ok(());
+        }
+
         self.add_statement(node, source, StatementKind::Return)?;
         self.unwind_finallies(source)?;
         self.unwind_defers_to_exit(CfgEdgeType::Return);
@@ -1256,22 +1384,27 @@ impl<'a> CfgBuilder<'a> {
 
     fn visit_goto(&mut self, node: Node, source: &[u8]) -> Result<()> {
         self.add_statement(node, source, StatementKind::Jump)?;
-        let label = {
-            let mut found = None;
-            if let Some(n) = node.named_child(0) {
-                found = n.utf8_text(source).ok().map(|s| s.trim().to_string());
-            }
-            if found.is_none() {
+        let label = node
+            .child_by_field_name("label")
+            .or_else(|| node.named_child(0))
+            .and_then(|n| n.utf8_text(source).ok())
+            .map(|s| s.trim().trim_start_matches('\'').to_string())
+            .filter(|s| !s.is_empty())
+            .or_else(|| {
                 let mut c = node.walk();
                 for ch in node.children(&mut c) {
-                    if ch.kind() == "label_name" {
-                        found = ch.utf8_text(source).ok().map(|s| s.trim().to_string());
-                        break;
+                    if matches!(
+                        ch.kind(),
+                        "label_name" | "label" | "statement_identifier" | "identifier"
+                    ) {
+                        return ch.utf8_text(source).ok().map(|s| {
+                            s.trim().trim_start_matches('\'').to_string()
+                        });
                     }
                 }
-            }
-            found.unwrap_or_default()
-        };
+                None
+            })
+            .unwrap_or_default();
         if !label.is_empty() {
             let target = self.ensure_label_block(&label);
             self.cfg
@@ -1294,13 +1427,18 @@ impl<'a> CfgBuilder<'a> {
             .child_by_field_name("label")
             .or_else(|| {
                 // Java: `identifier ':' statement` (no label field).
+                // C: `statement_identifier` is usually the `label` field already.
                 node.named_child(0).filter(|n| {
-                    matches!(n.kind(), "identifier" | "label_name")
+                    matches!(
+                        n.kind(),
+                        "identifier" | "label_name" | "statement_identifier" | "label"
+                    )
                 })
             })
             .and_then(|n| n.utf8_text(source).ok())
             .unwrap_or("")
             .trim()
+            .trim_start_matches('\'')
             .to_string();
         if label.is_empty() {
             return Ok(());
@@ -1318,7 +1456,7 @@ impl<'a> CfgBuilder<'a> {
             if !child.is_named() {
                 continue;
             }
-            if child.kind() == "label_name" {
+            if child.kind() == "label_name" || child.kind() == "statement_identifier" {
                 continue;
             }
             if node.child_by_field_name("label").is_some_and(|l| l.id() == child.id()) {
@@ -1327,7 +1465,7 @@ impl<'a> CfgBuilder<'a> {
             // Java label identifier is the first named child — skip it.
             if child.kind() == "identifier" {
                 if let Ok(t) = child.utf8_text(source) {
-                    if t.trim() == label {
+                    if t.trim().trim_start_matches('\'') == label {
                         continue;
                     }
                 }
@@ -1366,14 +1504,19 @@ impl<'a> CfgBuilder<'a> {
         true_dest: BlockId,
         false_dest: BlockId,
     ) -> Result<()> {
-        // Unwrap Java/C-style `(expr)`.
+        // Unwrap Java/C-style `(expr)` and C++ `condition_clause`.
         let cond = {
             let mut c = cond;
-            while c.kind() == "parenthesized_expression" {
-                if let Some(inner) = c.named_child(0) {
-                    c = inner;
-                } else {
-                    break;
+            loop {
+                match c.kind() {
+                    "parenthesized_expression" | "condition_clause" => {
+                        if let Some(inner) = c.named_child(0) {
+                            c = inner;
+                        } else {
+                            break;
+                        }
+                    }
+                    _ => break,
                 }
             }
             c
@@ -1442,10 +1585,24 @@ impl<'a> CfgBuilder<'a> {
             defined_vars: HashSet::new(),
             used_vars: HashSet::new(),
         });
+        self.note_setjmp_in_expr(cond, source);
         let from = self.current_block;
         self.cfg.add_edge(from, true_dest, CfgEdgeType::IfTrue);
         self.cfg.add_edge(from, false_dest, CfgEdgeType::IfFalse);
         Ok(())
+    }
+
+    fn note_setjmp_in_expr(&mut self, node: Node, source: &[u8]) {
+        if is_setjmp_call(node, source) {
+            self.setjmp_sites.push(self.current_block);
+            return;
+        }
+        let mut c = node.walk();
+        for ch in node.children(&mut c) {
+            if ch.is_named() {
+                self.note_setjmp_in_expr(ch, source);
+            }
+        }
     }
 
     fn visit_match(&mut self, node: Node, source: &[u8]) -> Result<()> {
@@ -1608,8 +1765,11 @@ impl<'a> CfgBuilder<'a> {
         let mut fallthrough_from: Option<BlockId> = None;
         let prev_implicit = self.switch_implicit_fallthrough;
         for case in &cases {
-            // Java classic groups fall through by default; arrow rules / Go cases do not.
-            self.switch_implicit_fallthrough = matches!(case.kind(), "switch_block_statement_group");
+            // Java classic groups and C `case_statement` fall through by default.
+            self.switch_implicit_fallthrough = matches!(
+                case.kind(),
+                "switch_block_statement_group" | "case_statement" | "default_statement"
+            );
             let is_default = is_switch_default_case(*case, source);
             if is_default {
                 has_default = true;
@@ -1669,7 +1829,7 @@ impl<'a> CfgBuilder<'a> {
             return Ok(());
         }
         match case.kind() {
-            "switch_block_statement_group" => {
+            "switch_block_statement_group" | "switch_rule" => {
                 let mut c = case.walk();
                 for child in case.children(&mut c) {
                     if !child.is_named() {
@@ -1682,13 +1842,15 @@ impl<'a> CfgBuilder<'a> {
                     self.visit_statement(child, source)?;
                 }
             }
-            "switch_rule" => {
+            "case_statement" | "default_statement" => {
+                // C/C++: `case 1: stmt; break;` — statements are direct children.
+                let value = case.child_by_field_name("value");
                 let mut c = case.walk();
                 for child in case.children(&mut c) {
                     if !child.is_named() {
                         continue;
                     }
-                    if child.kind() == "switch_label" {
+                    if value.is_some_and(|v| v.id() == child.id()) {
                         continue;
                     }
                     self.visit_statement(child, source)?;
@@ -1922,6 +2084,14 @@ fn is_switch_default_case(case: Node, source: &[u8]) -> bool {
     ) {
         return true;
     }
+    // C/C++: `default:` is a `case_statement` with no `value` field.
+    if case.kind() == "case_statement" && case.child_by_field_name("value").is_none() {
+        if let Ok(t) = case.utf8_text(source) {
+            if t.trim().starts_with("default") {
+                return true;
+            }
+        }
+    }
     let mut c = case.walk();
     for child in case.children(&mut c) {
         if child.kind() == "switch_label" {
@@ -2030,6 +2200,32 @@ fn is_diverging_macro(node: Node, source: &[u8]) -> bool {
         name,
         "panic" | "todo" | "unimplemented" | "unreachable"
     )
+}
+
+fn call_callee_name<'a>(node: Node<'a>, source: &'a [u8]) -> Option<&'a str> {
+    let call = if node.kind() == "call_expression" {
+        node
+    } else {
+        return None;
+    };
+    call.child_by_field_name("function")
+        .or_else(|| call.named_child(0))
+        .and_then(|f| f.utf8_text(source).ok())
+        .map(|s| s.trim())
+}
+
+fn is_terminating_call(node: Node, source: &[u8]) -> bool {
+    call_callee_name(node, source).is_some_and(|s| {
+        matches!(s, "abort" | "exit" | "_Exit" | "quick_exit")
+    })
+}
+
+fn is_setjmp_call(node: Node, source: &[u8]) -> bool {
+    call_callee_name(node, source).is_some_and(|s| matches!(s, "setjmp" | "_setjmp" | "sigsetjmp"))
+}
+
+fn is_longjmp_call(node: Node, source: &[u8]) -> bool {
+    call_callee_name(node, source).is_some_and(|s| matches!(s, "longjmp" | "_longjmp" | "siglongjmp"))
 }
 
 fn logical_operator<'a>(node: Node<'a>, source: &'a [u8]) -> Option<&'a str> {
@@ -3094,6 +3290,10 @@ int abs_val(int x) {
 "#;
         let cfg = build_cfg_for_function("c", code, "abs_val").unwrap();
         assert!(cfg.blocks.len() >= 4);
+        assert!(cfg
+            .edges
+            .iter()
+            .any(|e| e.edge_type == CfgEdgeType::IfTrue));
     }
 
     #[test]
@@ -3124,6 +3324,343 @@ int classify(int x) {
 "#;
         let cfg = build_cfg_for_function("c", code, "classify").unwrap();
         assert!(cfg.blocks.len() >= 4);
+    }
+
+    fn c_texts(cfg: &ControlFlowGraph) -> Vec<String> {
+        cfg.blocks
+            .values()
+            .flat_map(|b| b.statements.iter().map(|s| s.text.clone()))
+            .collect()
+    }
+
+    fn c_kinds(cfg: &ControlFlowGraph) -> Vec<StatementKind> {
+        cfg.blocks
+            .values()
+            .flat_map(|b| b.statements.iter().map(|s| s.kind))
+            .collect()
+    }
+
+    fn c_block_ids(cfg: &ControlFlowGraph, needle: &str) -> Vec<uuid::Uuid> {
+        cfg.blocks
+            .values()
+            .filter(|b| b.statements.iter().any(|s| s.text.contains(needle)))
+            .map(|b| b.id)
+            .collect()
+    }
+
+    #[test]
+    fn test_c_short_circuit_and() {
+        let code = r#"
+int sc(int a, int b) {
+    if (a && b) {
+        return 1;
+    }
+    return 0;
+}
+"#;
+        let cfg = build_cfg_for_function("c", code, "sc").unwrap();
+        let texts = c_texts(&cfg);
+        assert!(
+            texts.iter().any(|t| t.trim() == "a"),
+            "&& left must split, got {texts:?}"
+        );
+        assert!(
+            texts.iter().any(|t| t.trim() == "b"),
+            "&& right must split, got {texts:?}"
+        );
+        assert!(
+            !texts.iter().any(|t| t.contains("a && b")),
+            "must not keep (a && b) as one blob, got {texts:?}"
+        );
+    }
+
+    #[test]
+    fn test_c_for_init_cond_update_continue() {
+        let code = r#"
+int sum(int n) {
+    int total = 0;
+    for (int i = 0; i < n; i++) {
+        if (i == 1) {
+            continue;
+        }
+        total += i;
+    }
+    return total;
+}
+"#;
+        let cfg = build_cfg_for_function("c", code, "sum").unwrap();
+        let texts = c_texts(&cfg);
+        assert!(
+            texts.iter().any(|t| t.contains("i = 0") || t.contains("i=0")),
+            "for init, got {texts:?}"
+        );
+        assert!(
+            texts.iter().any(|t| t.contains("i < n") || t.contains("i<n")),
+            "for condition, got {texts:?}"
+        );
+        assert!(
+            texts.iter().any(|t| t.contains("i++")),
+            "for update, got {texts:?}"
+        );
+        assert!(cfg.has_cycle());
+        let cont = c_block_ids(&cfg, "continue");
+        let updates = c_block_ids(&cfg, "i++");
+        assert!(
+            cont.iter().any(|c| {
+                cfg.edges.iter().any(|e| {
+                    e.from == *c && updates.contains(&e.to) && e.edge_type == CfgEdgeType::Jump
+                })
+            }),
+            "continue must Jump to i++"
+        );
+    }
+
+    #[test]
+    fn test_c_do_while_cycle() {
+        let code = r#"
+int dw(int n) {
+    int i = 0;
+    do {
+        i++;
+    } while (i < n);
+    return i;
+}
+"#;
+        let cfg = build_cfg_for_function("c", code, "dw").unwrap();
+        assert!(cfg.has_cycle(), "do-while must cycle");
+        assert!(
+            c_texts(&cfg).iter().any(|t| t.contains("i++")),
+            "body must lower"
+        );
+        assert!(
+            c_texts(&cfg)
+                .iter()
+                .any(|t| t.contains("i < n") || t.contains("i<n")),
+            "condition must be on header, got {:?}",
+            c_texts(&cfg)
+        );
+    }
+
+    #[test]
+    fn test_c_switch_fallthrough_and_returns() {
+        let code = r#"
+int sw(int x) {
+    int y = 0;
+    switch (x) {
+        case 1:
+            y = 10;
+        case 2:
+            y = 20;
+            break;
+        default:
+            return 0;
+    }
+    return y;
+}
+"#;
+        let cfg = build_cfg_for_function("c", code, "sw").unwrap();
+        assert!(
+            !c_texts(&cfg)
+                .iter()
+                .any(|t| t.trim_start().starts_with("switch")),
+            "switch must not be opaque, got {:?}",
+            c_texts(&cfg)
+        );
+        assert!(
+            c_texts(&cfg).iter().any(|t| t.contains("y = 10") || t.contains("y=10")),
+            "case 1 body must lower, got {:?}",
+            c_texts(&cfg)
+        );
+        assert!(
+            c_texts(&cfg).iter().any(|t| t.contains("y = 20") || t.contains("y=20")),
+            "case 2 body must lower, got {:?}",
+            c_texts(&cfg)
+        );
+        let c1 = c_block_ids(&cfg, "y = 10");
+        let c1b = c_block_ids(&cfg, "y=10");
+        let froms: Vec<_> = c1.into_iter().chain(c1b).collect();
+        let c2 = c_block_ids(&cfg, "y = 20");
+        let c2b = c_block_ids(&cfg, "y=20");
+        let tos: Vec<_> = c2.into_iter().chain(c2b).collect();
+        assert!(
+            froms.iter().any(|f| {
+                tos.iter().any(|t| {
+                    cfg.edges.iter().any(|e| {
+                        e.from == *f && e.to == *t && e.edge_type == CfgEdgeType::Jump
+                    })
+                })
+            }),
+            "case 1 must fall through (Jump) into case 2"
+        );
+        assert!(
+            c_kinds(&cfg)
+                .iter()
+                .any(|k| *k == StatementKind::Return),
+            "default return must lower"
+        );
+    }
+
+    #[test]
+    fn test_c_goto_and_label() {
+        let code = r#"
+int g(int x) {
+    if (x < 0) {
+        goto done;
+    }
+    x = x + 1;
+done:
+    return x;
+}
+"#;
+        let cfg = build_cfg_for_function("c", code, "g").unwrap();
+        assert!(
+            c_texts(&cfg).iter().any(|t| t.contains("goto done")),
+            "goto must appear, got {:?}",
+            c_texts(&cfg)
+        );
+        let froms = c_block_ids(&cfg, "goto done");
+        let rets = c_block_ids(&cfg, "return x");
+        assert!(!froms.is_empty() && !rets.is_empty());
+        assert!(
+            froms.iter().any(|f| {
+                rets.iter().any(|r| {
+                    cfg.edges.iter().any(|e| e.from == *f && e.to == *r)
+                        || {
+                            use std::collections::{HashSet, VecDeque};
+                            let mut seen = HashSet::new();
+                            let mut q = VecDeque::from([*f]);
+                            while let Some(n) = q.pop_front() {
+                                if n == *r {
+                                    return true;
+                                }
+                                if !seen.insert(n) {
+                                    continue;
+                                }
+                                for e in &cfg.edges {
+                                    if e.from == n {
+                                        q.push_back(e.to);
+                                    }
+                                }
+                            }
+                            false
+                        }
+                })
+            }),
+            "goto done must reach labeled return"
+        );
+        // Unreachable assignment after goto should not be required on the goto path.
+        assert!(
+            cfg.edges
+                .iter()
+                .any(|e| froms.contains(&e.from) && e.edge_type == CfgEdgeType::Jump),
+            "goto must Jump"
+        );
+    }
+
+    #[test]
+    fn test_c_ternary_branches() {
+        let code = r#"
+int t(int y) {
+    return y ? y : -1;
+}
+"#;
+        let cfg = build_cfg_for_function("c", code, "t").unwrap();
+        assert!(
+            cfg.edges
+                .iter()
+                .any(|e| e.edge_type == CfgEdgeType::IfTrue)
+                && cfg
+                    .edges
+                    .iter()
+                    .any(|e| e.edge_type == CfgEdgeType::IfFalse),
+            "ternary must split"
+        );
+        // Condition should be its own branch text (not only the whole ternary as one stmt).
+        assert!(
+            c_texts(&cfg).iter().any(|t| t.trim() == "y"),
+            "ternary condition must lower, got {:?}",
+            c_texts(&cfg)
+        );
+    }
+
+    #[test]
+    fn test_c_abort_and_exit_terminate() {
+        let code = r#"
+void boom(void) {
+    abort();
+}
+"#;
+        let cfg = build_cfg_for_function("c", code, "boom").unwrap();
+        assert!(
+            c_texts(&cfg).iter().any(|t| t.contains("abort")),
+            "abort must appear"
+        );
+        assert!(
+            cfg.edges.iter().any(|e| {
+                matches!(
+                    e.edge_type,
+                    CfgEdgeType::Exception | CfgEdgeType::Return | CfgEdgeType::Jump
+                )
+            }),
+            "abort must terminate"
+        );
+
+        let code2 = r#"
+void bye(void) {
+    exit(1);
+}
+"#;
+        let cfg2 = build_cfg_for_function("c", code2, "bye").unwrap();
+        assert!(
+            cfg2.edges.iter().any(|e| {
+                matches!(
+                    e.edge_type,
+                    CfgEdgeType::Exception | CfgEdgeType::Return | CfgEdgeType::Jump
+                )
+            }),
+            "exit must terminate"
+        );
+    }
+
+    #[test]
+    fn test_c_setjmp_longjmp_approx() {
+        let code = r#"
+int sj(void) {
+    if (setjmp(buf) == 0) {
+        longjmp(buf, 1);
+    }
+    return 1;
+}
+"#;
+        let cfg = build_cfg_for_function("c", code, "sj").unwrap();
+        assert!(
+            c_texts(&cfg).iter().any(|t| t.contains("setjmp")),
+            "setjmp must appear, got {:?}",
+            c_texts(&cfg)
+        );
+        assert!(
+            c_texts(&cfg).iter().any(|t| t.contains("longjmp")),
+            "longjmp must appear, got {:?}",
+            c_texts(&cfg)
+        );
+        let sj = c_block_ids(&cfg, "setjmp");
+        let lj = c_block_ids(&cfg, "longjmp");
+        assert!(!sj.is_empty() && !lj.is_empty());
+        assert!(
+            lj.iter().any(|l| {
+                sj.iter().any(|s| {
+                    cfg.edges.iter().any(|e| {
+                        e.from == *l
+                            && e.to == *s
+                            && matches!(
+                                e.edge_type,
+                                CfgEdgeType::Jump | CfgEdgeType::Exception
+                            )
+                    })
+                })
+            }),
+            "longjmp must edge back to a setjmp site"
+        );
     }
 
     #[test]
