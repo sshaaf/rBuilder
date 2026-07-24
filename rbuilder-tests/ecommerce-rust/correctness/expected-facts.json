@@ -26,23 +26,23 @@
       },
       "ast": {
         "must_call": ["correctness_mid"],
-        "statements_contain": ["let value = correctness_mid();", "if flag"]
+        "statements_contain": ["let value = correctness_mid();", "flag"]
       },
       "cfg": {
-        "exact_block_count": 5,
-        "exact_edge_count": 5,
-        "exact_edge_kinds": ["iffalse", "iftrue", "next", "next", "next"],
+        "exact_block_count": 6,
+        "exact_edge_count": 6,
+        "exact_edge_kinds": ["iffalse", "iftrue", "next", "next", "next", "next"],
         "statements_contain": ["correctness_mid()"]
       },
       "pdg": {
-        "exact_data_deps": 3,
+        "exact_data_deps": 2,
         "exact_control_deps": 2,
         "exact_node_count": 4,
         "data_edges": [{ "variable": "value" }],
         "node_labels_contain": ["correctness_mid()"]
       },
       "dom": {
-        "exact_block_count": 5,
+        "exact_block_count": 6,
         "idom_contains": [
           { "block": 2, "immediate_dominator": 2 },
           { "block": 3, "immediate_dominator": 2 }

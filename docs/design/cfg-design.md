@@ -97,7 +97,7 @@ rbuilder -f json inspect MyClass#myMethod cfg -o /tmp/cfg.json
 
 | Layer | Location |
 |-------|----------|
-| CFG unit tests | `crates/rbuilder-analysis/src/cfg.rs`, `cfg_builder.rs` (`test_go_*`, `test_java_*`) |
+| CFG unit tests | `crates/rbuilder-analysis/src/cfg.rs`, `cfg_builder.rs` (`test_go_*`, `test_java_*`, `test_rust_*`) |
 | Dashboard harness | `tests/dashboard_harness.rs` (`cfg_index.json`) |
 | Playwright | `dashboard/scripts/test-graph-tabs.mjs` |
 
@@ -120,6 +120,22 @@ Shared `cfg_builder` now lowers Java:
 | Labels | `identifier ':' stmt` (no `label` field); labeled break/continue via `breakable_stack` |
 | `try` / `try_with_resources` | Exception edges from try entry **and** body statement blocks to catch; `finally_stack` unwind on return/throw; resources emit synthetic `name.close()` (reverse order) before user `finally` |
 | `throw_statement` | Inside try → Exception to catch; otherwise terminal `Exception` exit |
+
+### Rust-specific notes
+
+| Surface | Lowering |
+|---------|----------|
+| `if` / `if let` / `&&` `\|\|` | `let_condition` as branch; short-circuit via `wire_condition`; unwrap `else_clause` |
+| `match` + guards | Sequential arms; guard `condition` short-circuits to next arm; arm `value` field visited (returns lower) |
+| `try_expression` (`?`) | `IfTrue` success continue / `IfFalse` early `Return` exit |
+| `for pat in iter` | Iterator expression + next/body cycle |
+| `loop` | Unconditional body cycle; exit only via `break` / `return` / panic (no `IfFalse`) |
+| `while` / `while let` | Condition header + body cycle |
+| Labels | `'label:` embedded on loop nodes; `break`/`continue 'label` via `breakable_stack` |
+| `panic!` / `todo!` / `unimplemented!` / `unreachable!` | `macro_invocation` → terminal `Exception` |
+| `.await` | Branch marker + basic-block resume split |
+
+Honesty left: implicit `Drop` cleanup blocks are not inserted; `async_block` / `closure_expression` are not separate sub-CFGs (nested control flow inside them is still walked when reachable).
 
 ---
 

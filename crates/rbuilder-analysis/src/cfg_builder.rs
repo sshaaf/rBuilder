@@ -330,6 +330,9 @@ impl<'a> CfgBuilder<'a> {
 
             // Declarations / assignments
             "let_declaration" | "let_statement" => {
+                if let Some(value) = node.child_by_field_name("value") {
+                    self.visit_expr_for_control_flow(value, source)?;
+                }
                 self.add_statement(node, source, StatementKind::Declaration)?;
                 Ok(())
             }
@@ -384,9 +387,21 @@ impl<'a> CfgBuilder<'a> {
                 Ok(())
             }
 
+            // Rust `expr?` and `.await`
+            "try_expression" => self.visit_try_expression(node, source),
+            "await_expression" => self.visit_await_expression(node, source),
+            "macro_invocation" => self.visit_macro_invocation(node, source),
+
             // Block / body wrapper
             k if is_block_like(k) => {
                 self.visit_block(node, source)?;
+                Ok(())
+            }
+            // Unwrap Rust `else { ... }` wrapper.
+            "else_clause" => {
+                if let Some(block) = find_child_kind(node, "block") {
+                    self.visit_block(block, source)?;
+                }
                 Ok(())
             }
 
@@ -405,18 +420,151 @@ impl<'a> CfgBuilder<'a> {
         match inner.kind() {
             "if_statement" | "if_expression" | "while_statement" | "while_expression"
             | "for_statement" | "for_expression" | "for_in_expression" | "loop_expression"
-            | "match_expression" | "return_statement" | "return_expression" => {
-                self.visit_statement(inner, source)
-            }
+            | "match_expression" | "return_statement" | "return_expression"
+            | "try_expression" | "await_expression" | "break_expression" | "continue_expression"
+            | "macro_invocation" => self.visit_statement(inner, source),
             _ => {
+                self.visit_expr_for_control_flow(inner, source)?;
+                if !self.flow_active {
+                    return Ok(());
+                }
                 let kind = Self::classify_expression(inner, source);
                 self.add_statement(inner, source, kind)?;
-                if is_panic_call(inner, source) {
+                if is_panic_call(inner, source) || is_diverging_macro(inner, source) {
                     self.unwind_defers_to_exit(CfgEdgeType::Exception);
                 }
                 Ok(())
             }
         }
+    }
+
+    /// Lower nested `?` / `.await` / control-flow expressions inside a larger expression.
+    fn visit_expr_for_control_flow(&mut self, node: Node, source: &[u8]) -> Result<()> {
+        if !self.flow_active {
+            return Ok(());
+        }
+        match node.kind() {
+            "try_expression" => self.visit_try_expression(node, source),
+            "await_expression" => self.visit_await_expression(node, source),
+            "if_expression" | "if_statement" | "match_expression" | "loop_expression"
+            | "while_expression" | "while_statement" | "for_expression" | "for_statement"
+            | "return_expression" | "return_statement" | "break_expression"
+            | "continue_expression" | "macro_invocation" => self.visit_statement(node, source),
+            _ => {
+                let mut cursor = node.walk();
+                for child in node.children(&mut cursor) {
+                    if !child.is_named() {
+                        continue;
+                    }
+                    if matches!(
+                        child.kind(),
+                        "try_expression"
+                            | "await_expression"
+                            | "if_expression"
+                            | "match_expression"
+                            | "loop_expression"
+                            | "while_expression"
+                            | "for_expression"
+                            | "macro_invocation"
+                            | "return_expression"
+                            | "break_expression"
+                            | "continue_expression"
+                    ) {
+                        self.visit_expr_for_control_flow(child, source)?;
+                        if !self.flow_active {
+                            return Ok(());
+                        }
+                    } else {
+                        // Deep search for nested `?` / await (e.g. in call args).
+                        self.visit_expr_for_control_flow(child, source)?;
+                        if !self.flow_active {
+                            return Ok(());
+                        }
+                    }
+                }
+                Ok(())
+            }
+        }
+    }
+
+    fn visit_try_expression(&mut self, node: Node, source: &[u8]) -> Result<()> {
+        if let Some(inner) = node.named_child(0) {
+            self.visit_expr_for_control_flow(inner, source)?;
+            if !self.flow_active {
+                return Ok(());
+            }
+        }
+        let text = node
+            .utf8_text(source)
+            .unwrap_or("?")
+            .trim()
+            .to_string();
+        self.add_statement_to_current(Statement {
+            kind: StatementKind::Branch,
+            line: node.start_position().row + 1,
+            text,
+            defined_vars: HashSet::new(),
+            used_vars: HashSet::new(),
+        });
+        let ok_block = self.new_block();
+        let err_block = self.new_block();
+        let from = self.current_block;
+        self.cfg.add_edge(from, ok_block, CfgEdgeType::IfTrue);
+        self.cfg.add_edge(from, err_block, CfgEdgeType::IfFalse);
+        // Error path: early return from the function (`?`).
+        self.flow_active = true;
+        self.current_block = err_block;
+        self.unwind_finallies(source)?;
+        self.unwind_defers_to_exit(CfgEdgeType::Return);
+        // Success path continues.
+        self.flow_active = true;
+        self.current_block = ok_block;
+        Ok(())
+    }
+
+    fn visit_await_expression(&mut self, node: Node, source: &[u8]) -> Result<()> {
+        if let Some(inner) = node.named_child(0) {
+            self.visit_expr_for_control_flow(inner, source)?;
+            if !self.flow_active {
+                return Ok(());
+            }
+        }
+        let text = node
+            .utf8_text(source)
+            .unwrap_or(".await")
+            .trim()
+            .to_string();
+        self.add_statement_to_current(Statement {
+            kind: StatementKind::Branch,
+            line: node.start_position().row + 1,
+            text,
+            defined_vars: HashSet::new(),
+            used_vars: HashSet::new(),
+        });
+        // Yield / resume split.
+        let resume = self.new_block();
+        self.cfg
+            .add_edge(self.current_block, resume, CfgEdgeType::Next);
+        self.current_block = resume;
+        Ok(())
+    }
+
+    fn visit_macro_invocation(&mut self, node: Node, source: &[u8]) -> Result<()> {
+        let diverging = is_diverging_macro(node, source);
+        self.add_statement(
+            node,
+            source,
+            if diverging {
+                StatementKind::Jump
+            } else {
+                StatementKind::FunctionCall
+            },
+        )?;
+        if diverging {
+            self.unwind_finallies(source)?;
+            self.unwind_defers_to_exit(CfgEdgeType::Exception);
+        }
+        Ok(())
     }
 
     fn classify_expression(node: Node, _source: &[u8]) -> StatementKind {
@@ -488,11 +636,25 @@ impl<'a> CfgBuilder<'a> {
             .child_by_field_name("alternative")
             .or_else(|| node.child_by_field_name("else"))
         {
-            self.visit_block(alternative, source)?;
+            let alt = if alternative.kind() == "else_clause" {
+                find_child_kind(alternative, "block").unwrap_or(alternative)
+            } else if alternative.kind() == "if_expression" || alternative.kind() == "if_statement"
+            {
+                // `else if` — visit as nested if.
+                alternative
+            } else {
+                alternative
+            };
+            if alt.kind() == "if_expression" || alt.kind() == "if_statement" {
+                self.visit_if(alt, source)?;
+            } else {
+                self.visit_block(alt, source)?;
+            }
             false_end = self.current_block;
             false_reaches = self.flow_active;
         } else if let Some(else_clause) = node.child_by_field_name("else_clause") {
-            self.visit_block(else_clause, source)?;
+            let block = find_child_kind(else_clause, "block").unwrap_or(else_clause);
+            self.visit_block(block, source)?;
             false_end = self.current_block;
             false_reaches = self.flow_active;
         } else {
@@ -512,26 +674,27 @@ impl<'a> CfgBuilder<'a> {
     }
 
     fn visit_while(&mut self, node: Node, source: &[u8]) -> Result<()> {
+        self.capture_embedded_loop_label(node, source);
         let header = self.new_block();
         self.cfg
             .add_edge(self.current_block, header, CfgEdgeType::Next);
-        self.add_statement_to_current(Statement {
-            kind: StatementKind::Branch,
-            line: node.start_position().row + 1,
-            text: node
-                .child_by_field_name("condition")
-                .and_then(|c| c.utf8_text(source).ok())
-                .unwrap_or("while")
-                .trim()
-                .to_string(),
-            defined_vars: HashSet::new(),
-            used_vars: HashSet::new(),
-        });
+        self.current_block = header;
 
         let body = self.new_block();
-        self.cfg.add_edge(header, body, CfgEdgeType::IfTrue);
         let exit = self.new_block();
-        self.cfg.add_edge(header, exit, CfgEdgeType::IfFalse);
+        if let Some(cond) = node.child_by_field_name("condition") {
+            self.wire_condition(cond, source, body, exit)?;
+        } else {
+            self.add_statement_to_current(Statement {
+                kind: StatementKind::Branch,
+                line: node.start_position().row + 1,
+                text: "while".to_string(),
+                defined_vars: HashSet::new(),
+                used_vars: HashSet::new(),
+            });
+            self.cfg.add_edge(header, body, CfgEdgeType::IfTrue);
+            self.cfg.add_edge(header, exit, CfgEdgeType::IfFalse);
+        }
 
         self.breakable_stack.push(BreakableContext {
             exit,
@@ -539,14 +702,18 @@ impl<'a> CfgBuilder<'a> {
             label: self.pending_breakable_label.take(),
         });
 
+        self.flow_active = true;
         self.current_block = body;
         if let Some(body_node) = node.child_by_field_name("body") {
             self.visit_block(body_node, source)?;
         }
-        self.cfg
-            .add_edge(self.current_block, header, CfgEdgeType::Jump);
+        if self.flow_active {
+            self.cfg
+                .add_edge(self.current_block, header, CfgEdgeType::Jump);
+        }
         self.breakable_stack.pop();
 
+        self.flow_active = true;
         self.current_block = exit;
         Ok(())
     }
@@ -593,6 +760,16 @@ impl<'a> CfgBuilder<'a> {
     }
 
     fn visit_for(&mut self, node: Node, source: &[u8]) -> Result<()> {
+        self.capture_embedded_loop_label(node, source);
+
+        // Rust `for pat in iter` / similar for-in forms.
+        if node.child_by_field_name("value").is_some()
+            && node.child_by_field_name("pattern").is_some()
+            && node.kind() == "for_expression"
+        {
+            return self.visit_for_in(node, source);
+        }
+
         // Go: for_clause / range_clause. Java/C-like: fields init/condition/update.
         let mut for_clause = None;
         let mut range_clause = None;
@@ -742,6 +919,58 @@ impl<'a> CfgBuilder<'a> {
         Ok(())
     }
 
+    /// Rust / for-in: `for pat in iter { body }` — iter once, then next()/body cycle.
+    fn visit_for_in(&mut self, node: Node, source: &[u8]) -> Result<()> {
+        if let Some(value) = node.child_by_field_name("value") {
+            self.add_statement(value, source, StatementKind::Expression)?;
+        }
+        let header = self.new_block();
+        self.cfg
+            .add_edge(self.current_block, header, CfgEdgeType::Next);
+        self.current_block = header;
+        let header_text = node
+            .child_by_field_name("pattern")
+            .and_then(|p| p.utf8_text(source).ok())
+            .map(|p| {
+                let iter = node
+                    .child_by_field_name("value")
+                    .and_then(|v| v.utf8_text(source).ok())
+                    .unwrap_or("iter")
+                    .trim();
+                format!("for {p} in {iter}")
+            })
+            .unwrap_or_else(|| "for-in".to_string());
+        self.add_statement_to_current(Statement {
+            kind: StatementKind::Branch,
+            line: node.start_position().row + 1,
+            text: header_text,
+            defined_vars: HashSet::new(),
+            used_vars: HashSet::new(),
+        });
+        let body = self.new_block();
+        let exit = self.new_block();
+        self.cfg.add_edge(header, body, CfgEdgeType::IfTrue);
+        self.cfg.add_edge(header, exit, CfgEdgeType::IfFalse);
+        self.breakable_stack.push(BreakableContext {
+            exit,
+            continue_target: Some(header),
+            label: self.pending_breakable_label.take(),
+        });
+        self.flow_active = true;
+        self.current_block = body;
+        if let Some(body_node) = node.child_by_field_name("body") {
+            self.visit_block(body_node, source)?;
+        }
+        if self.flow_active {
+            self.cfg
+                .add_edge(self.current_block, header, CfgEdgeType::Jump);
+        }
+        self.breakable_stack.pop();
+        self.flow_active = true;
+        self.current_block = exit;
+        Ok(())
+    }
+
     fn visit_enhanced_for(&mut self, node: Node, source: &[u8]) -> Result<()> {
         if let Some(value) = node.child_by_field_name("value") {
             self.add_statement(value, source, StatementKind::Expression)?;
@@ -787,28 +1016,31 @@ impl<'a> CfgBuilder<'a> {
     }
 
     fn visit_loop(&mut self, node: Node, source: &[u8]) -> Result<()> {
-        let header = self.new_block();
-        self.cfg
-            .add_edge(self.current_block, header, CfgEdgeType::Next);
+        self.capture_embedded_loop_label(node, source);
+        // Infinite loop: no IfFalse exit — only break/return/panic leave.
         let body = self.new_block();
-        self.cfg.add_edge(header, body, CfgEdgeType::IfTrue);
+        self.cfg
+            .add_edge(self.current_block, body, CfgEdgeType::Next);
         let exit = self.new_block();
-        self.cfg.add_edge(header, exit, CfgEdgeType::IfFalse);
 
         self.breakable_stack.push(BreakableContext {
             exit,
-            continue_target: Some(header),
+            continue_target: Some(body),
             label: self.pending_breakable_label.take(),
         });
 
+        self.flow_active = true;
         self.current_block = body;
         if let Some(body_node) = node.child_by_field_name("body") {
             self.visit_block(body_node, source)?;
         }
-        self.cfg
-            .add_edge(self.current_block, header, CfgEdgeType::Jump);
+        if self.flow_active {
+            self.cfg
+                .add_edge(self.current_block, body, CfgEdgeType::Jump);
+        }
         self.breakable_stack.pop();
 
+        self.flow_active = true;
         self.current_block = exit;
         Ok(())
     }
@@ -935,17 +1167,44 @@ impl<'a> CfgBuilder<'a> {
     fn jump_label_of(node: Node, source: &[u8]) -> Option<String> {
         let mut c = node.walk();
         for ch in node.children(&mut c) {
-            if ch.kind() == "label_name" {
-                return ch.utf8_text(source).ok().map(|s| s.trim().to_string());
+            if ch.kind() == "label_name" || ch.kind() == "label" {
+                return ch.utf8_text(source).ok().map(|s| {
+                    s.trim()
+                        .trim_start_matches('\'')
+                        .to_string()
+                });
             }
         }
-        // `break Outer` — second named child may be the label
+        // `break Outer` — named child may be the label
         if let Some(n) = node.named_child(0) {
-            if n.kind() == "label_name" || n.kind() == "identifier" {
-                return n.utf8_text(source).ok().map(|s| s.trim().to_string());
+            if n.kind() == "label_name" || n.kind() == "label" || n.kind() == "identifier" {
+                return n.utf8_text(source).ok().map(|s| {
+                    s.trim()
+                        .trim_start_matches('\'')
+                        .to_string()
+                });
             }
         }
         None
+    }
+
+    /// Rust embeds `'label:` on the loop node itself (not `labeled_statement`).
+    fn capture_embedded_loop_label(&mut self, node: Node, source: &[u8]) {
+        if self.pending_breakable_label.is_some() {
+            return;
+        }
+        let mut c = node.walk();
+        for ch in node.children(&mut c) {
+            if ch.kind() == "label" {
+                if let Ok(t) = ch.utf8_text(source) {
+                    let name = t.trim().trim_start_matches('\'').to_string();
+                    if !name.is_empty() {
+                        self.pending_breakable_label = Some(name);
+                    }
+                }
+                break;
+            }
+        }
     }
 
     fn find_breakable(&self, label: Option<&str>) -> Option<&BreakableContext> {
@@ -1190,14 +1449,34 @@ impl<'a> CfgBuilder<'a> {
     }
 
     fn visit_match(&mut self, node: Node, source: &[u8]) -> Result<()> {
-        self.add_statement(node, source, StatementKind::Branch)?;
+        let subject = node
+            .child_by_field_name("value")
+            .or_else(|| node.named_child(0))
+            .and_then(|n| n.utf8_text(source).ok())
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .unwrap_or_else(|| "match".to_string());
+        self.add_statement_to_current(Statement {
+            kind: StatementKind::Branch,
+            line: node.start_position().row + 1,
+            text: subject,
+            defined_vars: HashSet::new(),
+            used_vars: HashSet::new(),
+        });
         let cond_block = self.current_block;
         let merge = self.new_block();
         let mut arms = Vec::new();
 
         let mut cursor = node.walk();
         for child in node.children(&mut cursor) {
-            if child.kind() == "match_arm" || child.kind() == "match_arm_pattern" {
+            if child.kind() == "match_block" {
+                let mut bc = child.walk();
+                for arm in child.children(&mut bc) {
+                    if arm.kind() == "match_arm" {
+                        arms.push(arm);
+                    }
+                }
+            } else if child.kind() == "match_arm" || child.kind() == "match_arm_pattern" {
                 arms.push(child);
             }
         }
@@ -1208,21 +1487,62 @@ impl<'a> CfgBuilder<'a> {
             }
         }
 
+        let mut pending_fail: Option<BlockId> = None;
         for arm in arms {
-            let arm_block = self.new_block();
-            self.cfg
-                .add_edge(cond_block, arm_block, CfgEdgeType::IfTrue);
-            self.current_block = arm_block;
-            self.visit_block(arm, source)?;
-            self.cfg
-                .add_edge(self.current_block, merge, CfgEdgeType::Next);
+            let test = self.new_block();
+            if let Some(fail) = pending_fail.take() {
+                self.cfg.add_edge(fail, test, CfgEdgeType::Next);
+            } else {
+                self.cfg
+                    .add_edge(cond_block, test, CfgEdgeType::IfTrue);
+            }
+            self.flow_active = true;
+            self.current_block = test;
+
+            let body = self.new_block();
+            let fail = self.new_block();
+            let guard = arm
+                .child_by_field_name("pattern")
+                .and_then(|p| p.child_by_field_name("condition"));
+            if let Some(guard) = guard {
+                // Pattern assumed matched; guard decides body vs next arm.
+                self.wire_condition(guard, source, body, fail)?;
+            } else {
+                let pat_text = arm
+                    .child_by_field_name("pattern")
+                    .and_then(|p| p.utf8_text(source).ok())
+                    .map(|s| s.trim().to_string())
+                    .unwrap_or_else(|| "arm".to_string());
+                self.add_statement_to_current(Statement {
+                    kind: StatementKind::Branch,
+                    line: arm.start_position().row + 1,
+                    text: pat_text,
+                    defined_vars: HashSet::new(),
+                    used_vars: HashSet::new(),
+                });
+                self.cfg.add_edge(test, body, CfgEdgeType::IfTrue);
+                self.cfg.add_edge(test, fail, CfgEdgeType::IfFalse);
+            }
+            pending_fail = Some(fail);
+
+            self.flow_active = true;
+            self.current_block = body;
+            if let Some(value) = arm.child_by_field_name("value") {
+                self.visit_statement(value, source)?;
+            } else {
+                self.visit_block(arm, source)?;
+            }
+            if self.flow_active {
+                self.cfg
+                    .add_edge(self.current_block, merge, CfgEdgeType::Next);
+            }
         }
 
-        let default_block = self.new_block();
-        self.cfg
-            .add_edge(cond_block, default_block, CfgEdgeType::IfFalse);
-        self.cfg.add_edge(default_block, merge, CfgEdgeType::Next);
+        if let Some(fail) = pending_fail {
+            self.cfg.add_edge(fail, merge, CfgEdgeType::Next);
+        }
 
+        self.flow_active = true;
         self.current_block = merge;
         Ok(())
     }
@@ -1696,6 +2016,22 @@ fn is_panic_call(node: Node, source: &[u8]) -> bool {
         .is_some_and(|s| s.trim() == "panic")
 }
 
+fn is_diverging_macro(node: Node, source: &[u8]) -> bool {
+    if node.kind() != "macro_invocation" {
+        return false;
+    }
+    let name = node
+        .child_by_field_name("macro")
+        .or_else(|| node.named_child(0))
+        .and_then(|n| n.utf8_text(source).ok())
+        .unwrap_or("")
+        .trim();
+    matches!(
+        name,
+        "panic" | "todo" | "unimplemented" | "unreachable"
+    )
+}
+
 fn logical_operator<'a>(node: Node<'a>, source: &'a [u8]) -> Option<&'a str> {
     if node.kind() != "binary_expression" {
         return None;
@@ -1748,6 +2084,339 @@ fn loop_example(n: i32) -> i32 {
 "#;
         let cfg = build_cfg_for_function("rust", code, "loop_example").unwrap();
         assert!(cfg.has_cycle());
+    }
+
+    fn rust_texts(cfg: &ControlFlowGraph) -> Vec<String> {
+        cfg.blocks
+            .values()
+            .flat_map(|b| b.statements.iter().map(|s| s.text.clone()))
+            .collect()
+    }
+
+    fn rust_kinds(cfg: &ControlFlowGraph) -> Vec<StatementKind> {
+        cfg.blocks
+            .values()
+            .flat_map(|b| b.statements.iter().map(|s| s.kind))
+            .collect()
+    }
+
+    fn rust_block_ids(cfg: &ControlFlowGraph, needle: &str) -> Vec<uuid::Uuid> {
+        cfg.blocks
+            .values()
+            .filter(|b| b.statements.iter().any(|s| s.text.contains(needle)))
+            .map(|b| b.id)
+            .collect()
+    }
+
+    #[test]
+    fn test_rust_short_circuit_and() {
+        let code = r#"
+fn sc(a: bool, b: bool) -> i32 {
+    if a && b {
+        return 1;
+    }
+    0
+}
+"#;
+        let cfg = build_cfg_for_function("rust", code, "sc").unwrap();
+        let texts = rust_texts(&cfg);
+        assert!(
+            texts.iter().any(|t| t.trim() == "a"),
+            "&& left must be its own branch, got {texts:?}"
+        );
+        assert!(
+            texts.iter().any(|t| t.trim() == "b"),
+            "&& right must be its own branch, got {texts:?}"
+        );
+        assert!(
+            !texts.iter().any(|t| t.contains("a && b")),
+            "must not keep a && b as one blob, got {texts:?}"
+        );
+    }
+
+    #[test]
+    fn test_rust_if_let_branches() {
+        let code = r#"
+fn il(opt: Option<i32>) -> i32 {
+    if let Some(x) = opt {
+        return x;
+    }
+    0
+}
+"#;
+        let cfg = build_cfg_for_function("rust", code, "il").unwrap();
+        assert!(
+            cfg.edges
+                .iter()
+                .any(|e| e.edge_type == CfgEdgeType::IfTrue)
+                && cfg
+                    .edges
+                    .iter()
+                    .any(|e| e.edge_type == CfgEdgeType::IfFalse),
+            "if let must split true/false"
+        );
+        assert!(
+            rust_kinds(&cfg)
+                .iter()
+                .any(|k| *k == StatementKind::Return),
+            "if-let body return must lower"
+        );
+        assert!(
+            !rust_texts(&cfg)
+                .iter()
+                .any(|t| t.trim_start().starts_with("if let Some")),
+            "if let must not stay opaque, got {:?}",
+            rust_texts(&cfg)
+        );
+    }
+
+    #[test]
+    fn test_rust_match_arms_and_guards() {
+        let code = r#"
+fn m(opt: Option<i32>) -> i32 {
+    match opt {
+        Some(v) if v > 0 => return v,
+        Some(v) => return v + 1,
+        None => return 0,
+    }
+}
+"#;
+        let cfg = build_cfg_for_function("rust", code, "m").unwrap();
+        let returns = rust_kinds(&cfg)
+            .iter()
+            .filter(|k| **k == StatementKind::Return)
+            .count();
+        assert!(returns >= 3, "each arm return must lower, kinds={:?}", rust_kinds(&cfg));
+        assert!(
+            !rust_texts(&cfg)
+                .iter()
+                .any(|t| t.contains("Some(v) if v > 0 =>") && t.contains("None")),
+            "match must not stay one blob, got {:?}",
+            rust_texts(&cfg)
+        );
+        // Guard condition should appear as its own branch text.
+        assert!(
+            rust_texts(&cfg)
+                .iter()
+                .any(|t| t.contains("v > 0") || t.trim() == "v > 0"),
+            "match guard must lower, got {:?}",
+            rust_texts(&cfg)
+        );
+        let ret_edges = cfg
+            .edges
+            .iter()
+            .filter(|e| e.edge_type == CfgEdgeType::Return)
+            .count();
+        assert!(ret_edges >= 3, "Return edges from arms, got {ret_edges}");
+    }
+
+    #[test]
+    fn test_rust_try_operator_early_return() {
+        let code = r#"
+fn t() -> Result<i32, ()> {
+    let y = foo()?;
+    Ok(y)
+}
+fn foo() -> Result<i32, ()> { Ok(1) }
+"#;
+        let cfg = build_cfg_for_function("rust", code, "t").unwrap();
+        let texts = rust_texts(&cfg);
+        assert!(
+            texts.iter().any(|t| t.contains("foo()?") || t.contains("?")),
+            "? must appear as branch, got {texts:?}"
+        );
+        assert!(
+            cfg.edges.iter().any(|e| {
+                matches!(
+                    e.edge_type,
+                    CfgEdgeType::Return | CfgEdgeType::Exception | CfgEdgeType::IfFalse
+                )
+            }),
+            "? error path must early-exit"
+        );
+        // Success path should still reach Ok(y) / trailing result.
+        assert!(
+            texts.iter().any(|t| t.contains("Ok(y)") || t.contains("let y")),
+            "success path must continue after ?, got {texts:?}"
+        );
+    }
+
+    #[test]
+    fn test_rust_infinite_loop_no_false_exit() {
+        let code = r#"
+fn forever() -> i32 {
+    loop {
+        break 1;
+    }
+}
+"#;
+        let cfg = build_cfg_for_function("rust", code, "forever").unwrap();
+        assert!(cfg.has_cycle() || rust_texts(&cfg).iter().any(|t| t.contains("break")));
+        // Header must not offer a false edge out of an infinite loop.
+        let break_blocks = rust_block_ids(&cfg, "break");
+        assert!(!break_blocks.is_empty(), "break must lower");
+        assert!(
+            cfg.edges
+                .iter()
+                .any(|e| break_blocks.contains(&e.from) && e.edge_type == CfgEdgeType::Jump),
+            "break must Jump to loop exit"
+        );
+    }
+
+    #[test]
+    fn test_rust_for_in_value_and_cycle() {
+        let code = r#"
+fn sum(n: i32) -> i32 {
+    let mut t = 0;
+    for i in 0..n {
+        t += i;
+    }
+    t
+}
+"#;
+        let cfg = build_cfg_for_function("rust", code, "sum").unwrap();
+        assert!(cfg.has_cycle());
+        let texts = rust_texts(&cfg);
+        assert!(
+            texts.iter().any(|t| t.contains("0..n") || t.contains("for")),
+            "iterator value must appear, got {texts:?}"
+        );
+        assert!(
+            texts.iter().any(|t| t.contains("t += i") || t.contains("t+=i")),
+            "body must lower, got {texts:?}"
+        );
+    }
+
+    #[test]
+    fn test_rust_labeled_break_continue() {
+        let code = r#"
+fn nested(n: i32) -> i32 {
+    let mut s = 0;
+    'outer: for i in 0..n {
+        loop {
+            if i == 0 {
+                continue 'outer;
+            }
+            if i < 0 {
+                break 'outer;
+            }
+            s += 1;
+            break;
+        }
+    }
+    s
+}
+"#;
+        let cfg = build_cfg_for_function("rust", code, "nested").unwrap();
+        let cont = rust_block_ids(&cfg, "continue 'outer");
+        let brk = rust_block_ids(&cfg, "break 'outer");
+        assert!(!cont.is_empty() && !brk.is_empty(), "labeled jumps must lower");
+        // continue 'outer should Jump to outer for header (not inner loop).
+        assert!(
+            cont.iter().any(|c| {
+                cfg.edges
+                    .iter()
+                    .any(|e| e.from == *c && e.edge_type == CfgEdgeType::Jump)
+            }),
+            "continue 'outer must Jump"
+        );
+        assert!(
+            brk.iter().any(|b| {
+                cfg.edges
+                    .iter()
+                    .any(|e| e.from == *b && e.edge_type == CfgEdgeType::Jump)
+            }),
+            "break 'outer must Jump"
+        );
+        // Different targets: continue → header cycle path, break → exit (no shared sole target required,
+        // but they must not both only target the same empty set).
+        let cont_tgts: Vec<_> = cfg
+            .edges
+            .iter()
+            .filter(|e| cont.contains(&e.from) && e.edge_type == CfgEdgeType::Jump)
+            .map(|e| e.to)
+            .collect();
+        let brk_tgts: Vec<_> = cfg
+            .edges
+            .iter()
+            .filter(|e| brk.contains(&e.from) && e.edge_type == CfgEdgeType::Jump)
+            .map(|e| e.to)
+            .collect();
+        assert!(
+            cont_tgts.iter().any(|t| !brk_tgts.contains(t))
+                || brk_tgts.iter().any(|t| !cont_tgts.contains(t)),
+            "continue and break 'outer must target different blocks"
+        );
+    }
+
+    #[test]
+    fn test_rust_panic_macro_exits() {
+        let code = r#"
+fn boom() {
+    panic!("x");
+}
+"#;
+        let cfg = build_cfg_for_function("rust", code, "boom").unwrap();
+        assert!(
+            rust_texts(&cfg)
+                .iter()
+                .any(|t| t.contains("panic")),
+            "panic! must appear, got {:?}",
+            rust_texts(&cfg)
+        );
+        assert!(
+            cfg.edges.iter().any(|e| {
+                matches!(
+                    e.edge_type,
+                    CfgEdgeType::Exception | CfgEdgeType::Return | CfgEdgeType::Jump
+                )
+            }),
+            "panic! must terminate"
+        );
+    }
+
+    #[test]
+    fn test_rust_await_splits_block() {
+        let code = r#"
+async fn aw() -> i32 {
+    let x = async { 1 }.await;
+    x
+}
+"#;
+        let cfg = build_cfg_for_function("rust", code, "aw").unwrap();
+        assert!(
+            rust_texts(&cfg)
+                .iter()
+                .any(|t| t.contains("await")),
+            "await must appear, got {:?}",
+            rust_texts(&cfg)
+        );
+        assert!(
+            cfg.blocks.len() >= 3,
+            "await should split basic blocks, blocks={}",
+            cfg.blocks.len()
+        );
+    }
+
+    #[test]
+    fn test_rust_while_let_cycle() {
+        let code = r#"
+fn wl() -> i32 {
+    let mut t = 0;
+    while let Some(x) = None::<i32> {
+        t += x;
+    }
+    t
+}
+"#;
+        let cfg = build_cfg_for_function("rust", code, "wl").unwrap();
+        assert!(cfg.has_cycle(), "while let must cycle");
+        assert!(
+            rust_texts(&cfg)
+                .iter()
+                .any(|t| t.contains("t += x") || t.contains("t+=x")),
+            "while-let body must lower"
+        );
     }
 
     #[test]
