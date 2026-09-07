@@ -16,7 +16,7 @@ Agent-first docs: index once, query with `-f json`, deepen in the User Guide whe
 
 **Agent loop:** [AGENTS.md](../AGENTS.md) → `discover` once → `gql` / `blast-radius` / `cpg` with `-f json`.  
 **First hour (human):** [Install](installation.md) → User Guide §1–4 on [ecommerce-java](user-guide.md#3-example-project-ecommerce-java), then a [Guide](guides/README.md) for the feature you need.  
-**Latest release:** [v0.4.11 release notes](releases/v0.4.11.md) (extraction depth + GQL verification smoke).
+**Latest release:** [v0.4.12 release notes](releases/v0.4.12.md) (dashboard dist fix; includes v0.4.10–v0.4.11 changes).
 
 **Upgrading from v0.4.9:** no breaking changes — PHP is additive (`discover -l php`).
 
