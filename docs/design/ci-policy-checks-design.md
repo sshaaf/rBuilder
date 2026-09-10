@@ -160,7 +160,7 @@ flowchart TB
 
 Calendar fields (`temporal.*`) apply after temporal classification: grace windows emit `severity: warn` (exit 0 unless `--strict-calendar`); `violation_sla_days` + ledger `first_seen` can fail stale `existing` violations.
 
-Artifact layout: base via `--base-artifact`, `$RGCTL_BASE_ARTIFACT`, or `{repo}/.rgctl-base/`; head synthesized into `{repo}/.rgctl/` unless `--full-snapshots`. Example CI: [.github/workflows/rgctl-pr-check.yml](../../.github/workflows/rgctl-pr-check.yml). See [ci-policy-checks guide](../guides/ci-policy-checks.md).
+Artifact layout: base via `--base-artifact`, `$RGCTL_BASE_ARTIFACT`, or `{repo}/.rgctl-base/`; head synthesized into `{repo}/.rgctl/` unless `--full-snapshots`. Example CI: [.github/workflows/rgctl-pr-check.yml](../../.github/workflows/rgctl-pr-check.yml). User guide: [ci-policy-checks.md](../guides/ci-policy-checks.md).
 
 ---
 

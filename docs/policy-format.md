@@ -111,7 +111,7 @@ rgctl -r "$REPO" -f json pr-check \
   --strict
 ```
 
-Defaults: delta head synthesis from base artifact; `--base-artifact` = `$RGCTL_BASE_ARTIFACT` or `{repo}/.rgctl-base/`. Use `--full-snapshots` for pre-built dual artifacts. Additional flags: `--bisect`, `--synthetic-head worktree`, `--cascade-depth`, `--strict-calendar` (treat grace/sunset warnings as failures). Outcomes append to `.rgctl/violation_ledger.jsonl`. Example workflow: [.github/workflows/rgctl-pr-check.yml](../.github/workflows/rgctl-pr-check.yml). See [CI Policy Checks — user testing scenarios](guides/ci-policy-checks.md#user-testing-scenarios).
+Defaults: delta head synthesis from base artifact; `--base-artifact` = `$RGCTL_BASE_ARTIFACT` or `{repo}/.rgctl-base/`. Use `--full-snapshots` for pre-built dual artifacts. Additional flags: `--bisect`, `--synthetic-head worktree`, `--cascade-depth`, `--strict-calendar` (treat grace/sunset warnings as failures). Outcomes append to `.rgctl/violation_ledger.jsonl`. Example workflow: [.github/workflows/rgctl-pr-check.yml](../.github/workflows/rgctl-pr-check.yml). Walkthrough: [CI Policy Checks guide](guides/ci-policy-checks.md).
 
 ---
 
